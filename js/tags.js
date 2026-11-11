@@ -1,0 +1,84 @@
+// Lectura de etiquetas (ID3 / MP4 / FLAC) con jsmediatags, carátulas y duración.
+const AUDIO_EXT = /\.(mp3|m4a|aac|flac|ogg|oga|opus|wav|webm)$/i;
+export const isAudioName = name => AUDIO_EXT.test(name);
+
+/** Deduce artista / álbum / título de una ruta tipo "Artista/Álbum/01 - Título.mp3". */
+export function fromFilename(path) {
+  const parts = path.split('/').filter(Boolean);
+  let base = parts.pop().replace(AUDIO_EXT, '');
+  let trackNo = 0;
+  const m = base.match(/^(\d{1,3})[\s._-]+(.+)$/);
+  if (m) { trackNo = +m[1]; base = m[2]; }
+  let artist = '', album = '', title = base.trim();
+  const dash = base.split(' - ');
+  if (dash.length >= 2) { artist = dash.shift().trim(); title = dash.join(' - ').trim(); }
+  if (parts.length >= 2) { album = parts[parts.length - 1]; artist = artist || parts[parts.length - 2]; }
+  else if (parts.length === 1) album = parts[0];
+  return { title, artist, album, trackNo };
+}
+
+/** Lee las etiquetas de un Blob. Nunca rechaza: si falla devuelve {}. */
+export function readTags(blob) {
+  return new Promise(resolve => {
+    const jsm = window.jsmediatags;
+    if (!jsm) return resolve({});
+    const timer = setTimeout(() => resolve({}), 8000);
+    const done = v => { clearTimeout(timer); resolve(v); };
+    try {
+      new jsm.Reader(blob).read({
+        onSuccess: ({ tags }) => {
+          let picture = null;
+          try {
+            if (tags.picture?.data?.length) {
+              picture = new Blob([new Uint8Array(tags.picture.data)], { type: tags.picture.format || 'image/jpeg' });
+            }
+          } catch { /* carátula corrupta */ }
+          const lyr = tags.lyrics;
+          const year = String(tags.year || '').match(/\d{4}/);
+          done({
+            title: clean(tags.title), artist: clean(tags.artist), album: clean(tags.album),
+            genre: clean(tags.genre), year: year ? +year[0] : 0,
+            trackNo: parseInt(tags.track, 10) || 0,
+            lyrics: clean(typeof lyr === 'string' ? lyr : lyr?.lyrics),
+            picture,
+          });
+        },
+        onError: () => done({}),
+      });
+    } catch { done({}); }
+  });
+}
+
+const clean = s => (typeof s === 'string' ? s.replace(/\0/g, '').trim() : '');
+
+/** Reduce una carátula a un JPEG de 400 px como máximo. */
+export async function shrinkCover(blob, max = 400) {
+  try {
+    const bmp = await createImageBitmap(blob);
+    const k = Math.min(1, max / Math.max(bmp.width, bmp.height));
+    const c = document.createElement('canvas');
+    c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+    return await new Promise(r => c.toBlob(b => r(b || blob), 'image/jpeg', 0.85));
+  } catch { return null; }
+}
+
+/** Duración en segundos de un Blob de audio (0 si no se puede saber). */
+export function probeDuration(blob) {
+  return new Promise(resolve => {
+    const url = URL.createObjectURL(blob);
+    const a = new Audio();
+    const done = v => { clearTimeout(timer); URL.revokeObjectURL(url); a.removeAttribute('src'); resolve(v); };
+    const timer = setTimeout(() => done(0), 5000);
+    a.preload = 'metadata';
+    a.onloadedmetadata = () => done(Number.isFinite(a.duration) ? a.duration : 0);
+    a.onerror = () => done(0);
+    a.src = url;
+  });
+}
+
+export function hash(str) {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+}
