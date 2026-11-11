@@ -98,6 +98,8 @@ h2 { font-size: 19px; font-weight: 750; margin: 28px 0 12px; }
 .field:focus-within { border-color: var(--accent); }
 .field input { flex: 1; min-width: 0; background: none; border: 0; outline: 0; height: 44px; }
 .field .ic { color: var(--muted); }
+form.stack { display: flex; flex-direction: column; gap: 10px; max-width: 460px; }
+form.stack .field { flex: none; }
 form.search { display: flex; gap: 10px; margin-bottom: 14px; }
 
 /* ---------- Carátulas ---------- */

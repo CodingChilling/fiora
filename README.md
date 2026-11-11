@@ -5,12 +5,13 @@ Tu música, sin suscripciones. Una app web instalable (PWA) para escuchar tu pro
 - **Tu biblioteca**: importa archivos o carpetas enteras (MP3, FLAC, M4A, OGG, WAV…). Lee título, artista, álbum, carátula y letra de las etiquetas.
 - **Sin conexión**: la música importada o descargada se guarda en el dispositivo y la app se abre sin internet.
 - **Nube personal**: conecta un bucket de Oracle Cloud Object Storage y escucha tu música desde cualquier dispositivo. Playlists, favoritos y estadísticas se sincronizan.
+- **Cuenta**: inicia sesión con correo y contraseña y recupera tus datos en cualquier dispositivo.
 - **Playlists y favoritos**, cola de reproducción, aleatorio y repetición, controles en la pantalla de bloqueo.
 - **Letras** sincronizadas (incrustadas en el archivo o de [LRCLIB](https://lrclib.net)) y carátulas.
 - **Para ti**: mezcla diaria, redescubre, lo más escuchado y radio a partir de una canción. Todo se calcula en tu dispositivo.
 - **Explorar**: música con licencias abiertas de [Internet Archive](https://archive.org) y emisoras de [Radio Browser](https://www.radio-browser.info).
 
-No hay servidor propio, cuentas ni seguimiento: es HTML, CSS y JavaScript sin paso de compilación.
+No hay servidor propio ni seguimiento: es HTML, CSS y JavaScript sin paso de compilación.
 
 ## Publicarla con GitHub Pages
 
@@ -33,6 +34,34 @@ Después puedes subir música desde la app (**Ajustes → Subir a la nube**) o d
 
 > La URL funciona como una contraseña: quien la tenga puede leer y escribir en el bucket. Fiora la guarda únicamente en el dispositivo. No la publiques ni la subas a este repositorio.
 
+## Cuentas (iniciar sesión)
+
+Con una cuenta, tus playlists, favoritos, estadísticas, emisoras, ajustes y la conexión a Oracle se guardan y se recuperan al entrar desde cualquier dispositivo. Las cuentas viven en un proyecto gratuito de [Supabase](https://supabase.com):
+
+1. Crea un proyecto en supabase.com.
+2. En **SQL Editor**, ejecuta:
+
+   ```sql
+   create table public.fiora_datos (
+     user_id uuid primary key default auth.uid() references auth.users on delete cascade,
+     datos jsonb not null default '{}'::jsonb,
+     actualizado timestamptz not null default now()
+   );
+   alter table public.fiora_datos enable row level security;
+   create policy "Cada usuario solo ve y cambia sus datos"
+     on public.fiora_datos for all to authenticated
+     using (auth.uid() = user_id) with check (auth.uid() = user_id);
+   ```
+
+3. En **Authentication → URL Configuration**, pon como *Site URL* la dirección de la app (`https://<tu-usuario>.github.io/fiora/`), para que los enlaces de confirmación y de cambio de contraseña vuelvan a ella.
+4. Copia la **Project URL** y la clave pública (**anon** o **publishable**) de *Project Settings → API* y:
+   - pégalas en **Ajustes → Cuenta** dentro de la app (se guardan solo en ese dispositivo), o
+   - escríbelas en `js/config.js` para que valgan en todos los dispositivos.
+
+La clave pública está pensada para ir en el navegador: lo que protege los datos es la política de la tabla, que solo deja a cada usuario leer y escribir su propia fila. **No uses nunca la clave `service_role` / `secret`.**
+
+Por defecto Supabase pide confirmar el correo al crear la cuenta. Si la app es solo para ti, puedes desactivarlo en *Authentication → Sign In / Providers → Email → Confirm email*.
+
 ## Probarla en local
 
 ```bash
@@ -50,6 +79,7 @@ Y abre `http://localhost:8000`.
 | `js/player.js` | Reproductor, cola y controles del sistema |
 | `js/library.js`, `js/tags.js` | Importación y lectura de etiquetas |
 | `js/cloud.js` | Oracle Cloud Object Storage |
+| `js/account.js`, `js/sync.js`, `js/config.js` | Cuentas con Supabase y sincronización de datos |
 | `js/sources.js` | Internet Archive y radios |
 | `js/lyrics.js`, `js/recs.js` | Letras y recomendaciones |
 | `js/db.js`, `js/store.js` | Almacenamiento en IndexedDB |

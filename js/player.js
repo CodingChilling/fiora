@@ -153,7 +153,9 @@ export function removeFromQueue(i) {
 export function setVolume(v) {
   audio.volume = Math.max(0, Math.min(1, v));
   S.settings.volume = audio.volume;
-  saveKV('settings');
+  S.settings.volAt = Date.now();
+  saveKV('settings', false);
+  emit('dirty');
 }
 
 // --- Eventos del elemento de audio ----------------------------------------

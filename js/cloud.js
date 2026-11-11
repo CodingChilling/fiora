@@ -7,6 +7,7 @@ import * as db from './db.js';
 import { S, saveTrack, saveKV, emit, on } from './store.js';
 import { buildTrack, trackId } from './library.js';
 import { isAudioName } from './tags.js';
+import { snapshot, merge } from './sync.js';
 
 const DATA_OBJECT = '_fiora/datos.json';
 const HEAD_BYTES = 768 * 1024;   // suficiente para las etiquetas y la carátula en casi todos los archivos
@@ -108,39 +109,17 @@ export async function download(t) {
 }
 
 // --- Playlists, favoritos y estadísticas entre dispositivos ----------------
-function mergeData(remote) {
-  let changed = false;
-  for (const rp of remote.playlists || []) {
-    const lp = S.playlists.find(p => p.id === rp.id);
-    if (!lp) { S.playlists.push(rp); db.put('playlists', rp.id, rp); changed = true; }
-    else if ((rp.updatedAt || 0) > (lp.updatedAt || 0)) { Object.assign(lp, rp); db.put('playlists', lp.id, lp); changed = true; }
-  }
-  for (const [id, f] of Object.entries(remote.favs || {})) {
-    if (!S.favs[id] || f.at > S.favs[id].at) { S.favs[id] = f; changed = true; }
-  }
-  for (const [id, s] of Object.entries(remote.stats || {})) {
-    const l = S.stats[id] || (S.stats[id] = { plays: 0, last: 0 });
-    if (s.plays > l.plays || s.last > l.last) { l.plays = Math.max(l.plays, s.plays); l.last = Math.max(l.last, s.last); changed = true; }
-  }
-  const seen = new Set(S.stations.map(s => s.id));
-  for (const st of remote.stations || []) if (!seen.has(st.id)) { S.stations.push(st); changed = true; }
-  return changed;
-}
-
 /** Descarga los datos de la nube, los fusiona con los locales y sube el resultado. */
 export async function syncData() {
   const r = await fetch(objectUrl(DATA_OBJECT), { cache: 'no-store' });
   if (r.ok) {
-    if (mergeData(await r.json())) {
-      await Promise.all([saveKV('favs', false), saveKV('stats', false), saveKV('stations', false)]);
-      emit('playlists'); emit('favs');
-    }
+    await merge(await r.json());
   } else if (r.status !== 404) throw new Error(`Respuesta ${r.status} al leer los datos`);
-  const body = JSON.stringify({ v: 1, at: Date.now(), playlists: S.playlists, favs: S.favs, stats: S.stats, stations: S.stations });
+  const body = JSON.stringify(snapshot());
   const w = await fetch(objectUrl(DATA_OBJECT), { method: 'PUT', body, headers: { 'Content-Type': 'application/json' } });
   if (!w.ok) throw new Error(`Respuesta ${w.status} al guardar los datos`);
   S.settings.lastSync = Date.now();
-  saveKV('settings');
+  saveKV('settings', false);
 }
 
 export async function syncAll(onProgress) {

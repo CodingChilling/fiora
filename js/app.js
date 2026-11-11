@@ -4,6 +4,7 @@ import * as lib from './library.js';
 import * as player from './player.js';
 import { P } from './player.js';
 import * as cloud from './cloud.js';
+import * as account from './account.js';
 import * as src from './sources.js';
 import { getLyrics } from './lyrics.js';
 import * as recs from './recs.js';
@@ -80,11 +81,11 @@ function menu(headHTML, items) {
     if (b) { sheet.addEventListener('close', () => items[+b.dataset.m].fn(), { once: true }); sheet.close(); }
   });
 }
-function ask({ title, text = '', value = '', placeholder = '', ok = 'Guardar' }) {
+function ask({ title, text = '', value = '', placeholder = '', ok = 'Guardar', type = 'text' }) {
   return new Promise(resolve => {
     let result = null;
     openSheet(`<form class="dlg" method="dialog"><h3>${esc(title)}</h3>${text ? `<p>${esc(text)}</p>` : ''}
-      <label class="field"><input name="v" value="${esc(value)}" placeholder="${esc(placeholder)}" autocomplete="off" required></label>
+      <label class="field"><input name="v" type="${type}" value="${esc(value)}" placeholder="${esc(placeholder)}" autocomplete="${type === 'password' ? 'new-password' : 'off'}" ${type === 'password' ? 'minlength="6"' : ''} required></label>
       <div class="actions"><button type="button" class="btn ghost" data-x>Cancelar</button><button class="btn primary">${esc(ok)}</button></div></form>`,
     e => { if (e.target.closest('[data-x]')) sheet.close(); });
     const form = $('form', sheet);
@@ -193,7 +194,7 @@ function viewHome() {
   if (!S.tracks.size) {
     return show(`<div class="head"><h1>${hello}</h1></div>${empty('disc', 'Tu biblioteca está vacía',
       'Añade archivos de música de este dispositivo, conecta tu nube o explora música libre y radios.',
-      `${ADD_BTN}<a class="btn" href="#/explorar">${icon('compass')}Explorar música libre</a><a class="btn" href="#/ajustes">${icon('cloud')}Conectar nube</a>`)}`);
+      `${ADD_BTN}<a class="btn" href="#/explorar">${icon('compass')}Explorar música libre</a><a class="btn" href="#/ajustes">${icon('user')}${account.user() ? 'Conectar nube' : 'Iniciar sesión'}</a>`)}`);
   }
   const recent = allTracks().filter(t => S.stats[t.id]?.last).sort((a, b) => S.stats[b.id].last - S.stats[a.id].last).slice(0, 6);
   const newest = albums().sort((a, b) => b.addedAt - a.addedAt).slice(0, 12);
@@ -430,7 +431,25 @@ async function viewSettings() {
        <li>Copia la URL que aparece (solo se muestra una vez) y pégala aquí.</li></ol>
        <form class="search" data-form="par"><label class="field">${icon('cloud')}<input name="url" type="url" placeholder="https://objectstorage.….oraclecloud.com/p/…/n/…/b/…/o/" autocomplete="off" required></label><button class="btn primary">Conectar</button></form>
        <p style="margin:0">Esa URL funciona como una contraseña: quien la tenga puede leer y escribir en el bucket. Fiora la guarda solo en este dispositivo.</p>`;
+  const u = account.user();
+  const accountPanel = u
+    ? `<p>Has iniciado sesión como <b>${esc(u.email)}</b>. Tus playlists, favoritos, estadísticas, emisoras, ajustes y la conexión a la nube se guardan en tu cuenta${S.settings.accountSync ? ` · último guardado: ${new Date(S.settings.accountSync).toLocaleString('es')}` : ''}.</p>
+       <div class="actions"><button class="btn primary" data-act="account-sync">${icon('sync')}Guardar y sincronizar</button><button class="btn ghost" data-act="sign-out">Cerrar sesión</button></div>`
+    : account.available()
+      ? `<p>Inicia sesión para guardar tus playlists, favoritos, estadísticas, emisoras, ajustes y la conexión a tu nube, y recuperarlos en cualquier dispositivo.</p>
+         <form class="stack" data-form="login">
+           <label class="field">${icon('user')}<input name="email" type="email" placeholder="Correo electrónico" autocomplete="username" required></label>
+           <label class="field">${icon('lock')}<input name="password" type="password" placeholder="Contraseña" autocomplete="current-password" minlength="6" required></label>
+           <div class="actions"><button class="btn primary" name="mode" value="in">Iniciar sesión</button><button class="btn" name="mode" value="up">Crear cuenta</button>
+             <button type="button" class="btn ghost" data-act="forgot">He olvidado la contraseña</button></div></form>
+         ${account.builtIn() ? '' : '<p style="margin:12px 0 0"><button class="chip" data-act="sb-reset">Cambiar de proyecto de Supabase</button></p>'}`
+      : `<p>Para tener cuentas hace falta un proyecto gratuito de Supabase. Crea uno en supabase.com, ejecuta el SQL del README y pega aquí sus datos (<b>Project Settings → API</b>).</p>
+         <form class="stack" data-form="sb-config">
+           <label class="field">${icon('cloud')}<input name="url" type="url" placeholder="https://xxxxxxxx.supabase.co" autocomplete="off" required></label>
+           <label class="field">${icon('lock')}<input name="key" placeholder="Clave pública (anon o publishable)" autocomplete="off" required></label>
+           <div class="actions"><button class="btn primary">Guardar</button></div></form>`;
   show(`<div class="head"><h1>Ajustes</h1></div>
+    <div class="panel"><h2>Cuenta</h2>${accountPanel}</div>
     <div class="panel"><h2>Nube</h2>${cloudPanel}</div>
     <div class="panel"><h2>Este dispositivo</h2>
       <p>${plural(tracks.length, 'canción', 'canciones')} en la biblioteca · ${offline} disponibles sin conexión.</p>
@@ -567,8 +586,26 @@ const ACTIONS = {
   'cloud-upload-all'() { uploadMany(allTracks().filter(t => t.hasBlob && !t.cloudName && !t.url)); },
   async 'cloud-off'() {
     if (!(await confirmDlg('¿Desconectar la nube?', 'Las canciones que no estén descargadas dejarán de poder reproducirse hasta que vuelvas a conectar. No se borra nada del bucket.', 'Desconectar'))) return;
-    S.settings.parUrl = ''; saveKV('settings'); refresh();
+    S.settings.parUrl = ''; S.settings.parAt = Date.now(); saveKV('settings', false); emit('dirty'); refresh();
   },
+  async 'account-sync'() {
+    const t = toast('Guardando en tu cuenta…', 0);
+    try { await account.sync(); t.done('Datos guardados y sincronizados'); }
+    catch (e) { t.done(`No se pudo sincronizar: ${e.message}`, 6000); }
+    refresh();
+  },
+  async 'sign-out'() {
+    if (!(await confirmDlg('¿Cerrar sesión?', 'Tu música y tus datos seguirán en este dispositivo, pero los cambios dejarán de guardarse en tu cuenta.', 'Cerrar sesión'))) return;
+    await account.signOut();
+    toast('Sesión cerrada');
+  },
+  async forgot() {
+    const email = await ask({ title: 'Recuperar contraseña', text: 'Te enviaremos un enlace para elegir una contraseña nueva.', placeholder: 'Correo electrónico', value: $('[data-form=login] [name=email]')?.value || '', ok: 'Enviar', type: 'email' });
+    if (!email) return;
+    try { await account.recover(email); toast('Si existe una cuenta con ese correo, recibirás un enlace en unos minutos', 6000); }
+    catch (e) { toast(e.message, 6000); }
+  },
+  async 'sb-reset'() { S.settings.sbUrl = ''; S.settings.sbKey = ''; await saveKV('settings', false); refresh(); },
   async install() { await installEvent?.prompt(); installEvent = null; refresh(); },
   // reproductor
   toggle() { player.toggle(); },
@@ -593,13 +630,37 @@ document.addEventListener('submit', async e => {
   const kind = form.dataset.form;
   if (kind === 'archive') { const q = form.q.value.trim(); if (q) searchArchive(q); }
   if (kind === 'radio') { explore.radioQ = form.q.value.trim(); explore.stations = null; route(); }
+  if (kind === 'sb-config') {
+    let url;
+    try { url = new URL(form.url.value.trim()); } catch { return toast('Esa URL no es válida'); }
+    S.settings.sbUrl = url.origin; S.settings.sbKey = form.key.value.trim();
+    await saveKV('settings', false);
+    refresh();
+  }
+  if (kind === 'login') {
+    const email = form.email.value.trim(), password = form.password.value;
+    const up = e.submitter?.value === 'up';
+    const t = toast(up ? 'Creando la cuenta…' : 'Iniciando sesión…', 0);
+    try {
+      if (up) {
+        const inside = await account.signUp(email, password);
+        t.done(inside ? 'Cuenta creada. Tus datos ya se guardan en ella' : 'Cuenta creada. Te hemos enviado un correo: ábrelo y pulsa el enlace para confirmar', 8000);
+      } else {
+        await account.signIn(email, password);
+        t.done('Sesión iniciada');
+      }
+    } catch (err) { t.done(err.message, 6000); }
+    refresh();
+  }
   if (kind === 'par') {
     try { S.settings.parUrl = cloud.normalizePar(form.url.value); }
     catch (err) { return toast(err.message?.includes('URL') ? err.message : 'Esa URL no es válida', 5000); }
     const t = toast('Comprobando la conexión…', 0);
     try { await cloud.test(); }
     catch (err) { S.settings.parUrl = ''; return t.done(`No se pudo conectar (${err.message}). Revisa la URL y que tenga activado el listado de objetos.`, 7000); }
-    await saveKV('settings');
+    S.settings.parAt = Date.now();
+    await saveKV('settings', false);
+    emit('dirty');
     t.done('Nube conectada');
     cloudSync();
   }
@@ -820,6 +881,14 @@ on('library', refresh);
 on('playlists', () => { if (/^#\/playlists?/.test(location.hash)) refresh(); });
 
 // -------------------------------------------------------------------- arranque
+async function accountSync() {
+  if (!account.user() || !navigator.onLine) return;
+  try { await account.sync(); } catch (e) { console.warn('Cuenta sin sincronizar', e); }
+}
+on('account', refresh);
+on('cloud-changed', () => { refresh(); cloudSync(true); });
+on('volume', v => { P.audio.volume = v; });
+
 async function start() {
   try { await load(); }
   catch (e) {
@@ -828,10 +897,17 @@ async function start() {
     return;
   }
   if (typeof S.settings.volume === 'number') P.audio.volume = S.settings.volume;
+  const linked = await account.init();   // puede venir de un enlace de correo de Supabase
   addEventListener('hashchange', route);
   await route();
+  if (linked === 'confirmed') toast('Correo confirmado. Sesión iniciada');
+  if (linked === 'recovery') {
+    const pw = await ask({ title: 'Nueva contraseña', text: 'Elige la contraseña que usarás a partir de ahora.', placeholder: 'Contraseña nueva', ok: 'Cambiar', type: 'password' });
+    if (pw) account.setPassword(pw).then(() => toast('Contraseña cambiada')).catch(e => toast(e.message, 6000));
+  }
+  accountSync();
   if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(e => console.warn('Sin modo offline', e));
   cloudSync(true);
-  addEventListener('online', () => cloudSync(true));
+  addEventListener('online', () => { accountSync(); cloudSync(true); });
 }
 start();
