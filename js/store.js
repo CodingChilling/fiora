@@ -1,5 +1,6 @@
 // Estado en memoria de la app (metadatos); los audios y carátulas viven en IndexedDB.
 import * as db from './db.js';
+import { splitArtists } from './tags.js';
 
 export const S = {
   tracks: new Map(),   // id -> pista
@@ -20,6 +21,14 @@ export async function load() {
     db.get('kv', 'favs'), db.get('kv', 'stats'), db.get('kv', 'stations'), db.get('kv', 'settings'),
   ]);
   S.tracks = new Map(tracks.map(t => [t.id, t]));
+  // Pistas guardadas por versiones anteriores: separa sus artistas una sola vez.
+  for (const t of tracks) {
+    if (t.artists) continue;
+    const list = splitArtists(t.artist);
+    t.artists = list.length ? list : ['Artista desconocido'];
+    t.artist = t.artists.join(', ');
+    db.put('tracks', t.id, t);
+  }
   S.playlists = playlists;
   S.favs = favs || {};
   S.stats = stats || {};
@@ -35,6 +44,7 @@ export function saveKV(name, sync = true) {
 
 export async function saveTrack(t) {
   S.tracks.set(t.id, t);
+  commonArtist = null;
   await db.put('tracks', t.id, t);
 }
 
@@ -60,6 +70,40 @@ export async function savePlaylist(p) {
   await db.put('playlists', p.id, p);
   emit('dirty');
   emit('playlists');
+}
+
+/** Artistas de una pista, como lista. */
+export const artistsOf = t => (t.artists?.length ? t.artists : [t.artist || 'Artista desconocido']);
+
+// Artista común de cada álbum sin etiqueta "artista del álbum": título en minúsculas -> artista.
+let commonArtist = null;
+function buildCommonArtists() {
+  const groups = new Map();
+  for (const t of S.tracks.values()) {
+    if (!t.album || t.albumArtist) continue;
+    const k = t.album.toLowerCase();
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(artistsOf(t));
+  }
+  commonArtist = new Map();
+  for (const [k, lists] of groups) {
+    // artistas que salen en todas las canciones; si hay varios, el que más veces va en primer lugar
+    const shared = lists[0].filter(a => lists.every(l => l.includes(a)));
+    if (!shared.length) continue;
+    const firsts = a => lists.filter(l => l[0] === a).length;
+    commonArtist.set(k, shared.reduce((best, a) => (firsts(a) > firsts(best) ? a : best)));
+  }
+}
+bus.addEventListener('library', () => { commonArtist = null; });
+
+/**
+ * Artista al que pertenece el álbum: la etiqueta "artista del álbum"; si falta, el artista que
+ * comparten todas las canciones de ese álbum; y si no hay ninguno, el primero de la canción.
+ */
+export function albumArtistOf(t) {
+  if (t.albumArtist) return t.albumArtist;
+  if (!commonArtist) buildCommonArtists();
+  return (t.album && S.tracks.has(t.id) && commonArtist.get(t.album.toLowerCase())) || artistsOf(t)[0];
 }
 
 export const allTracks = () => [...S.tracks.values()];

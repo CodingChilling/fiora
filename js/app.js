@@ -1,5 +1,5 @@
 // Interfaz de Fiora: navegación, pantallas, menús y reproductor.
-import { S, load, on, emit, isFav, toggleFav, allTracks, livePlaylists, savePlaylist, saveKV, saveTrack, collator } from './store.js';
+import { S, load, on, emit, isFav, toggleFav, allTracks, livePlaylists, savePlaylist, saveKV, saveTrack, collator, artistsOf, albumArtistOf } from './store.js';
 import * as lib from './library.js';
 import * as player from './player.js';
 import { P } from './player.js';
@@ -225,7 +225,7 @@ function albums(tracks = allTracks()) {
     if (!t.album) continue;
     const k = lib.albumKey(t);
     let a = m.get(k);
-    if (!a) m.set(k, a = { key: k, title: t.album, artist: t.artist, year: t.year, tracks: [], addedAt: 0, coverId: '', coverUrl: '' });
+    if (!a) m.set(k, a = { key: k, title: t.album, artist: albumArtistOf(t), year: t.year, tracks: [], addedAt: 0, coverId: '', coverUrl: '' });
     a.tracks.push(t);
     a.addedAt = Math.max(a.addedAt, t.addedAt || 0);
     a.coverId ||= t.coverId || ''; a.coverUrl ||= t.coverUrl || '';
@@ -236,10 +236,12 @@ const albumCard = a => `<a class="card" href="#/album/${enc(a.key)}">${cover({ a
 function artists() {
   const m = new Map();
   for (const t of allTracks()) {
-    let a = m.get(t.artist);
-    if (!a) m.set(t.artist, a = { name: t.artist, tracks: [], coverId: '', coverUrl: '' });
-    a.tracks.push(t);
-    a.coverId ||= t.coverId || ''; a.coverUrl ||= t.coverUrl || '';
+    for (const name of artistsOf(t)) {
+      let a = m.get(name);
+      if (!a) m.set(name, a = { name, tracks: [], coverId: '', coverUrl: '' });
+      a.tracks.push(t);
+      a.coverId ||= t.coverId || ''; a.coverUrl ||= t.coverUrl || '';
+    }
   }
   return [...m.values()];
 }
@@ -292,7 +294,7 @@ function viewAlbum(key) {
     ${rows(tracks, { numbered: true, hideAlbum: true })}`);
 }
 function viewArtist(name) {
-  const tracks = allTracks().filter(t => t.artist === name).sort((a, b) => collator.compare(a.title, b.title));
+  const tracks = allTracks().filter(t => artistsOf(t).includes(name) || albumArtistOf(t) === name).sort((a, b) => collator.compare(a.title, b.title));
   if (!tracks.length) return show(empty('user', 'Artista no encontrado', 'No hay canciones de este artista.'));
   const albs = albums(tracks).sort((a, b) => (b.year || 0) - (a.year || 0));
   show(`<div class="hero">${cover({ album: name, coverId: tracks.find(t => t.coverId)?.coverId, coverUrl: tracks.find(t => t.coverUrl)?.coverUrl }, 'round')}
@@ -542,8 +544,14 @@ function trackMenu(t, o = {}, i = -1) {
     lib_ && { icon: 'list', label: 'Añadir a playlist…', fn: () => addToPlaylist([t]) },
     lib_ && { icon: 'heart', label: isFav(t.id) ? 'Quitar de favoritas' : 'Me gusta', fn: () => toggleFav(t.id) },
     lib_ && { icon: 'spark', label: 'Radio de esta canción', fn: () => { player.playQueue(recs.songRadio(t)); toast('Mezcla creada a partir de la canción'); } },
-    lib_ && t.album && { icon: 'disc', label: 'Ir al álbum', fn: () => { closeNow(); location.hash = `#/album/${enc(lib.albumKey(t))}`; } },
-    lib_ && { icon: 'user', label: 'Ir al artista', fn: () => { closeNow(); location.hash = `#/artista/${enc(t.artist)}`; } },
+    lib_ && t.album && { icon: 'disc', label: 'Ir al álbum', fn: () => go(`#/album/${enc(lib.albumKey(t))}`) },
+    lib_ && {
+      icon: 'user', label: 'Ir al artista', fn: () => {
+        const names = artistsOf(t);
+        if (names.length === 1) return go(`#/artista/${enc(names[0])}`);
+        menu(`<div class="sheet-head"><div><b>¿A qué artista?</b></div></div>`, names.map(n => ({ icon: 'user', label: n, fn: () => go(`#/artista/${enc(n)}`) })));
+      },
+    },
     lib_ && remote && !t.hasBlob && { icon: 'download', label: 'Descargar para escuchar sin conexión', fn: () => downloadMany([t]) },
     lib_ && remote && t.hasBlob && { icon: 'x', label: 'Quitar la descarga de este dispositivo', fn: async () => { await lib.dropBlob(t.id); toast('Descarga eliminada'); } },
     lib_ && t.hasBlob && !t.cloudName && cloud.configured() && { icon: 'cloudUp', label: 'Subir a la nube', fn: () => uploadTo([t]) },
@@ -747,6 +755,15 @@ function openNow() {
   now.hidden = false;
   renderNow();
   history.pushState({ now: true }, '');
+}
+/** Navega a otra pantalla; si el reproductor a pantalla completa está abierto, lo cierra antes. */
+function go(hash) {
+  if (!now.hidden) {
+    now.hidden = true;
+    // Sustituye la entrada del historial del reproductor en vez de volver atrás (que desharía la navegación).
+    if (history.state?.now) { history.replaceState(null, '', hash); return route(); }
+  }
+  if (location.hash === hash) route(); else location.hash = hash;
 }
 function closeNow() {
   if (now.hidden) return;

@@ -235,7 +235,9 @@ export async function encodeWav(buf, tags = {}, pause = null) {
 /** Versión para el navegador: recibe el Blob del WAV y los datos de la pista. Devuelve un Blob FLAC o null. */
 export async function wavToFlac(blob, t) {
   const out = await encodeWav(await blob.arrayBuffer(), {
-    TITLE: t.title, ARTIST: t.artist, ALBUM: t.album, GENRE: t.genre,
+    TITLE: t.title, ALBUM: t.album, GENRE: t.genre, ALBUMARTIST: t.albumArtist || '',
+    // los nombres con coma van entre comillas para poder volver a separarlos al leerlos
+    ARTIST: (t.artists?.length ? t.artists : [t.artist]).map(a => (String(a).includes(',') ? `"${a}"` : a)).join(', '),
     TRACKNUMBER: t.trackNo || '', DATE: t.year || '',
   }, () => new Promise(r => setTimeout(r)));
   return out && new Blob([out], { type: 'audio/flac' });

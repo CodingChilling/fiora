@@ -1,19 +1,21 @@
 // Biblioteca: importar archivos del dispositivo, borrar pistas, carátulas.
 import * as db from './db.js';
-import { S, saveTrack, saveKV, emit, savePlaylist } from './store.js';
-import { readTags, fromFilename, shrinkCover, probeDuration, isAudioName, hash } from './tags.js';
+import { S, saveTrack, saveKV, emit, savePlaylist, albumArtistOf } from './store.js';
+import { readTags, fromFilename, splitArtists, shrinkCover, probeDuration, isAudioName, hash } from './tags.js';
 
 export const trackId = (size, name) => `${size}:${name}`;
-export const albumKey = t => `${(t.albumArtist || t.artist || '').toLowerCase()}|${(t.album || '').toLowerCase()}`;
+export const albumKey = t => `${albumArtistOf(t).toLowerCase()}|${(t.album || '').toLowerCase()}`;
 
 /** Construye el registro de una pista a partir de un Blob (completo o parcial) y su ruta. */
 export async function buildTrack({ id, blob, path, size }) {
   const tags = await readTags(blob);
   const guess = fromFilename(path);
+  let artists = tags.artists?.length ? tags.artists : splitArtists(guess.artist);
+  if (!artists.length) artists = ['Artista desconocido'];
   const t = {
     id, size,
     title: tags.title || guess.title,
-    artist: tags.artist || guess.artist || 'Artista desconocido',
+    artists, artist: artists.join(', '), albumArtist: tags.albumArtist || '',
     album: tags.album || guess.album || '',
     genre: tags.genre || '', year: tags.year || 0,
     trackNo: tags.trackNo || guess.trackNo || 0,

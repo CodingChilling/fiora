@@ -17,6 +17,22 @@ export function fromFilename(path) {
   return { title, artist, album, trackNo };
 }
 
+/**
+ * Separa una lista de artistas escrita como texto: van separados por comas, salvo las comas
+ * que estén entre comillas.   A, B, "Tyler, The Creator"  ->  [A, B, Tyler, The Creator]
+ */
+export function splitArtists(str) {
+  const out = [];
+  let cur = '', quoted = false;
+  for (const ch of String(str || '')) {
+    if (ch === '"' || ch === '“' || ch === '”') quoted = !quoted;
+    else if (ch === ',' && !quoted) { out.push(cur); cur = ''; }
+    else cur += ch;
+  }
+  out.push(cur);
+  return [...new Set(out.map(s => s.trim()).filter(Boolean))];
+}
+
 /** Lee las etiquetas de un Blob. Nunca rechaza: si falla devuelve {}. */
 export function readTags(blob) {
   return new Promise(resolve => {
@@ -36,7 +52,10 @@ export function readTags(blob) {
           const lyr = tags.lyrics;
           const year = String(tags.year || '').match(/\d{4}/);
           done({
-            title: clean(tags.title), artist: clean(tags.artist), album: clean(tags.album),
+            title: clean(tags.title), album: clean(tags.album),
+            // ID3v2.4 separa varios valores con un carácter nulo; el resto de casos, con comas.
+            artists: [...new Set(String(tags.artist || '').split('\0').flatMap(splitArtists))],
+            albumArtist: clean(tags.TPE2?.data || tags.aART?.data || ''),
             genre: clean(tags.genre), year: year ? +year[0] : 0,
             trackNo: parseInt(tags.track, 10) || 0,
             lyrics: clean(typeof lyr === 'string' ? lyr : lyr?.lyrics),

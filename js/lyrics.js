@@ -30,13 +30,13 @@ export async function getLyrics(t) {
 
   let hit = null;
   try {
-    const p = new URLSearchParams({ track_name: t.title, artist_name: t.artist || '' });
+    const p = new URLSearchParams({ track_name: t.title, artist_name: t.artists?.[0] || t.artist || '' });
     if (t.album) p.set('album_name', t.album);
     if (t.duration) p.set('duration', Math.round(t.duration));
     let r = await fetch(`${API}/get?${p}`);
     if (r.ok) hit = await r.json();
     else {
-      r = await fetch(`${API}/search?${new URLSearchParams({ track_name: t.title, artist_name: t.artist || '' })}`);
+      r = await fetch(`${API}/search?${new URLSearchParams({ track_name: t.title, artist_name: t.artists?.[0] || t.artist || '' })}`);
       if (r.ok) {
         const list = await r.json();
         hit = list.find(x => x.syncedLyrics && (!t.duration || Math.abs(x.duration - t.duration) < 4))

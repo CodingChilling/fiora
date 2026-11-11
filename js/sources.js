@@ -42,6 +42,7 @@ export async function archiveItem(identifier) {
       id: `${f.size || hash(identifier + f.name)}:${fileName}`,
       title: f.title || fileName.replace(/\.mp3$/i, ''),
       artist: f.creator || f.artist || one(md.creator) || 'Internet Archive',
+      artists: [f.creator || f.artist || one(md.creator) || 'Internet Archive'],
       album, trackNo: parseInt(f.track, 10) || i + 1,
       duration: seconds(f.length), size: +f.size || 0,
       url: `${IA}/download/${identifier}/${f.name.split('/').map(encodeURIComponent).join('/')}`,
