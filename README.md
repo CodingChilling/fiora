@@ -9,7 +9,7 @@ Tu música, sin suscripciones. Una app web instalable (PWA) para escuchar tu pro
 - **Playlists y favoritos**, cola de reproducción, aleatorio y repetición, controles en la pantalla de bloqueo.
 - **Letras** sincronizadas (incrustadas en el archivo o de [LRCLIB](https://lrclib.net)) y carátulas.
 - **Para ti**: mezcla diaria, redescubre, lo más escuchado y radio a partir de una canción. Todo se calcula en tu dispositivo.
-- **Explorar**: música con licencias abiertas de [Internet Archive](https://archive.org) y emisoras de [Radio Browser](https://www.radio-browser.info).
+- **Explorar**: música con licencias abiertas de [Internet Archive](https://archive.org), [Openverse](https://openverse.org), [Wikimedia Commons](https://commons.wikimedia.org) y [Jamendo](https://www.jamendo.com), y emisoras de [Radio Browser](https://www.radio-browser.info).
 
 No hay servidor propio ni seguimiento: es HTML, CSS y JavaScript sin paso de compilación.
 
@@ -66,6 +66,19 @@ La clave pública está pensada para ir en el navegador: lo que protege los dato
 
 Por defecto Supabase pide confirmar el correo al crear la cuenta. Si la app es solo para ti, puedes desactivarlo en *Authentication → Sign In / Providers → Email → Confirm email*.
 
+## Catálogos de música libre
+
+En **Explorar** eliges dónde buscar. Todo se puede escuchar en línea, añadir a la biblioteca y (si la licencia lo permite) descargar; cada canción enlaza a su origen y su licencia.
+
+| Catálogo | Qué hay | Clave |
+| --- | --- | --- |
+| Internet Archive | Conciertos, netlabels, grabaciones antiguas | No |
+| Openverse | Música Creative Commons de Jamendo, ccMixter y otros | No (unas 200 búsquedas al día por conexión) |
+| Wikimedia Commons | Dominio público y libre; mucha clásica | No |
+| Jamendo | Música independiente actual | *Client ID* gratuito de devportal.jamendo.com |
+
+La clave de Jamendo se pega en **Explorar → Jamendo** (se guarda en ese dispositivo) o en `js/config.js`.
+
 ## Probarla en local
 
 ```bash
@@ -85,7 +98,7 @@ Y abre `http://localhost:8000`.
 | `js/cloud.js` | Oracle Cloud Object Storage (uno o varios buckets) |
 | `js/flac.js` | Conversión sin pérdida de WAV a FLAC |
 | `js/account.js`, `js/sync.js`, `js/config.js` | Cuentas con Supabase y sincronización de datos |
-| `js/sources.js` | Internet Archive y radios |
+| `js/sources.js` | Catálogos de música libre y radios |
 | `js/lyrics.js`, `js/recs.js` | Letras y recomendaciones |
 | `js/db.js`, `js/store.js` | Almacenamiento en IndexedDB |
 | `sw.js`, `manifest.webmanifest` | Modo sin conexión e instalación |

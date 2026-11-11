@@ -179,6 +179,11 @@ export async function upload(t, bucketId, onStage = () => {}) {
     } catch (e) { console.warn('No se pudo comprimir; se sube el original', e); }
   }
 
+  // Las pistas de catálogos externos pasan a identificarse como cualquier archivo de la nube
+  // (tamaño + nombre), para que otros dispositivos las reconozcan como la misma canción.
+  const cloudId = trackId(blob.size, t.fileName);
+  if (t.id !== cloudId && !S.tracks.has(cloudId)) await rekey(t, cloudId, { blob, fileName: t.fileName, size: blob.size });
+
   onStage('Subiendo');
   const safe = s => (s || '').replace(/[\\/:*?"<>|]/g, '_').trim();
   const name = [safe(albumArtistOf(t)) || 'Varios', safe(t.album) || 'Sueltas', t.fileName].join('/');
@@ -192,7 +197,7 @@ export async function upload(t, bucketId, onStage = () => {}) {
 
 /** Descarga una pista de la nube (o de una URL) para escucharla sin conexión. */
 export async function download(t) {
-  const r = await fetch(t.cloudName ? objectUrl(t.cloudName, t.bucketId) : t.url);
+  const r = await fetch(t.cloudName ? objectUrl(t.cloudName, t.bucketId) : (t.dl || t.url));
   if (!r.ok) throw new Error(`Respuesta ${r.status} al descargar`);
   const blob = await r.blob();
   navigator.storage?.persist?.().catch(() => {});
