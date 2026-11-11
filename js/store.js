@@ -7,7 +7,7 @@ export const S = {
   favs: {},            // id -> {on, at}
   stats: {},           // id -> {plays, last}
   stations: [],        // radios guardadas
-  settings: {},        // {parUrl, volume, ...}
+  settings: {},        // {buckets, uploadBucket, shrink, volume, ...}
 };
 
 export const bus = new EventTarget();

@@ -4,7 +4,7 @@ Tu música, sin suscripciones. Una app web instalable (PWA) para escuchar tu pro
 
 - **Tu biblioteca**: importa archivos o carpetas enteras (MP3, FLAC, M4A, OGG, WAV…). Lee título, artista, álbum, carátula y letra de las etiquetas.
 - **Sin conexión**: la música importada o descargada se guarda en el dispositivo y la app se abre sin internet.
-- **Nube personal**: conecta un bucket de Oracle Cloud Object Storage y escucha tu música desde cualquier dispositivo. Playlists, favoritos y estadísticas se sincronizan.
+- **Nube personal**: conecta uno o varios buckets de Oracle Cloud Object Storage y escucha tu música desde cualquier dispositivo. Playlists, favoritos y estadísticas se sincronizan.
 - **Cuenta**: inicia sesión con correo y contraseña y recupera tus datos en cualquier dispositivo.
 - **Playlists y favoritos**, cola de reproducción, aleatorio y repetición, controles en la pantalla de bloqueo.
 - **Letras** sincronizadas (incrustadas en el archivo o de [LRCLIB](https://lrclib.net)) y carátulas.
@@ -29,6 +29,10 @@ No hay servidor propio ni seguimiento: es HTML, CSS y JavaScript sin paso de com
    - Marca **Enable Object Listing**
    - Pon una fecha de caducidad lejana.
 3. Copia la URL (solo se muestra una vez) y pégala en **Ajustes → Nube** dentro de Fiora.
+
+Puedes conectar **varios buckets** a la vez (por ejemplo, para repartir la música o ampliar espacio): repite los pasos y añádelos en **Ajustes → Nube → Conectar otro bucket**. Toda la música aparece junta en la biblioteca, y eliges a cuál van las subidas.
+
+Con **Reducir el tamaño al subir, sin perder calidad**, los archivos WAV se convierten a FLAC antes de subirlos: el sonido es idéntico muestra a muestra y ocupan en torno a la mitad. MP3, M4A, OGG y FLAC ya están comprimidos (reducirlos más sí perdería calidad), así que se suben tal cual.
 
 Después puedes subir música desde la app (**Ajustes → Subir a la nube**) o directamente al bucket con la consola de Oracle; se organiza como `Artista/Álbum/archivo`. En cada dispositivo, pega la misma URL para ver la misma biblioteca.
 
@@ -78,7 +82,8 @@ Y abre `http://localhost:8000`.
 | `js/app.js` | Pantallas, menús y navegación |
 | `js/player.js` | Reproductor, cola y controles del sistema |
 | `js/library.js`, `js/tags.js` | Importación y lectura de etiquetas |
-| `js/cloud.js` | Oracle Cloud Object Storage |
+| `js/cloud.js` | Oracle Cloud Object Storage (uno o varios buckets) |
+| `js/flac.js` | Conversión sin pérdida de WAV a FLAC |
 | `js/account.js`, `js/sync.js`, `js/config.js` | Cuentas con Supabase y sincronización de datos |
 | `js/sources.js` | Internet Archive y radios |
 | `js/lyrics.js`, `js/recs.js` | Letras y recomendaciones |

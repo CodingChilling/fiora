@@ -1,6 +1,6 @@
 // Biblioteca: importar archivos del dispositivo, borrar pistas, carátulas.
 import * as db from './db.js';
-import { S, saveTrack, emit, savePlaylist } from './store.js';
+import { S, saveTrack, saveKV, emit, savePlaylist } from './store.js';
 import { readTags, fromFilename, shrinkCover, probeDuration, isAudioName, hash } from './tags.js';
 
 export const trackId = (size, name) => `${size}:${name}`;
@@ -76,6 +76,21 @@ export async function removeTrack(id) {
     if (p.trackIds.includes(id)) { p.trackIds = p.trackIds.filter(x => x !== id); await savePlaylist(p); }
   }
   emit('library');
+}
+
+/** Cambia el archivo de una pista (p. ej. WAV → FLAC): nuevo id, y playlists, favoritos y estadísticas la siguen. */
+export async function rekey(t, newId, { blob, fileName, size }) {
+  const old = t.id;
+  await db.put('blobs', newId, blob);
+  await Promise.all([db.del('blobs', old), db.del('tracks', old)]);
+  S.tracks.delete(old);
+  Object.assign(t, { id: newId, fileName, size });
+  await saveTrack(t);
+  for (const p of S.playlists) {
+    if (p.trackIds.includes(old)) { p.trackIds = p.trackIds.map(x => (x === old ? newId : x)); await savePlaylist(p); }
+  }
+  if (S.favs[old]) { S.favs[newId] = { on: S.favs[old].on, at: Date.now() }; S.favs[old] = { on: false, at: Date.now() }; saveKV('favs'); }
+  if (S.stats[old]) { S.stats[newId] = S.stats[old]; delete S.stats[old]; saveKV('stats'); }
 }
 
 /** Borra solo la copia sin conexión de una pista que sigue en la nube. */
