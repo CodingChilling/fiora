@@ -1,5 +1,5 @@
 // Recomendaciones calculadas en el dispositivo a partir de tus escuchas (nada sale de aquí).
-import { S, allTracks, isFav } from './store.js';
+import { S, allTracks, isFav, artistsOf } from './store.js';
 
 const DAY = 864e5;
 
@@ -43,10 +43,11 @@ export function rediscover(n = 40) {
 /** Radio a partir de una canción: mismo artista, mismo género y época parecida. */
 export function songRadio(seed, n = 40) {
   const g = (seed.genre || '').toLowerCase();
+  const mine = new Set(artistsOf(seed));
   const rest = allTracks().filter(t => t.id !== seed.id);
   const list = pick(rest, (t, rand) => {
     let s = rand() * 1.5;
-    if (t.artist === seed.artist) s += 2;
+    if (artistsOf(t).some(a => mine.has(a))) s += 2;
     if (g && (t.genre || '').toLowerCase() === g) s += 1.5;
     if (seed.year && t.year && Math.abs(seed.year - t.year) <= 5) s += 0.7;
     if (isFav(t.id)) s += 0.3;
@@ -64,7 +65,7 @@ export function summary() {
     if (!s.plays) continue;
     plays += s.plays;
     seconds += s.plays * (t.duration || 0);
-    artists.set(t.artist, (artists.get(t.artist) || 0) + s.plays);
+    for (const a of artistsOf(t)) artists.set(a, (artists.get(a) || 0) + s.plays);
   }
   return {
     plays, hours: seconds / 3600,

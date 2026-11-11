@@ -5,7 +5,7 @@
 //   GET  {par}{nombre}    -> descarga (admite Range)
 //   PUT  {par}{nombre}    -> subida
 import * as db from './db.js';
-import { S, saveTrack, saveKV, emit, on } from './store.js';
+import { S, saveTrack, saveKV, emit, on, albumArtistOf } from './store.js';
 import { buildTrack, trackId, rekey } from './library.js';
 import { isAudioName } from './tags.js';
 import { snapshot, merge } from './sync.js';
@@ -181,7 +181,7 @@ export async function upload(t, bucketId, onStage = () => {}) {
 
   onStage('Subiendo');
   const safe = s => (s || '').replace(/[\\/:*?"<>|]/g, '_').trim();
-  const name = [safe(t.artist) || 'Varios', safe(t.album) || 'Sueltas', t.fileName].join('/');
+  const name = [safe(albumArtistOf(t)) || 'Varios', safe(t.album) || 'Sueltas', t.fileName].join('/');
   const r = await fetch(objectUrl(name, b.id), { method: 'PUT', body: blob, headers: { 'Content-Type': blob.type || 'application/octet-stream' } });
   if (!r.ok) throw new Error(`«${b.name}» respondió ${r.status} al subir. ¿La PAR permite escritura?`);
   t.cloudName = name; t.bucketId = b.id;
