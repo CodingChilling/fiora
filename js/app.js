@@ -420,17 +420,31 @@ async function viewSettings() {
   const inCloud = tracks.filter(t => t.cloudName).length;
   const sum = recs.summary();
   const gb = n => (n / 1073741824).toFixed(n > 1073741824 * 10 ? 0 : 2);
-  const cloudPanel = cloud.configured()
-    ? `<p>Conectada a tu bucket de Oracle Cloud. ${plural(inCloud, 'canción', 'canciones')} en la nube${S.settings.lastSync ? ` · última sincronización: ${new Date(S.settings.lastSync).toLocaleString('es')}` : ''}.</p>
-       <div class="actions"><button class="btn primary" data-act="cloud-sync">${icon('sync')}Sincronizar ahora</button>
-       ${onlyLocal ? `<button class="btn" data-act="cloud-upload-all">${icon('cloudUp')}Subir ${plural(onlyLocal, 'canción', 'canciones')} a la nube</button>` : ''}
-       <button class="btn ghost danger" data-act="cloud-off">Desconectar</button></div>`
-    : `<p>Guarda tu música en Oracle Cloud Object Storage y escúchala desde cualquier dispositivo. Tus playlists, favoritos y estadísticas también se sincronizan.</p>
-       <ol class="steps"><li>En la consola de Oracle Cloud: <b>Storage → Buckets → Create Bucket</b> (privado).</li>
+  const bks = cloud.buckets(), target = cloud.uploadTarget();
+  const steps = `<ol class="steps"><li>En la consola de Oracle Cloud: <b>Storage → Buckets → Create Bucket</b> (privado).</li>
        <li>Dentro del bucket: <b>Pre-Authenticated Requests → Create</b>. Destino: <b>Bucket</b>; acceso: <b>Permit object reads and writes</b>; marca <b>Enable Object Listing</b>; pon una caducidad lejana.</li>
-       <li>Copia la URL que aparece (solo se muestra una vez) y pégala aquí.</li></ol>
-       <form class="search" data-form="par"><label class="field">${icon('cloud')}<input name="url" type="url" placeholder="https://objectstorage.….oraclecloud.com/p/…/n/…/b/…/o/" autocomplete="off" required></label><button class="btn primary">Conectar</button></form>
-       <p style="margin:0">Esa URL funciona como una contraseña: quien la tenga puede leer y escribir en el bucket. Fiora la guarda solo en este dispositivo.</p>`;
+       <li>Copia la URL que aparece (solo se muestra una vez) y pégala aquí.</li></ol>`;
+  const bucketForm = `<form class="stack" data-form="par">
+       <label class="field">${icon('edit')}<input name="name" placeholder="Nombre (p. ej. Rock, Clásica, Bucket 2)" autocomplete="off" maxlength="40"></label>
+       <label class="field">${icon('cloud')}<input name="url" type="url" placeholder="https://objectstorage.….oraclecloud.com/p/…/n/…/b/…/o/" autocomplete="off" required></label>
+       <div class="actions"><button class="btn ${bks.length ? '' : 'primary'}">${icon('plus')}Conectar bucket</button></div></form>`;
+  const cloudPanel = bks.length
+    ? `<p>${plural(inCloud, 'canción', 'canciones')} en la nube${S.settings.lastSync ? ` · última sincronización: ${new Date(S.settings.lastSync).toLocaleString('es')}` : ''}.</p>
+       <ul class="buckets">${bks.map(b => {
+         const n = tracks.filter(t => t.cloudName && (t.bucketId || bks[0].id) === b.id).length;
+         const isTarget = b.id === target.id;
+         return `<li><span class="badge-ic">${icon('cloud')}</span><span class="row-text"><b>${esc(b.name)}</b><small>${plural(n, 'canción', 'canciones')}${isTarget && bks.length > 1 ? ' · las subidas van aquí' : ''}</small></span>
+           ${!isTarget ? `<button class="chip" data-act="bucket-default" data-bid="${esc(b.id)}">Subir aquí</button>` : ''}
+           <button class="icon-btn" data-act="bucket-remove" data-bid="${esc(b.id)}" aria-label="Desconectar ${esc(b.name)}">${icon('x')}</button></li>`;
+       }).join('')}</ul>
+       <div class="actions"><button class="btn primary" data-act="cloud-sync">${icon('sync')}Sincronizar ahora</button>
+       ${onlyLocal ? `<button class="btn" data-act="cloud-upload-all">${icon('cloudUp')}Subir ${plural(onlyLocal, 'canción', 'canciones')}${bks.length > 1 ? ` a «${esc(target.name)}»` : ' a la nube'}</button>` : ''}</div>
+       <label class="switch"><input type="checkbox" data-toggle="shrink" ${S.settings.shrink ? 'checked' : ''}><span><b>Reducir el tamaño al subir, sin perder calidad</b>
+         <small>Los archivos WAV se convierten a FLAC: suenan exactamente igual y ocupan en torno a la mitad. MP3, M4A, OGG y FLAC ya están comprimidos y se suben tal cual.</small></span></label>
+       <details class="more"><summary>Conectar otro bucket</summary><p>Puedes tener varios buckets conectados a la vez; su música aparece junta en tu biblioteca.</p>${steps}${bucketForm}</details>`
+    : `<p>Guarda tu música en Oracle Cloud Object Storage y escúchala desde cualquier dispositivo. Puedes conectar uno o varios buckets.</p>
+       ${steps}${bucketForm}
+       <p style="margin:12px 0 0">Esa URL funciona como una contraseña: quien la tenga puede leer y escribir en el bucket. ${account.user() ? 'Se guarda en este dispositivo y en tu cuenta.' : 'Fiora la guarda solo en este dispositivo.'}</p>`;
   const u = account.user();
   const accountPanel = u
     ? `<p>Has iniciado sesión como <b>${esc(u.email)}</b>. Tus playlists, favoritos, estadísticas, emisoras, ajustes y la conexión a la nube se guardan en tu cuenta${S.settings.accountSync ? ` · último guardado: ${new Date(S.settings.accountSync).toLocaleString('es')}` : ''}.</p>
@@ -466,23 +480,32 @@ async function cloudSync(silent = false) {
   try {
     const r = await cloud.syncAll((i, n, name) => t?.set(`Leyendo ${i} de ${n}: ${name.split('/').pop()}`));
     const msg = r.added || r.removed ? `Nube sincronizada: ${r.added} nuevas${r.removed ? `, ${r.removed} quitadas` : ''}` : 'Todo sincronizado';
-    if (t) t.done(msg); else if (r.added) toast(msg);
+    if (r.errors.length) { if (t) t.done(`No se pudo leer un bucket: ${r.errors[0]}`, 7000); }
+    else if (t) t.done(msg); else if (r.added) toast(msg);
   } catch (e) {
     console.warn(e);
     if (t) t.done(`No se pudo sincronizar: ${e.message}`, 6000);
   }
   refresh();
 }
-async function uploadMany(tracks) {
+const mb = n => `${(n / 1048576).toLocaleString('es', { maximumFractionDigits: 1 })} MB`;
+async function uploadMany(tracks, bucketId) {
   const t = toast('Subiendo…', 0);
-  let ok = 0;
+  let ok = 0, saved = 0;
   for (let i = 0; i < tracks.length; i++) {
-    t.set(`Subiendo ${i + 1} de ${tracks.length}: ${tracks[i].title}`);
-    try { await cloud.upload(tracks[i]); ok++; }
+    const label = stage => t.set(`${stage} ${i + 1} de ${tracks.length}: ${tracks[i].title}`);
+    try { saved += await cloud.upload(tracks[i], bucketId, label); ok++; }
     catch (e) { t.done(`Error al subir «${tracks[i].title}»: ${e.message}`, 6000); refresh(); return; }
   }
-  t.done(`${plural(ok, 'canción subida', 'canciones subidas')} a la nube`);
+  t.done(`${plural(ok, 'canción subida', 'canciones subidas')} a la nube${saved ? ` · ${mb(saved)} ahorrados al comprimir sin pérdida` : ''}`, saved ? 6000 : 3400);
   refresh();
+}
+/** Si hay varios buckets, pregunta a cuál subir. */
+function uploadTo(tracks) {
+  const bks = cloud.buckets();
+  if (bks.length < 2) return uploadMany(tracks);
+  menu(`<div class="sheet-head"><div><b>¿A qué bucket?</b><small>${plural(tracks.length, 'canción', 'canciones')}</small></div></div>`,
+    bks.map(b => ({ icon: 'cloudUp', label: b.name, fn: () => uploadMany(tracks, b.id) })));
 }
 async function downloadMany(tracks) {
   const t = toast('Descargando…', 0);
@@ -523,7 +546,7 @@ function trackMenu(t, o = {}, i = -1) {
     lib_ && { icon: 'user', label: 'Ir al artista', fn: () => { closeNow(); location.hash = `#/artista/${enc(t.artist)}`; } },
     lib_ && remote && !t.hasBlob && { icon: 'download', label: 'Descargar para escuchar sin conexión', fn: () => downloadMany([t]) },
     lib_ && remote && t.hasBlob && { icon: 'x', label: 'Quitar la descarga de este dispositivo', fn: async () => { await lib.dropBlob(t.id); toast('Descarga eliminada'); } },
-    lib_ && t.hasBlob && !t.cloudName && cloud.configured() && { icon: 'cloudUp', label: 'Subir a la nube', fn: () => uploadMany([t]) },
+    lib_ && t.hasBlob && !t.cloudName && cloud.configured() && { icon: 'cloudUp', label: 'Subir a la nube', fn: () => uploadTo([t]) },
     o.playlist && { icon: 'x', label: 'Quitar de esta playlist', fn: async () => { const p = S.playlists.find(x => x.id === o.playlist); p.trackIds = p.trackIds.filter(x => x !== t.id); await savePlaylist(p); refresh(); } },
     lib_ && {
       icon: 'trash', label: 'Eliminar de la biblioteca', danger: true, fn: async () => {
@@ -584,10 +607,14 @@ const ACTIONS = {
   },
   'cloud-sync'() { cloudSync(); },
   'cloud-upload-all'() { uploadMany(allTracks().filter(t => t.hasBlob && !t.cloudName && !t.url)); },
-  async 'cloud-off'() {
-    if (!(await confirmDlg('¿Desconectar la nube?', 'Las canciones que no estén descargadas dejarán de poder reproducirse hasta que vuelvas a conectar. No se borra nada del bucket.', 'Desconectar'))) return;
-    S.settings.parUrl = ''; S.settings.parAt = Date.now(); saveKV('settings', false); emit('dirty'); refresh();
+  async 'bucket-remove'(el) {
+    const b = cloud.buckets().find(x => x.id === el.dataset.bid);
+    if (!b || !(await confirmDlg(`¿Desconectar «${b.name}»?`, 'Sus canciones que no estén descargadas desaparecerán de la biblioteca hasta que vuelvas a conectarlo. No se borra nada en Oracle.', 'Desconectar'))) return;
+    await cloud.removeBucket(b.id);
+    toast('Bucket desconectado');
+    refresh();
   },
+  async 'bucket-default'(el) { await cloud.setUploadTarget(el.dataset.bid); refresh(); },
   async 'account-sync'() {
     const t = toast('Guardando en tu cuenta…', 0);
     try { await account.sync(); t.done('Datos guardados y sincronizados'); }
@@ -653,15 +680,13 @@ document.addEventListener('submit', async e => {
     refresh();
   }
   if (kind === 'par') {
-    try { S.settings.parUrl = cloud.normalizePar(form.url.value); }
-    catch (err) { return toast(err.message?.includes('URL') ? err.message : 'Esa URL no es válida', 5000); }
     const t = toast('Comprobando la conexión…', 0);
-    try { await cloud.test(); }
-    catch (err) { S.settings.parUrl = ''; return t.done(`No se pudo conectar (${err.message}). Revisa la URL y que tenga activado el listado de objetos.`, 7000); }
-    S.settings.parAt = Date.now();
-    await saveKV('settings', false);
-    emit('dirty');
-    t.done('Nube conectada');
+    try { await cloud.addBucket(form.name.value, form.url.value); }
+    catch (err) {
+      const known = /URL|bucket|https/.test(err.message || '');
+      return t.done(known ? err.message : `No se pudo conectar (${err.message}). Revisa la URL y que tenga activado el listado de objetos.`, 7000);
+    }
+    t.done('Bucket conectado');
     cloudSync();
   }
 });
@@ -852,6 +877,14 @@ document.addEventListener('change', e => {
   seeking = false;
   if (Number.isFinite(P.audio.duration)) player.seek((e.target.value / 1000) * P.audio.duration);
 });
+document.addEventListener('change', async e => {
+  const key = e.target.dataset?.toggle;
+  if (!key) return;
+  S.settings[key] = e.target.checked;
+  S.settings[key + 'At'] = Date.now();
+  await saveKV('settings', false);
+  emit('dirty');
+});
 addEventListener('keydown', e => {
   if (e.target.closest('input, textarea, dialog') || e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.code === 'Space' && !e.target.closest('button, a')) { e.preventDefault(); player.toggle(); }
@@ -897,6 +930,7 @@ async function start() {
     return;
   }
   if (typeof S.settings.volume === 'number') P.audio.volume = S.settings.volume;
+  cloud.migrate();
   const linked = await account.init();   // puede venir de un enlace de correo de Supabase
   addEventListener('hashchange', route);
   await route();

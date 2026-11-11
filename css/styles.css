@@ -169,6 +169,17 @@ form.search { display: flex; gap: 10px; margin-bottom: 14px; }
 .stat small { color: var(--muted); }
 .meter { height: 8px; border-radius: 99px; background: var(--surface-2); overflow: hidden; margin: 10px 0 6px; }
 .meter i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); border-radius: 99px; }
+.buckets { list-style: none; margin: 0 0 14px; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.buckets li { display: flex; align-items: center; gap: 12px; background: var(--surface-2); border-radius: 12px; padding: 8px 6px 8px 12px; }
+.buckets .row-text { flex: 1; }
+.buckets .chip { background: var(--surface); }
+.badge-ic { color: var(--accent); display: grid; place-items: center; }
+.switch { display: flex; gap: 12px; align-items: flex-start; margin-top: 16px; cursor: pointer; }
+.switch input { width: 20px; height: 20px; margin: 2px 0 0; accent-color: var(--accent); flex: none; }
+.switch b { display: block; font-weight: 600; }
+.switch small { color: var(--muted); display: block; margin-top: 2px; }
+details.more { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 12px; }
+details.more summary { cursor: pointer; font-weight: 650; }
 code { background: var(--surface-2); padding: 1px 6px; border-radius: 6px; font-size: 13px; }
 
 /* ---------- Mini reproductor ---------- */

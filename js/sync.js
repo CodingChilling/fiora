@@ -8,9 +8,10 @@ export function snapshot(withPrefs = false) {
   const data = { v: 1, at: Date.now(), playlists: S.playlists, favs: S.favs, stats: S.stats, stations: S.stations };
   if (withPrefs) {
     const s = S.settings;
-    if (s.parUrl && !s.parAt) s.parAt = 1;   // conexión hecha antes de tener cuenta
+    if (s.buckets?.length && !s.bucketsAt) s.bucketsAt = 1;   // conexión hecha antes de tener cuenta
     data.prefs = {
-      parUrl: { v: s.parUrl || '', at: s.parAt || 0 },
+      buckets: { v: s.buckets || [], upload: s.uploadBucket || '', at: s.bucketsAt || 0 },
+      shrink: { v: !!s.shrink, at: s.shrinkAt || 0 },
       volume: { v: typeof s.volume === 'number' ? s.volume : 1, at: s.volAt || 0 },
     };
   }
@@ -40,7 +41,12 @@ export async function merge(remote) {
   const p = remote.prefs;
   if (p) {
     const s = S.settings;
-    if (p.parUrl && p.parUrl.at > (s.parAt || 0) && p.parUrl.v !== (s.parUrl || '')) { s.parUrl = p.parUrl.v; s.parAt = p.parUrl.at; cloudChanged = true; }
+    if (p.buckets && p.buckets.at > (s.bucketsAt || 0)) {
+      s.buckets = p.buckets.v || []; s.uploadBucket = p.buckets.upload || ''; s.bucketsAt = p.buckets.at; cloudChanged = true;
+    } else if (!p.buckets && p.parUrl?.v && !s.buckets?.length) {   // copia guardada por una versión anterior
+      s.buckets = [{ id: 'b1', name: 'Principal', url: p.parUrl.v }]; s.bucketsAt = p.parUrl.at || 1; cloudChanged = true;
+    }
+    if (p.shrink && p.shrink.at > (s.shrinkAt || 0)) { s.shrink = p.shrink.v; s.shrinkAt = p.shrink.at; }
     if (p.volume && p.volume.at > (s.volAt || 0)) { s.volume = p.volume.v; s.volAt = p.volume.at; emit('volume', s.volume); }
     await saveKV('settings', false);
   }
@@ -56,7 +62,7 @@ export async function merge(remote) {
 export async function clearPersonal() {
   for (const p of S.playlists) await db.del('playlists', p.id);
   S.playlists = []; S.favs = {}; S.stats = {}; S.stations = [];
-  S.settings.parUrl = ''; S.settings.parAt = 0;   // la conexión a la nube era de la otra persona
+  S.settings.buckets = []; S.settings.bucketsAt = 0; delete S.settings.uploadBucket;   // la nube era de la otra persona
   await Promise.all([saveKV('favs', false), saveKV('stats', false), saveKV('stations', false), saveKV('settings', false)]);
   emit('playlists'); emit('favs');
 }

@@ -2,7 +2,7 @@
 import * as db from './db.js';
 import { S, emit, countPlay, saveTrack, saveKV } from './store.js';
 import { coverUrl } from './library.js';
-import { objectUrl } from './cloud.js';
+import { objectUrl, configured } from './cloud.js';
 
 const audio = new Audio();
 audio.preload = 'auto';
@@ -38,7 +38,7 @@ async function resolveSrc(t) {
       return (blobUrl = URL.createObjectURL(blob));
     }
   }
-  if (t.cloudName && S.settings.parUrl) return objectUrl(t.cloudName);
+  if (t.cloudName && configured()) return objectUrl(t.cloudName, t.bucketId);
   if (t.url) return t.url;
   throw new Error('Esta canción no está disponible en este dispositivo');
 }
