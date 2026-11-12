@@ -114,17 +114,22 @@ function confirmDlg(title, text, ok = 'Eliminar') {
 // ------------------------------------------------------- listas de canciones
 const CHUNK = 150;
 let lists = [];
-const getList = k => (k === 'q' ? { tracks: P.queue, opts: { queue: true } } : lists[+k]);
+const getList = k => (k === 'q' ? { tracks: P.queue, opts: { queue: true } } : k === 'u' ? { tracks: P.user, opts: { queue: true, user: true } } : lists[+k]);
+
+// Nombres de artista y álbum que llevan a su página (solo para canciones de la biblioteca).
+const artistLinks = t => (t.radio || !inLibrary(t) ? esc(t.artist || '')
+  : artistsOf(t).map(a => `<span class="link" data-act="go-artist" data-name="${esc(a)}">${esc(a)}</span>`).join(', '));
+const albumLink = t => (t.album && inLibrary(t) ? `<span class="link" data-act="go-album" data-key="${esc(lib.albumKey(t))}">${esc(t.album)}</span>` : esc(t.album || ''));
 
 function rowHTML(t, i, o) {
-  const cur = P.current && P.current.id === t.id && (!o.queue || i === P.index) ? ' is-playing' : '';
+  const cur = P.current && P.current.id === t.id && (o.queue ? !o.user && !P.fromUser && i === P.index : true) ? ' is-playing' : '';
   const where = t.radio || o.queue ? '' : !t.hasBlob && (t.cloudName || t.url)
     ? `<span class="where" title="En línea">${icon('cloud')}</span>`
     : t.hasBlob && (t.cloudName || t.url) ? `<span class="where" title="Disponible sin conexión">${icon('offline')}</span>` : '';
-  const sub = t.radio ? t.artist : [t.artist, o.hideAlbum ? '' : t.album, o.remote ? t.license : ''].filter(Boolean).join(' · ');
+  const sub = t.radio ? esc(t.artist) : [artistLinks(t), o.hideAlbum ? '' : albumLink(t), o.remote ? esc(t.license || '') : ''].filter(Boolean).join(' · ');
   return `<li class="row${cur}${playable(t) ? '' : ' unavailable'}" data-i="${i}" data-id="${esc(t.id)}">
     ${o.numbered ? `<span class="num">${t.trackNo || i + 1}</span>` : ''}
-    <button class="row-main" data-act="play">${o.numbered ? '' : cover(t)}<span class="row-text"><b>${esc(t.title)}</b><small>${esc(sub)}</small></span></button>
+    <button class="row-main" data-act="play">${o.numbered ? '' : cover(t)}<span class="row-text"><b>${esc(t.title)}</b><small>${sub}</small></span></button>
     ${where}
     ${!t.radio && inLibrary(t) ? `<button class="icon-btn fav ${isFav(t.id) ? 'on' : ''}" data-act="fav" aria-label="Me gusta">${icon('heart')}</button>` : ''}
     <span class="dur">${fmt(t.duration)}</span>
@@ -534,6 +539,8 @@ async function viewSettings() {
     <div class="panel"><h2>Este dispositivo</h2>
       <p>${plural(tracks.length, 'canción', 'canciones')} en la biblioteca · ${offline} disponibles sin conexión.</p>
       ${est.quota ? `<div class="meter"><i style="width:${Math.min(100, (est.usage / est.quota) * 100).toFixed(1)}%"></i></div><small class="muted">${gb(est.usage)} GB usados de ${gb(est.quota)} GB disponibles para la app</small>` : ''}
+      <label class="switch"><input type="checkbox" data-toggle="autoplay" ${S.settings.autoplay === false ? '' : 'checked'}><span><b>Reproducción automática</b>
+        <small>Cuando se acaba lo que estás escuchando, sigue con canciones parecidas de tu biblioteca.</small></span></label>
       <div class="actions" style="margin-top:14px">${ADD_BTN}${installEvent ? `<button class="btn" data-act="install">${icon('download')}Instalar como app</button>` : ''}</div></div>
     <div class="panel"><h2>Modo desarrollador</h2>
       <label class="switch" style="margin-top:4px"><input type="checkbox" data-toggle="dev" ${dev ? 'checked' : ''}><span><b>Editar metadatos de las canciones</b>
@@ -740,9 +747,9 @@ function trackMenu(t, o = {}, i = -1) {
   const lib_ = inLibrary(t);
   const remote = t.cloudName || t.url;
   menu(head, [
-    o.queue && i !== P.index && { icon: 'x', label: 'Quitar de la cola', fn: () => player.removeFromQueue(i) },
+    o.queue && (o.user || P.fromUser || i !== P.index) && { icon: 'x', label: 'Quitar de la cola', fn: () => player.removeFromQueue(i, !!o.user) },
     !o.queue && { icon: 'queue', label: 'Reproducir a continuación', fn: () => { player.enqueue([t], true); toast('Sonará a continuación'); } },
-    !o.queue && { icon: 'plus', label: 'Añadir a la cola', fn: () => { player.enqueue([t]); toast('Añadida a la cola'); } },
+    !o.queue && { icon: 'plus', label: 'Añadir a la cola', fn: () => { player.enqueue([t]); toast('Añadida a tu cola'); } },
     !lib_ && { icon: 'library', label: 'Añadir a mi biblioteca', fn: async () => { await saveToLibrary([t]); toast('Añadida a tu biblioteca'); } },
     lib_ && { icon: 'list', label: 'Añadir a playlist…', fn: () => addToPlaylist([t]) },
     lib_ && S.settings.dev && { icon: 'edit', label: 'Editar metadatos', fn: () => editTrack(t) },
@@ -786,6 +793,7 @@ const ACTIONS = {
     if (!r?.track) return;
     if (!playable(r.track)) return toast('Esta canción no está descargada y no hay nube conectada');
     if (r.key === 'q') player.jump(r.i);
+    else if (r.key === 'u') player.jumpUser(r.i);
     else if (r.track.radio) player.playQueue([r.track]);
     else player.playQueue(r.tracks.filter(playable), r.tracks.filter(playable).indexOf(r.track));
   },
@@ -826,6 +834,19 @@ const ACTIONS = {
     await saveToLibrary(item.tracks);
     toast(`${plural(item.tracks.length, 'pista añadida', 'pistas añadidas')} a tu biblioteca`);
   },
+  'go-artist'(el) {
+    // En pantallas táctiles, tocar el nombre dentro de una fila o del mini reproductor hace lo de siempre.
+    const touch = !matchMedia('(hover: hover)').matches;
+    if (touch && el.closest('.row')) return ACTIONS.play(el);
+    if (touch && el.closest('#mini')) return openNow();
+    if (sheet.open) sheet.close();
+    go(`#/artista/${enc(el.dataset.name)}`);
+  },
+  'go-album'(el) {
+    if (!matchMedia('(hover: hover)').matches && el.closest('.row')) return ACTIONS.play(el);
+    go(`#/album/${enc(el.dataset.key)}`);
+  },
+  'clear-user-queue'() { player.clearUserQueue(); },
   'cloud-sync'() { cloudSync(); },
   'cloud-upload-all'() { uploadMany(allTracks().filter(t => t.hasBlob && !t.cloudName && !t.url)); },
   async 'bucket-remove'(el) {
@@ -928,6 +949,41 @@ document.addEventListener('submit', async e => {
   }
 });
 
+// --------------------------------------- deslizar una canción para añadirla a la cola
+let swipe = null, swallowClick = false;
+const endSwipe = add => {
+  if (!swipe) return;
+  const { row, track, active } = swipe;
+  swipe = null;
+  row.classList.remove('swiping', 'armed');
+  row.style.removeProperty('--dx');
+  if (!active) return;
+  swallowClick = true; setTimeout(() => { swallowClick = false; }, 350);
+  if (add) { player.enqueue([track]); toast(`«${track.title}» añadida a tu cola`); }
+};
+view.addEventListener('pointerdown', e => {
+  if (e.pointerType !== 'touch') return;
+  const row = e.target.closest('.row');
+  const info = row && rowInfo(row);
+  if (!info?.track || info.track.radio || !playable(info.track)) return;
+  swipe = { row, track: info.track, x: e.clientX, y: e.clientY, dx: 0, active: false };
+});
+view.addEventListener('pointermove', e => {
+  if (!swipe) return;
+  const dx = e.clientX - swipe.x, dy = e.clientY - swipe.y;
+  if (!swipe.active) {
+    if (dx > 14 && dx > Math.abs(dy) * 1.5) { swipe.active = true; swipe.row.classList.add('swiping'); }
+    else if (Math.abs(dy) > 14 || dx < -14) { swipe = null; return; }
+    else return;
+  }
+  swipe.dx = Math.max(0, Math.min(dx, 150));
+  swipe.row.style.setProperty('--dx', `${swipe.dx}px`);
+  swipe.row.classList.toggle('armed', swipe.dx >= 80);
+});
+view.addEventListener('pointerup', () => endSwipe(swipe?.dx >= 80));
+view.addEventListener('pointercancel', () => endSwipe(false));
+document.addEventListener('click', e => { if (swallowClick) { e.stopPropagation(); e.preventDefault(); swallowClick = false; } }, true);
+
 // ------------------------------------------------------- importar archivos
 async function runImport(files) {
   if (!files?.length) return;
@@ -962,7 +1018,7 @@ function renderMini() {
   mini.hidden = !t;
   if (!t) return;
   setHTML(mini, `<div class="line"><i></i></div><div class="bar">
-    <button class="open" data-act="open-now" aria-label="Abrir reproductor">${cover(t)}<span class="row-text"><b>${esc(t.title)}</b><small>${esc(t.artist || '')}</small></span></button>
+    <button class="open" data-act="open-now" aria-label="Abrir reproductor">${cover(t)}<span class="row-text"><b>${esc(t.title)}</b><small>${artistLinks(t)}</small></span></button>
     <div class="desk center"><div class="ctl">
         <button class="icon-btn js-shuffle" data-act="shuffle" aria-label="Aleatorio">${icon('shuffle')}</button>
         <button class="icon-btn" data-act="prev" aria-label="Anterior">${icon('prev')}</button>
@@ -1011,7 +1067,7 @@ function renderNow() {
       <button class="icon-btn" data-act="now-more" aria-label="Más opciones">${icon('more')}</button></div>
     <div class="body"><div class="left">
       <div class="stage">${cover(t)}</div>
-      <div class="meta"><div><b>${esc(t.title)}</b><span>${esc(t.artist || '')}</span>
+      <div class="meta"><div><b>${esc(t.title)}</b><span>${artistLinks(t)}${t.album && inLibrary(t) ? ` · ${albumLink(t)}` : ''}</span>
         ${[...(t.genres || []), ...(t.moods || [])].length ? `<span class="tags">${esc([...(t.genres || []).slice(0, 2), ...(t.moods || []).slice(0, 3)].join(' · '))}</span>` : ''}</div>
         ${inLibrary(t) ? `<button class="icon-btn fav js-fav" data-act="now-fav" aria-label="Me gusta">${icon('heart')}</button>` : ''}</div>
       <div><input type="range" class="js-seek" min="0" max="1000" value="0" aria-label="Posición" style="width:100%">
@@ -1040,8 +1096,17 @@ async function renderNowPane() {
   stage.hidden = nowMode !== 'cover';
   pane.hidden = nowMode === 'cover';
   if (nowMode === 'queue') {
-    setHTML(pane, `<h2 style="margin-top:0">Cola de reproducción</h2><ol class="rows" data-list="q">${P.queue.slice(0, 400).map((t, i) => rowHTML(t, i, { queue: true })).join('')}</ol>`);
-    $('.is-playing', pane)?.scrollIntoView({ block: 'center' });
+    const t = P.current, from = P.index + 1;
+    const upcoming = P.queue.slice(from, from + 300);
+    const inAuto = P.autoFrom >= 0 && P.autoFrom <= from;
+    setHTML(pane, `<h2 style="margin-top:0">Sonando</h2>
+      ${t ? `<div class="row is-playing"><span class="row-main">${cover(t)}<span class="row-text"><b>${esc(t.title)}</b><small>${esc(t.artist || '')}</small></span></span></div>` : ''}
+      ${P.user.length ? `<div class="qhead"><h2>A continuación en tu cola</h2><button class="chip" data-act="clear-user-queue">Vaciar</button></div>
+        <ol class="rows" data-list="u">${P.user.map((x, i) => rowHTML(x, i, { queue: true, user: true })).join('')}</ol>` : ''}
+      ${upcoming.length ? `<h2>${inAuto ? 'Reproducción automática' : P.user.length ? 'Después, de lo que estabas escuchando' : 'A continuación'}</h2>
+        <ol class="rows" data-list="q">${upcoming.map((x, k) => (from + k === P.autoFrom && !inAuto ? '<li class="qdivider">Reproducción automática · canciones parecidas</li>' : '') + rowHTML(x, from + k, { queue: true })).join('')}</ol>` : ''}
+      ${!P.user.length && !upcoming.length ? '<p class="muted">No hay nada más en la cola. Desliza una canción hacia la derecha o usa su menú ⋯ para añadirla.</p>' : ''}`);
+    pane.scrollTop = 0;
     return;
   }
   const t = P.current;
@@ -1145,14 +1210,14 @@ function markPlaying() {
   if (!id) return;
   $$('.row').forEach(r => {
     if (r.dataset.id !== id) return;
-    const q = r.closest('[data-list="q"]');
-    if (!q || +r.dataset.i === P.index) r.classList.add('is-playing');
+    if (!r.closest('[data-list="q"], [data-list="u"]')) r.classList.add('is-playing');
   });
 }
 on('track', () => { renderMini(); renderNow(); markPlaying(); });
 on('state', syncState);
 on('time', syncTime);
 on('queue', () => { if (!now.hidden && nowMode === 'queue') renderNowPane(); });
+on('track', () => { if (!now.hidden && nowMode === 'queue') renderNowPane(); });
 on('favs', id => {
   syncState();
   if (id) $$('.row').forEach(r => { if (r.dataset.id === id) $('.fav', r)?.classList.toggle('on', isFav(id)); });

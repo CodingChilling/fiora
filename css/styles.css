@@ -132,6 +132,20 @@ form.search { display: flex; gap: 10px; margin-bottom: 14px; }
 .row.unavailable .row-main { opacity: .45; }
 @media (max-width: 599px) { .row .dur, .row .fav { display: none; } }
 
+/* nombres que llevan a la página del artista o del álbum (solo se subrayan con ratón) */
+@media (hover: hover) { .link { cursor: pointer; } .link:hover { text-decoration: underline; color: var(--text); } }
+#now .meta .link { cursor: pointer; }
+
+/* deslizar a la derecha para añadir a la cola */
+#view .row { touch-action: pan-y; position: relative; }
+.row.swiping { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.row.swiping > * { transform: translateX(var(--dx, 0)); }
+.row.swiping::before { content: "Añadir a la cola"; position: absolute; left: 14px; top: 50%; translate: 0 -50%; font-size: 13px; font-weight: 700; color: var(--accent); opacity: .45; transform: none; }
+.row.swiping.armed::before { opacity: 1; }
+.qhead { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 22px 0 8px; }
+.qhead h2 { margin: 0; }
+.qdivider { list-style: none; margin: 14px 0 6px; padding: 10px 8px 0; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; font-weight: 650; }
+
 /* ---------- Rejillas de tarjetas ---------- */
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 16px; }
 .card { display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: var(--radius); background: var(--surface); min-width: 0; }
