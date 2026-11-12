@@ -5,13 +5,14 @@ import { S, saveKV, emit, applyEdit } from './store.js';
 
 /** Datos que se guardan fuera del dispositivo. Los ajustes solo viajan con la cuenta. */
 export function snapshot(withPrefs = false) {
-  const data = { v: 2, at: Date.now(), playlists: S.playlists, favs: S.favs, stats: S.stats, stations: S.stations, edits: S.edits, trans: S.trans };
+  const data = { v: 2, at: Date.now(), playlists: S.playlists, favs: S.favs, stats: S.stats, stations: S.stations, edits: S.edits, trans: S.trans, hist: S.hist };
   if (withPrefs) {
     const s = S.settings;
     if (s.buckets?.length && !s.bucketsAt) s.bucketsAt = 1;   // conexión hecha antes de tener cuenta
     data.prefs = {
       buckets: { v: s.buckets || [], upload: s.uploadBucket || '', at: s.bucketsAt || 0 },
       shrink: { v: !!s.shrink, at: s.shrinkAt || 0 },
+      genrePresets: { v: s.genrePresets || [], at: s.genrePresetsAt || 0 },
       volume: { v: typeof s.volume === 'number' ? s.volume : 1, at: s.volAt || 0 },
     };
   }
@@ -49,6 +50,17 @@ export async function merge(remote) {
     const t = S.tracks.get(id);
     if (t && applyEdit(t)) await db.put('tracks', id, t);
   }
+  // Historial de escuchas: de cada día, hora y día de la semana se conserva el valor más alto.
+  let histChanged = false;
+  const rh = remote.hist;
+  if (rh) {
+    for (const [day, v] of Object.entries(rh.days || {})) {
+      const l = S.hist.days[day] || (S.hist.days[day] = [0, 0]);
+      if (v[0] > l[0] || v[1] > l[1]) { l[0] = Math.max(l[0], v[0]); l[1] = Math.max(l[1], v[1]); histChanged = true; }
+    }
+    for (const k of ['hours', 'week']) (rh[k] || []).forEach((n, i) => { if (n > (S.hist[k][i] || 0)) { S.hist[k][i] = n; histChanged = true; } });
+  }
+  if (histChanged) await saveKV('hist', false);
   if (transChanged) await saveKV('trans', false);
   if (editsChanged) { await saveKV('edits', false); emit('library'); }
   const seen = new Set(S.stations.map(s => s.id));
@@ -64,6 +76,7 @@ export async function merge(remote) {
       s.buckets = [{ id: 'b1', name: 'Principal', url: p.parUrl.v }]; s.bucketsAt = p.parUrl.at || 1; cloudChanged = true;
     }
     if (p.shrink && p.shrink.at > (s.shrinkAt || 0)) { s.shrink = p.shrink.v; s.shrinkAt = p.shrink.at; }
+    if (p.genrePresets && p.genrePresets.at > (s.genrePresetsAt || 0)) { s.genrePresets = p.genrePresets.v || []; s.genrePresetsAt = p.genrePresets.at; }
     if (p.volume && p.volume.at > (s.volAt || 0)) { s.volume = p.volume.v; s.volAt = p.volume.at; emit('volume', s.volume); }
     await saveKV('settings', false);
   }
@@ -78,8 +91,8 @@ export async function merge(remote) {
 /** Borra los datos personales del dispositivo (al entrar con otra cuenta). La música descargada no se toca. */
 export async function clearPersonal() {
   for (const p of S.playlists) await db.del('playlists', p.id);
-  S.playlists = []; S.favs = {}; S.stats = {}; S.stations = []; S.trans = {};
+  S.playlists = []; S.favs = {}; S.stats = {}; S.stations = []; S.trans = {}; S.hist = { days: {}, hours: Array(24).fill(0), week: Array(7).fill(0) };
   S.settings.buckets = []; S.settings.bucketsAt = 0; delete S.settings.uploadBucket;   // la nube era de la otra persona
-  await Promise.all([saveKV('favs', false), saveKV('stats', false), saveKV('stations', false), saveKV('trans', false), saveKV('settings', false)]);
+  await Promise.all([saveKV('favs', false), saveKV('stats', false), saveKV('stations', false), saveKV('trans', false), saveKV('hist', false), saveKV('settings', false)]);
   emit('playlists'); emit('favs');
 }

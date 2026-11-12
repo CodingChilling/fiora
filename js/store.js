@@ -10,6 +10,7 @@ export const S = {
   stations: [],        // radios guardadas
   edits: {},           // id -> {at, f: {campos editados a mano o por IA}}
   trans: {},           // id -> {idSiguiente: veces}  (qué suena después de qué)
+  hist: { days: {}, hours: Array(24).fill(0), week: Array(7).fill(0) },   // escuchas por día, hora y día de la semana
   settings: {},        // {buckets, uploadBucket, shrink, volume, ...}
 };
 
@@ -18,11 +19,12 @@ export const emit = (name, detail) => bus.dispatchEvent(new CustomEvent(name, { 
 export const on = (name, fn) => bus.addEventListener(name, e => fn(e.detail));
 
 export async function load() {
-  const [tracks, playlists, favs, stats, stations, settings, edits, trans] = await Promise.all([
+  const [tracks, playlists, favs, stats, stations, settings, edits, trans, hist] = await Promise.all([
     db.all('tracks'), db.all('playlists'),
     db.get('kv', 'favs'), db.get('kv', 'stats'), db.get('kv', 'stations'), db.get('kv', 'settings'),
-    db.get('kv', 'edits'), db.get('kv', 'trans'),
+    db.get('kv', 'edits'), db.get('kv', 'trans'), db.get('kv', 'hist'),
   ]);
+  if (hist) S.hist = { days: hist.days || {}, hours: hist.hours || Array(24).fill(0), week: hist.week || Array(7).fill(0) };
   S.edits = edits || {};
   S.trans = trans || {};
   S.tracks = new Map(tracks.map(t => [t.id, t]));
@@ -51,6 +53,22 @@ export async function load() {
 export function saveKV(name, sync = true) {
   if (sync && name !== 'settings') emit('dirty');
   return db.put('kv', name, S[name]);
+}
+
+/** Géneros predefinidos que ofrece el editor (se pueden añadir más en el modo desarrollador). */
+export const GENRES = ['Pop', 'Indie Pop', 'Synthpop', 'Dream Pop', 'K-Pop', 'Rock', 'Indie Rock', 'Alternative Rock', 'Hard Rock', 'Punk', 'Post-Punk',
+  'Metal', 'Shoegaze', 'Grunge', 'Folk', 'Indie Folk', 'Singer-Songwriter', 'Country', 'Blues', 'Jazz', 'Soul', 'Funk', 'R&B', 'Hip Hop', 'Rap', 'Trap',
+  'Reggaeton', 'Latin Pop', 'Urbano Latino', 'Flamenco', 'Flamenco Pop', 'Rumba', 'Copla', 'Bolero', 'Salsa', 'Bachata', 'Cumbia', 'Tango', 'Bossa Nova',
+  'Reggae', 'Ska', 'Electronic', 'House', 'Techno', 'Trance', 'Drum and Bass', 'Dubstep', 'Ambient', 'Lo-Fi', 'Chillout', 'Disco', 'Dance',
+  'Classical', 'Opera', 'Soundtrack', 'Instrumental', 'World', 'Afrobeats', 'Gospel', 'Experimental', 'Rock en Español', 'Pop en Español', 'Indie Español'];
+/** Géneros predefinidos, propios y ya usados en la biblioteca, sin repetir y en orden alfabético. */
+export function genreOptions() {
+  const seen = new Map();
+  const add = g => { const k = String(g).trim().toLowerCase(); if (k && !seen.has(k)) seen.set(k, String(g).trim()); };
+  GENRES.forEach(add);
+  (S.settings.genrePresets || []).forEach(add);
+  for (const t of S.tracks.values()) (t.genres || []).forEach(add);
+  return [...seen.values()].sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
 }
 
 /** Lo que transmite una canción: vocabulario cerrado para que las mezclas sean coherentes. */
@@ -92,6 +110,9 @@ export function toggleFav(id) {
   return S.favs[id].on;
 }
 
+/** Fecha local como AAAA-MM-DD. */
+export const dayKey = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
 /** Franja del día: 0 madrugada, 1 mañana, 2 tarde, 3 noche. */
 export const daypart = (d = new Date()) => { const h = d.getHours(); return h < 6 ? 0 : h < 12 ? 1 : h < 19 ? 2 : 3; };
 
@@ -103,6 +124,15 @@ export function countPlay(id) {
   s.last = Date.now();
   (s.h ||= [0, 0, 0, 0])[daypart()]++;
   saveKV('stats');
+  // Historial para las estadísticas: [escuchas, segundos] por día, y recuentos por hora y día de la semana.
+  const now = new Date(), day = dayKey(now), secs = Math.round(S.tracks.get(id)?.duration || 0);
+  const d = S.hist.days[day] || (S.hist.days[day] = [0, 0]);
+  d[0]++; d[1] += secs;
+  S.hist.hours[now.getHours()]++;
+  S.hist.week[(now.getDay() + 6) % 7]++;          // 0 = lunes
+  const keys = Object.keys(S.hist.days);
+  if (keys.length > 400) for (const k of keys.sort().slice(0, keys.length - 400)) delete S.hist.days[k];
+  saveKV('hist');
 }
 /** La canción se saltó nada más empezar. */
 export function countSkip(id) { const s = statOf(id); s.skips = (s.skips || 0) + 1; saveKV('stats'); }
