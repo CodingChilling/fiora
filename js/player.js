@@ -3,17 +3,26 @@ import * as db from './db.js';
 import { S, emit, countPlay, countSkip, countDone, countNext, saveTrack, saveKV } from './store.js';
 import { coverUrl } from './library.js';
 import { objectUrl, configured } from './cloud.js';
+import { songRadio } from './recs.js';
 
 const audio = new Audio();
 audio.preload = 'auto';
 
+// Hay dos colas, como en los reproductores habituales:
+//   · P.queue  — la lista que se está reproduciendo (un álbum, una playlist, una mezcla…) y, al
+//                acabarse, la continuación automática con canciones parecidas (desde P.autoFrom).
+//   · P.user   — lo que el usuario ha añadido a mano. Siempre suena antes de seguir con P.queue.
 export const P = {
   audio,
-  queue: [],        // pistas (objetos); pueden ser de la biblioteca, del Archivo o radios
-  index: -1,
+  queue: [],        // pistas (objetos); pueden ser de la biblioteca, de un catálogo o radios
+  index: -1,        // posición en P.queue
+  user: [],         // cola del usuario
+  now: null,        // pista que suena
+  fromUser: false,  // la pista que suena salió de la cola del usuario
+  autoFrom: -1,     // índice de P.queue donde empieza la continuación automática (-1: no hay)
   shuffle: false,
   repeat: 'off',    // off | all | one
-  get current() { return this.queue[this.index] || null; },
+  get current() { return this.now; },
   get playing() { return !audio.paused; },
 };
 
@@ -78,31 +87,61 @@ function onError(e) {
   if (sess) sess.error = true;
   emit('toast', `No se pudo reproducir «${t?.title || ''}»${navigator.onLine ? '' : ' (sin conexión)'}`);
   console.warn(e);
-  if (++errors < 3 && P.index < P.queue.length - 1) next(true);
+  if (++errors < 3 && (P.user.length || P.index < P.queue.length - 1)) next(true);
   else { errors = 0; emit('state'); }
 }
 
-/** Sustituye la cola y empieza a reproducir desde `start`. */
-export function playQueue(tracks, start = 0) {
-  if (!tracks.length) return;
-  const first = tracks[start];
-  if (P.shuffle) {
-    original = tracks.slice();
-    P.queue = [first, ...shuffled(tracks.filter((_, i) => i !== start))];
-    P.index = 0;
-  } else {
-    original = null;
-    P.queue = tracks.slice();
-    P.index = start;
-  }
-  errors = 0;
+const canPlay = t => !!(t.hasBlob || t.url || (t.cloudName && configured()));
+
+/** Al acabarse la lista, la alarga con canciones parecidas a la última. Devuelve true si añadió alguna. */
+function extend() {
+  const seed = P.queue[P.index];
+  if (S.settings.autoplay === false || !seed || seed.radio || !S.tracks.has(seed.id)) return false;
+  const have = new Set(P.queue.map(t => t.id));
+  const more = songRadio(seed, 30).slice(1).filter(t => !have.has(t.id) && canPlay(t)).slice(0, 20);
+  if (!more.length) return false;
+  if (P.autoFrom < 0) P.autoFrom = P.queue.length;
+  P.queue.push(...more);
+  if (original) original.push(...more);
   emit('queue');
+  return true;
+}
+
+function playContext(i) {
+  P.index = i; P.now = P.queue[i] || null; P.fromUser = false;
+  errors = 0;
   load();
 }
 
+/** Sustituye la lista en reproducción y empieza desde `start`. La cola del usuario se conserva. */
+export function playQueue(tracks, start = 0) {
+  if (!tracks.length) return;
+  const first = tracks[start];
+  P.autoFrom = -1;
+  if (P.shuffle) {
+    original = tracks.slice();
+    P.queue = [first, ...shuffled(tracks.filter((_, i) => i !== start))];
+    start = 0;
+  } else {
+    original = null;
+    P.queue = tracks.slice();
+  }
+  emit('queue');
+  playContext(start);
+}
+
+/** Salta a una posición de la lista en reproducción. */
 export function jump(i) {
-  if (i < 0 || i >= P.queue.length) return;
-  P.index = i; errors = 0; load();
+  if (i >= 0 && i < P.queue.length) playContext(i);
+}
+
+/** Reproduce ya una canción de la cola del usuario (y la saca de ella). */
+export function jumpUser(i) {
+  if (i < 0 || i >= P.user.length) return;
+  P.now = P.user.splice(i, 1)[0]; P.fromUser = true;
+  errors = 0;
+  emit('queue');
+  load();
 }
 
 export function toggle() {
@@ -112,17 +151,22 @@ export function toggle() {
 }
 
 export function next(auto = false) {
-  if (!P.queue.length) return;
+  if (!P.now) return;
   if (auto && P.repeat === 'one') { audio.currentTime = 0; audio.play(); return; }
-  if (P.index < P.queue.length - 1) P.index++;
-  else if (P.repeat === 'all' || !auto) P.index = 0;
-  else { audio.pause(); emit('state'); return; }
-  load();
+  if (P.user.length) return jumpUser(0);            // primero, lo que el usuario puso en cola
+  if (P.index < P.queue.length - 1) return playContext(P.index + 1);
+  if (P.repeat === 'all') return playContext(0);
+  if (extend()) return playContext(P.index + 1);    // continuación automática
+  if (!auto) return playContext(0);
+  P.fromUser = false;
+  audio.pause(); emit('state');
 }
 
 export function prev() {
-  if (audio.currentTime > 4 || P.index === 0) { audio.currentTime = 0; return; }
-  P.index--; load();
+  if (audio.currentTime > 4) { audio.currentTime = 0; return; }
+  if (P.fromUser) return playContext(P.index);       // vuelve a la lista donde se quedó
+  if (P.index > 0) return playContext(P.index - 1);
+  audio.currentTime = 0;
 }
 
 export function seek(sec) {
@@ -131,13 +175,15 @@ export function seek(sec) {
 
 export function toggleShuffle() {
   P.shuffle = !P.shuffle;
-  const cur = P.current;
+  const cur = P.queue[P.index];
   if (P.shuffle) {
     original = P.queue.slice();
     if (cur) { P.queue = [cur, ...shuffled(P.queue.filter((_, i) => i !== P.index))]; P.index = 0; }
+    P.autoFrom = -1;
   } else if (original) {
     P.queue = original; original = null;
     P.index = Math.max(0, P.queue.indexOf(cur));
+    P.autoFrom = -1;
   }
   emit('queue'); emit('state');
 }
@@ -147,21 +193,25 @@ export function cycleRepeat() {
   emit('state');
 }
 
+/** Añade canciones a la cola del usuario: al final, o delante de todo con `playNext`. */
 export function enqueue(tracks, playNext = false) {
-  if (!P.queue.length) return playQueue(tracks);
-  if (playNext) P.queue.splice(P.index + 1, 0, ...tracks);
-  else P.queue.push(...tracks);
-  if (original) original.push(...tracks);
+  if (!P.now) return playQueue(tracks);
+  if (playNext) P.user.unshift(...tracks); else P.user.push(...tracks);
   emit('queue');
 }
 
-export function removeFromQueue(i) {
-  if (i === P.index || i < 0 || i >= P.queue.length) return;
+/** Quita una canción de la cola del usuario (`user`) o de la lista en reproducción. */
+export function removeFromQueue(i, user = false) {
+  if (user) { if (i >= 0 && i < P.user.length) P.user.splice(i, 1); emit('queue'); return; }
+  if (i < 0 || i >= P.queue.length || (i === P.index && !P.fromUser)) return;
   const [t] = P.queue.splice(i, 1);
   if (original) original = original.filter(x => x !== t);
   if (i < P.index) P.index--;
+  if (P.autoFrom > i) P.autoFrom--;
   emit('queue');
 }
+
+export function clearUserQueue() { P.user = []; emit('queue'); }
 
 export function setVolume(v) {
   audio.volume = Math.max(0, Math.min(1, v));
