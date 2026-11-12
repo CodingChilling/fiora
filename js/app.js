@@ -560,7 +560,7 @@ async function viewSettings() {
           <label class="field">${icon('lock')}<input name="key" type="password" autocomplete="off" placeholder="${aiKey ? `Clave guardada (…${esc(aiKey.slice(-4))}). Escribe otra para cambiarla` : esc(prov.keyHint)}" ${aiKey || prov.needsUrl ? '' : 'required'}></label>
           ${A.provider === 'anthropic'
             ? `<label class="field">${icon('spark')}<select name="model" aria-label="Modelo">${ai.AI_MODELS.map(([id, label]) => `<option value="${id}" ${id === (aiModel || ai.DEFAULT_MODEL) ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select></label>`
-            : `<label class="field">${icon('spark')}<input name="model" list="ai-models" value="${esc(aiModel)}" placeholder="Nombre del modelo (p. ej. el que uses en Codex)" autocomplete="off" required></label>
+            : `<label class="field">${icon('spark')}<input name="model" list="ai-models" value="${esc(aiModel)}" placeholder="Nombre del modelo (pulsa «Ver modelos disponibles»)" autocomplete="off" required></label>
                <datalist id="ai-models">${(A.lists?.[A.provider] || []).map(m => `<option value="${esc(m)}">`).join('')}</datalist>`}
           <div class="actions"><button class="btn primary">Guardar</button>
             ${A.provider !== 'anthropic' ? '<button type="button" class="btn" data-act="ai-models">Ver modelos disponibles</button>' : ''}

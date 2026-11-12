@@ -1,7 +1,8 @@
 // Etiquetado con IA: pide a un modelo los géneros y el ambiente de un grupo de canciones.
 // La app no tiene servidor, así que la petición sale del navegador con la clave de API que el
 // usuario pega en Ajustes → Modo desarrollador. Esa clave se guarda solo en este dispositivo.
-// Proveedores: Claude (Anthropic), OpenAI y cualquier servicio con API compatible con la de OpenAI.
+// Proveedores: Claude (Anthropic), OpenAI, Gemini (Google AI Studio) y cualquier servicio con API
+// compatible con la de OpenAI.
 import { MOODS } from './store.js';
 
 const ANTHROPIC = 'https://api.anthropic.com/v1/messages';
@@ -9,6 +10,7 @@ const ANTHROPIC = 'https://api.anthropic.com/v1/messages';
 export const PROVIDERS = {
   anthropic: { name: 'Claude (Anthropic)', keyHint: 'Clave de la API (sk-ant-…)', site: 'console.anthropic.com' },
   openai: { name: 'OpenAI (GPT, Codex)', keyHint: 'Clave de la API (sk-…)', site: 'platform.openai.com', url: 'https://api.openai.com/v1' },
+  gemini: { name: 'Gemini (Google AI Studio)', keyHint: 'Clave de la API (AIza…)', site: 'aistudio.google.com/api-keys' },
   custom: { name: 'Otro servicio compatible con OpenAI', keyHint: 'Clave de la API (si la pide)', needsUrl: true },
 };
 
@@ -123,8 +125,57 @@ async function askOpenAI(cfg, user) {
   throw httpError(last.r.status, last.msg);
 }
 
-/** Modelos que ofrece el proveedor para la clave dada (OpenAI y compatibles). */
+// API de Gemini (Google AI Studio).
+const GEMINI = 'https://generativelanguage.googleapis.com/v1beta';
+const geminiModel = m => String(m).replace(/^models\//, '');
+// El mismo esquema en el formato que usa Gemini (tipos en mayúsculas, sin additionalProperties).
+const GEMINI_SCHEMA = {
+  type: 'OBJECT', required: ['songs'],
+  properties: {
+    songs: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT', required: ['i', 'genres', 'moods'],
+        properties: { i: { type: 'INTEGER' }, genres: { type: 'ARRAY', items: { type: 'STRING' } }, moods: { type: 'ARRAY', items: { type: 'STRING', enum: MOODS } } },
+      },
+    },
+  },
+};
+const geminiError = (status, msg) => (/api key/i.test(msg) ? new Error('La clave de la API no es válida') : httpError(status, msg));
+
+async function askGemini(cfg, user) {
+  const headers = { 'Content-Type': 'application/json', 'x-goog-api-key': cfg.key };
+  const shape = '\n\nResponde únicamente con un objeto JSON de la forma {"songs":[{"i":0,"genres":["…"],"moods":["…"]}]}. Los valores permitidos en "moods" son: ' + MOODS.join(', ') + '.';
+  // Primero con esquema; si el modelo no lo admite (400), con JSON libre.
+  const configs = [{ responseMimeType: 'application/json', responseSchema: GEMINI_SCHEMA }, { responseMimeType: 'application/json' }];
+  let last;
+  for (const generationConfig of configs) {
+    last = await post(`${GEMINI}/models/${encodeURIComponent(geminiModel(cfg.model))}:generateContent`, headers, {
+      systemInstruction: { parts: [{ text: SYSTEM + (generationConfig.responseSchema ? '' : shape) }] },
+      contents: [{ role: 'user', parts: [{ text: user }] }],
+      generationConfig,
+    });
+    if (last.r.ok) {
+      const c = last.data?.candidates?.[0];
+      if (last.data?.promptFeedback?.blockReason || ['SAFETY', 'PROHIBITED_CONTENT', 'BLOCKLIST'].includes(c?.finishReason)) throw new Error('El modelo declinó clasificar este grupo de canciones');
+      if (c?.finishReason === 'MAX_TOKENS') throw new Error('La respuesta se cortó. Prueba con menos canciones');
+      return (c?.content?.parts || []).filter(p => !p.thought).map(p => p.text || '').join('');
+    }
+    if (last.r.status !== 400 || /api key/i.test(last.msg)) break;
+  }
+  throw geminiError(last.r.status, last.msg);
+}
+
+/** Modelos que ofrece el proveedor para la clave dada (OpenAI, Gemini y compatibles). */
 export async function listModels(cfg) {
+  if (cfg.provider === 'gemini') {
+    let r;
+    try { r = await fetch(`${GEMINI}/models?pageSize=200`, { headers: { 'x-goog-api-key': cfg.key } }); }
+    catch { throw new Error('No se pudo contactar con el servicio'); }
+    const data = await r.json().catch(() => null);
+    if (!r.ok) throw geminiError(r.status, data?.error?.message || `Respuesta ${r.status}`);
+    return (data?.models || []).filter(m => (m.supportedGenerationMethods || []).includes('generateContent')).map(m => geminiModel(m.name)).sort();
+  }
   const headers = cfg.key ? { Authorization: `Bearer ${cfg.key}` } : {};
   let r;
   try { r = await fetch(`${baseUrl(cfg)}/models`, { headers }); }
@@ -152,7 +203,7 @@ export async function tagTracks(tracks, cfg) {
   if (lack) throw new Error(`Falta ${lack} en Ajustes → Modo desarrollador`);
   const songs = tracks.map((t, i) => ({ i, titulo: t.title, artistas: t.artists || [t.artist], album: t.album || '', anio: t.year || null, genero_del_archivo: (t.genres || []).join(', ') }));
   const user = JSON.stringify({ generos_ya_usados: (cfg.knownGenres || []).slice(0, 200), canciones: songs });
-  const parsed = parseJson(await (cfg.provider === 'anthropic' ? askAnthropic(cfg, user) : askOpenAI(cfg, user)));
+  const parsed = parseJson(await (cfg.provider === 'anthropic' ? askAnthropic(cfg, user) : cfg.provider === 'gemini' ? askGemini(cfg, user) : askOpenAI(cfg, user)));
 
   const out = tracks.map(() => null);
   for (const s of parsed.songs || []) {
