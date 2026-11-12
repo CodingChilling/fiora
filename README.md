@@ -11,6 +11,7 @@ Tu música, sin suscripciones. Una app web instalable (PWA) para escuchar tu pro
 - **Cola**: lo que añades a mano suena antes de seguir con lo que estabas escuchando; desliza una canción a la derecha para añadirla. Al acabar, continúa sola con canciones parecidas.
 - **Letras** sincronizadas (incrustadas en el archivo o de [LRCLIB](https://lrclib.net)) y carátulas.
 - **Para ti**: mezcla diaria, mezclas por ambiente y por hora del día, redescubre y radio a partir de una canción. Aprenden de lo que terminas, lo que saltas y lo que escuchas seguido; todo se calcula en tu dispositivo.
+- **Estadísticas**: panel con tus minutos por día, horas y días en que más escuchas, y tus artistas, canciones, álbumes, géneros y ambientes más oídos.
 - **Géneros y ambiente**: cada canción puede tener varios géneros y etiquetas de lo que transmite (alegre, melancólica, enérgica…).
 - **Modo desarrollador**: edita portada, título, artistas, álbum, géneros y ambiente desde la app; los cambios se sincronizan con tu cuenta y tu nube. Los géneros y el ambiente también se pueden etiquetar con IA.
 - **Explorar**: música con licencias abiertas de [Internet Archive](https://archive.org), [Openverse](https://openverse.org), [Wikimedia Commons](https://commons.wikimedia.org) y [Jamendo](https://www.jamendo.com), y emisoras de [Radio Browser](https://www.radio-browser.info).
@@ -75,7 +76,8 @@ Por defecto Supabase pide confirmar el correo al crear la cuenta. Si la app es s
 Se activa en **Ajustes → Modo desarrollador**. Añade «Editar metadatos» al menú ⋯ de cada canción.
 
 - Las ediciones se guardan como datos de la app (no reescriben las etiquetas dentro del archivo de audio) y viajan con tu cuenta y con el primer bucket, así que se ven igual en todos tus dispositivos. Las portadas que elijas se suben a `_fiora/portadas/` en ese bucket.
-- **Etiquetado con IA**: pega una clave de la API de Claude (console.anthropic.com) y elige el modelo. La app envía título, artistas, álbum y año, y recibe géneros y ambiente. La llamada sale directamente de tu navegador con tu clave, que se guarda solo en ese dispositivo y nunca se sincroniza. Cada uso tiene coste en tu cuenta de Anthropic.
+- **Géneros predefinidos**: el editor ofrece una lista de géneros habituales, y puedes añadir los tuyos en Ajustes.
+- **Etiquetado con IA**: elige el servicio, pega su clave de API y el modelo. Funciona con Claude (console.anthropic.com), con OpenAI (platform.openai.com; los modelos de GPT y Codex) y con cualquier servicio que tenga una API compatible con la de OpenAI y admita llamadas desde el navegador. La app envía título, artistas, álbum y año, y recibe géneros y ambiente. La llamada sale directamente de tu navegador con tu clave, que se guarda solo en ese dispositivo y nunca se sincroniza. Cada uso puede tener coste en tu cuenta de ese servicio.
 
 ## Catálogos de música libre
 

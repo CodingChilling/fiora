@@ -1,9 +1,16 @@
-// Etiquetado con IA: pide a Claude los géneros y el ambiente de un grupo de canciones.
+// Etiquetado con IA: pide a un modelo los géneros y el ambiente de un grupo de canciones.
 // La app no tiene servidor, así que la petición sale del navegador con la clave de API que el
 // usuario pega en Ajustes → Modo desarrollador. Esa clave se guarda solo en este dispositivo.
+// Proveedores: Claude (Anthropic), OpenAI y cualquier servicio con API compatible con la de OpenAI.
 import { MOODS } from './store.js';
 
-const API = 'https://api.anthropic.com/v1/messages';
+const ANTHROPIC = 'https://api.anthropic.com/v1/messages';
+
+export const PROVIDERS = {
+  anthropic: { name: 'Claude (Anthropic)', keyHint: 'Clave de la API (sk-ant-…)', site: 'console.anthropic.com' },
+  openai: { name: 'OpenAI (GPT, Codex)', keyHint: 'Clave de la API (sk-…)', site: 'platform.openai.com', url: 'https://api.openai.com/v1' },
+  custom: { name: 'Otro servicio compatible con OpenAI', keyHint: 'Clave de la API (si la pide)', needsUrl: true },
+};
 
 export const AI_MODELS = [
   ['claude-opus-5-5', 'Claude Opus 5.5 (el más preciso)'],
@@ -41,50 +48,118 @@ Básate en lo que sepas de la canción y del artista. Si no reconoces la canció
 
 Devuelve una entrada por cada canción recibida, con el mismo "i".`;
 
-/**
- * Etiqueta un grupo de canciones (como mucho BATCH por llamada).
- * Devuelve un array alineado con `tracks`: {genres, moods} o null si no hubo respuesta para esa canción.
- */
-export async function tagTracks(tracks, { key, model = DEFAULT_MODEL, knownGenres = [] }) {
-  if (!key) throw new Error('Falta la clave de la API de Claude');
-  const songs = tracks.map((t, i) => ({ i, titulo: t.title, artistas: t.artists || [t.artist], album: t.album || '', anio: t.year || null, genero_del_archivo: (t.genres || []).join(', ') }));
+const baseUrl = cfg => (cfg.provider === 'custom' ? String(cfg.url || '') : PROVIDERS.openai.url).trim().replace(/\/+$/, '');
+
+/** Falta algo para poder llamar al proveedor elegido: devuelve qué, o '' si está todo. */
+export function missing(cfg) {
+  if (!PROVIDERS[cfg.provider]) return 'el proveedor';
+  if (cfg.provider === 'custom' && !/^https?:\/\//.test(cfg.url || '')) return 'la dirección del servicio';
+  if (cfg.provider !== 'custom' && !cfg.key) return 'la clave de la API';
+  if (!cfg.model) return 'el modelo';
+  return '';
+}
+
+function httpError(status, msg) {
+  if (status === 401) return new Error('La clave de la API no es válida');
+  if (status === 403) return new Error(`La clave no tiene permiso para esta petición (${msg})`);
+  if (status === 404) return new Error(`El servicio no reconoce ese modelo o esa dirección (${msg})`);
+  if (status === 429) return new Error('Se ha alcanzado el límite de uso o de saldo de la API. Revisa tu cuenta o inténtalo más tarde');
+  if (status >= 500) return new Error('El servicio de IA está saturado ahora mismo. Inténtalo más tarde');
+  return new Error(msg);
+}
+
+async function post(url, headers, body) {
+  let r;
+  try { r = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) }); }
+  catch { throw new Error(navigator.onLine ? 'No se pudo contactar con el servicio de IA (puede que no admita llamadas desde el navegador)' : 'No hay conexión a internet'); }
+  const data = await r.json().catch(() => null);
+  return { r, data, msg: data?.error?.message || (typeof data?.error === 'string' ? data.error : '') || `Respuesta ${r.status}` };
+}
+
+async function askAnthropic(cfg, user) {
   const body = {
-    model, max_tokens: 16000,
-    system: SYSTEM,
-    messages: [{ role: 'user', content: JSON.stringify({ generos_ya_usados: knownGenres.slice(0, 150), canciones: songs }) }],
+    model: cfg.model, max_tokens: 16000, system: SYSTEM,
+    messages: [{ role: 'user', content: user }],
     output_config: { effort: 'low', format: { type: 'json_schema', schema: SCHEMA } },
   };
   const headers = {
-    'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2026-10-21',
+    'Content-Type': 'application/json', 'x-api-key': cfg.key, 'anthropic-version': '2026-10-21',
     'anthropic-dangerous-direct-browser-access': 'true',   // permite la llamada directa desde el navegador
   };
   // Si el modelo declina una petición, la API la reintenta sola en el modelo de reserva recomendado.
-  if (!model.includes('haiku')) { body.fallbacks = 'default'; headers['anthropic-beta'] = 'server-side-fallback-2026-07-01'; }
-
-  let r;
-  try { r = await fetch(API, { method: 'POST', headers, body: JSON.stringify(body) }); }
-  catch { throw new Error(navigator.onLine ? 'No se pudo contactar con la API de Claude' : 'No hay conexión a internet'); }
-  const data = await r.json().catch(() => null);
-  if (!r.ok) {
-    const msg = data?.error?.message || `Respuesta ${r.status}`;
-    if (r.status === 401) throw new Error('La clave de la API no es válida');
-    if (r.status === 403) throw new Error(`La clave no tiene permiso para esta petición (${msg})`);
-    if (r.status === 429) throw new Error('Se ha alcanzado el límite de uso de la API. Espera un momento y vuelve a intentarlo');
-    if (r.status >= 500) throw new Error('La API de Claude está saturada ahora mismo. Inténtalo más tarde');
-    throw new Error(msg);
-  }
+  if (!cfg.model.includes('haiku')) { body.fallbacks = 'default'; headers['anthropic-beta'] = 'server-side-fallback-2026-07-01'; }
+  const { r, data, msg } = await post(ANTHROPIC, headers, body);
+  if (!r.ok) throw httpError(r.status, msg);
   if (data.stop_reason === 'refusal') throw new Error('El modelo declinó clasificar este grupo de canciones');
   if (data.stop_reason === 'max_tokens') throw new Error('La respuesta se cortó. Prueba con menos canciones');
-  const text = (data.content || []).find(b => b.type === 'text')?.text;
-  let parsed;
-  try { parsed = JSON.parse(text); } catch { throw new Error('La respuesta de la IA no se pudo interpretar'); }
+  return (data.content || []).find(b => b.type === 'text')?.text;
+}
+
+// API de "chat completions" de OpenAI, que también ofrecen muchos otros servicios.
+async function askOpenAI(cfg, user) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (cfg.key) headers.Authorization = `Bearer ${cfg.key}`;
+  const shape = '\n\nResponde únicamente con un objeto JSON de la forma {"songs":[{"i":0,"genres":["…"],"moods":["…"]}]}. Los valores permitidos en "moods" son: ' + MOODS.join(', ') + '.';
+  // Se intenta primero la salida con esquema estricto; los servicios que no la admiten responden 400
+  // y se reintenta con JSON libre y, por último, sin pedir formato.
+  const formats = [
+    { type: 'json_schema', json_schema: { name: 'etiquetas', strict: true, schema: SCHEMA } },
+    { type: 'json_object' },
+    null,
+  ];
+  let last;
+  for (const format of formats) {
+    const body = { model: cfg.model, messages: [{ role: 'system', content: SYSTEM + (format?.type === 'json_schema' ? '' : shape) }, { role: 'user', content: user }] };
+    if (format) body.response_format = format;
+    last = await post(`${baseUrl(cfg)}/chat/completions`, headers, body);
+    if (last.r.ok) {
+      const m = last.data?.choices?.[0]?.message;
+      if (m?.refusal) throw new Error('El modelo declinó clasificar este grupo de canciones');
+      if (last.data?.choices?.[0]?.finish_reason === 'length') throw new Error('La respuesta se cortó. Prueba con menos canciones');
+      return typeof m?.content === 'string' ? m.content : (m?.content || []).map(c => c.text || '').join('');
+    }
+    if (last.r.status !== 400) break;
+  }
+  throw httpError(last.r.status, last.msg);
+}
+
+/** Modelos que ofrece el proveedor para la clave dada (OpenAI y compatibles). */
+export async function listModels(cfg) {
+  const headers = cfg.key ? { Authorization: `Bearer ${cfg.key}` } : {};
+  let r;
+  try { r = await fetch(`${baseUrl(cfg)}/models`, { headers }); }
+  catch { throw new Error('No se pudo contactar con el servicio'); }
+  const data = await r.json().catch(() => null);
+  if (!r.ok) throw httpError(r.status, data?.error?.message || `Respuesta ${r.status}`);
+  return (data?.data || data?.models || []).map(m => m.id || m.name).filter(Boolean).sort();
+}
+
+/** Saca el objeto JSON de una respuesta que puede venir envuelta en texto o en un bloque de código. */
+function parseJson(text) {
+  try { return JSON.parse(text); } catch { /* se intenta recortar */ }
+  const a = String(text || '').indexOf('{'), b = String(text || '').lastIndexOf('}');
+  if (a >= 0 && b > a) { try { return JSON.parse(text.slice(a, b + 1)); } catch { /* no es JSON */ } }
+  throw new Error('La respuesta de la IA no se pudo interpretar');
+}
+
+/**
+ * Etiqueta un grupo de canciones (como mucho BATCH por llamada).
+ * `cfg`: {provider, key, model, url, knownGenres}.
+ * Devuelve un array alineado con `tracks`: {genres, moods} o null si no hubo respuesta para esa canción.
+ */
+export async function tagTracks(tracks, cfg) {
+  const lack = missing(cfg);
+  if (lack) throw new Error(`Falta ${lack} en Ajustes → Modo desarrollador`);
+  const songs = tracks.map((t, i) => ({ i, titulo: t.title, artistas: t.artists || [t.artist], album: t.album || '', anio: t.year || null, genero_del_archivo: (t.genres || []).join(', ') }));
+  const user = JSON.stringify({ generos_ya_usados: (cfg.knownGenres || []).slice(0, 200), canciones: songs });
+  const parsed = parseJson(await (cfg.provider === 'anthropic' ? askAnthropic(cfg, user) : askOpenAI(cfg, user)));
 
   const out = tracks.map(() => null);
   for (const s of parsed.songs || []) {
     if (!Number.isInteger(s.i) || s.i < 0 || s.i >= tracks.length) continue;
     out[s.i] = {
       genres: [...new Set((s.genres || []).map(g => String(g).trim()).filter(Boolean))].slice(0, 4),
-      moods: [...new Set((s.moods || []).filter(m => MOODS.includes(m)))].slice(0, 4),
+      moods: [...new Set((s.moods || []).map(m => String(m).toLowerCase()).filter(m => MOODS.includes(m)))].slice(0, 4),
     };
   }
   return out;

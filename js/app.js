@@ -1,5 +1,5 @@
 // Interfaz de Fiora: navegación, pantallas, menús y reproductor.
-import { S, load, on, emit, isFav, toggleFav, allTracks, livePlaylists, savePlaylist, saveKV, saveTrack, collator, artistsOf, albumArtistOf, setEdit, MOODS, daypart } from './store.js';
+import { S, load, on, emit, isFav, toggleFav, allTracks, livePlaylists, savePlaylist, saveKV, saveTrack, collator, artistsOf, albumArtistOf, setEdit, MOODS, daypart, genreOptions } from './store.js';
 import * as db from './db.js';
 import * as ai from './ai.js';
 import { splitArtists, shrinkCover, hash } from './tags.js';
@@ -164,7 +164,7 @@ const watchSentinels = root => $$('.sentinel', root).forEach(s => more.observe(s
 // ---------------------------------------------------------------- navegación
 const view = $('#view');
 const NAV = [['inicio', 'Inicio', 'home'], ['biblioteca', 'Biblioteca', 'library'], ['playlists', 'Playlists', 'list'], ['explorar', 'Explorar', 'compass'], ['ajustes', 'Ajustes', 'settings']];
-const SECTION = { album: 'biblioteca', artista: 'biblioteca', genero: 'biblioteca', ambiente: 'biblioteca', playlist: 'playlists', favoritos: 'playlists', mix: 'inicio', archivo: 'explorar' };
+const SECTION = { estadisticas: 'ajustes', album: 'biblioteca', artista: 'biblioteca', genero: 'biblioteca', ambiente: 'biblioteca', playlist: 'playlists', favoritos: 'playlists', mix: 'inicio', archivo: 'explorar' };
 $('#nav-links').innerHTML = NAV.map(([id, label, ic]) => `<a href="#/${id}" data-nav="${id}">${icon(ic)}<span>${label}</span></a>`).join('');
 
 function show(html) {
@@ -488,7 +488,10 @@ async function viewSettings() {
   const onlyLocal = tracks.filter(t => t.hasBlob && !t.cloudName && !t.url).length;
   const inCloud = tracks.filter(t => t.cloudName).length;
   const sum = recs.summary();
-  const dev = !!S.settings.dev, aiKey = S.settings.aiKey || '';
+  const dev = !!S.settings.dev;
+  const A = aiConf(), prov = ai.PROVIDERS[A.provider], aiKey = A.keys[A.provider] || '', aiModel = A.models[A.provider] || '';
+  const aiReady = !ai.missing(aiOptions());
+  const presets = S.settings.genrePresets || [];
   const untagged = tracks.filter(needsTags).length;
   const gb = n => (n / 1073741824).toFixed(n > 1073741824 * 10 ? 0 : 2);
   const bks = cloud.buckets(), target = cloud.uploadTarget();
@@ -545,17 +548,29 @@ async function viewSettings() {
     <div class="panel"><h2>Modo desarrollador</h2>
       <label class="switch" style="margin-top:4px"><input type="checkbox" data-toggle="dev" ${dev ? 'checked' : ''}><span><b>Editar metadatos de las canciones</b>
         <small>Añade «Editar metadatos» al menú ⋯ de cada canción: portada, título, artistas, álbum, géneros y lo que transmite. Los cambios se guardan en tu cuenta y tu nube, y se ven en todos tus dispositivos.</small></span></label>
-      ${dev ? `<h2 style="margin-top:22px">Etiquetado con IA</h2>
-        <p>Claude propone los géneros y lo que transmite cada canción a partir de su título, artistas y álbum. Necesita una clave de la API de Claude (console.anthropic.com), tiene coste por uso y se guarda solo en este dispositivo.</p>
+      ${dev ? `<h2 style="margin-top:22px">Géneros predefinidos</h2>
+        <p>El editor ofrece una lista de géneros habituales para elegir. Aquí puedes añadir los tuyos.</p>
+        ${presets.length ? `<div class="chips">${presets.map(g => `<button class="chip" data-act="preset-remove" data-g="${esc(g)}" aria-label="Quitar ${esc(g)}">${esc(g)} ✕</button>`).join('')}</div>` : ''}
+        <form class="search" data-form="preset-add"><label class="field">${icon('plus')}<input name="g" placeholder="Nuevo género (p. ej. Indie Español)" autocomplete="off" maxlength="40" required></label><button class="btn">Añadir</button></form>
+        <h2 style="margin-top:22px">Etiquetado con IA</h2>
+        <p>Un modelo de IA propone los géneros y lo que transmite cada canción a partir de su título, artistas y álbum. Elige el servicio y pega su clave de API: tiene coste por uso y se guarda solo en este dispositivo.</p>
         <form class="stack" data-form="ai-key">
-          <label class="field">${icon('lock')}<input name="key" type="password" autocomplete="off" placeholder="${aiKey ? `Clave guardada (…${esc(aiKey.slice(-4))}). Escribe otra para cambiarla` : 'Clave de la API (sk-ant-…)'}" ${aiKey ? '' : 'required'}></label>
-          <label class="field">${icon('spark')}<select name="model">${ai.AI_MODELS.map(([id, label]) => `<option value="${id}" ${id === (S.settings.aiModel || ai.DEFAULT_MODEL) ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select></label>
-          <div class="actions"><button class="btn primary">Guardar</button>${aiKey ? '<button type="button" class="btn ghost danger" data-act="ai-forget">Quitar clave</button>' : ''}</div></form>
-        ${aiKey ? `<div class="actions" style="margin-top:14px"><button class="btn" data-act="ai-tag-all" ${untagged ? '' : 'disabled'}>${icon('spark')}${untagged ? `Etiquetar ${plural(untagged, 'canción', 'canciones')} sin etiquetar` : 'Todas las canciones están etiquetadas'}</button></div>` : ''}` : ''}</div>
+          <label class="field">${icon('compass')}<select name="provider" data-ai-provider aria-label="Servicio de IA">${Object.entries(ai.PROVIDERS).map(([id, x]) => `<option value="${id}" ${id === A.provider ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></label>
+          ${prov.needsUrl ? `<label class="field">${icon('cloud')}<input name="url" type="url" value="${esc(A.url || '')}" placeholder="Dirección de la API (https://…/v1)" autocomplete="off" required></label>` : ''}
+          <label class="field">${icon('lock')}<input name="key" type="password" autocomplete="off" placeholder="${aiKey ? `Clave guardada (…${esc(aiKey.slice(-4))}). Escribe otra para cambiarla` : esc(prov.keyHint)}" ${aiKey || prov.needsUrl ? '' : 'required'}></label>
+          ${A.provider === 'anthropic'
+            ? `<label class="field">${icon('spark')}<select name="model" aria-label="Modelo">${ai.AI_MODELS.map(([id, label]) => `<option value="${id}" ${id === (aiModel || ai.DEFAULT_MODEL) ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select></label>`
+            : `<label class="field">${icon('spark')}<input name="model" list="ai-models" value="${esc(aiModel)}" placeholder="Nombre del modelo (p. ej. el que uses en Codex)" autocomplete="off" required></label>
+               <datalist id="ai-models">${(A.lists?.[A.provider] || []).map(m => `<option value="${esc(m)}">`).join('')}</datalist>`}
+          <div class="actions"><button class="btn primary">Guardar</button>
+            ${A.provider !== 'anthropic' ? '<button type="button" class="btn" data-act="ai-models">Ver modelos disponibles</button>' : ''}
+            ${aiKey ? '<button type="button" class="btn ghost danger" data-act="ai-forget">Quitar clave</button>' : ''}</div>
+          ${prov.site ? `<small class="muted">La clave se crea en ${prov.site}.</small>` : '<small class="muted">Vale cualquier servicio con API compatible con la de OpenAI (OpenRouter, Groq, Mistral, un modelo local…), siempre que admita llamadas desde el navegador.</small>'}</form>
+        ${aiReady ? `<div class="actions" style="margin-top:14px"><button class="btn" data-act="ai-tag-all" ${untagged ? '' : 'disabled'}>${icon('spark')}${untagged ? `Etiquetar ${plural(untagged, 'canción', 'canciones')} sin etiquetar` : 'Todas las canciones están etiquetadas'}</button></div>` : ''}` : ''}</div>
     <div class="panel"><h2>Tus escuchas</h2>
-      <div class="stat-row"><div class="stat"><b>${sum.plays}</b><small>reproducciones</small></div><div class="stat"><b>${sum.hours.toFixed(1)} h</b><small>escuchadas</small></div><div class="stat"><b>${sum.skips}</b><small>saltadas</small></div><div class="stat"><b>${esc(sum.topArtists[0]?.[0] || '—')}</b><small>artista más escuchado</small></div></div>
-      ${sum.topTracks.length ? `<h2 style="margin-top:20px">Tus 5 canciones</h2>${rows(sum.topTracks)}` : '<p style="margin-top:12px">Las estadísticas se calculan en tu dispositivo a medida que escuchas.</p>'}
-      <p style="margin:14px 0 0">Las recomendaciones aprenden de lo que terminas, lo que saltas, a qué hora escuchas cada cosa y qué canciones pones seguidas.</p></div>
+      <div class="stat-row"><div class="stat"><b>${sum.plays}</b><small>reproducciones</small></div><div class="stat"><b>${sum.hours.toFixed(1)} h</b><small>escuchadas</small></div><div class="stat wide"><b title="${esc(sum.topArtists[0]?.[0] || '')}">${esc(sum.topArtists[0]?.[0] || '—')}</b><small>artista más escuchado</small></div></div>
+      <div class="actions" style="margin-top:14px"><a class="btn primary" href="#/estadisticas">${icon('chart')}Ver todas tus estadísticas</a></div>
+      <p style="margin:14px 0 0">Las recomendaciones aprenden de lo que terminas, a qué hora escuchas cada cosa y qué canciones pones seguidas.</p></div>
     <p class="muted" style="text-align:center">Fiora · Letras de LRCLIB · Música libre de Internet Archive, Openverse, Wikimedia Commons y Jamendo · Radios de Radio Browser</p>`);
 }
 async function cloudSync(silent = false) {
@@ -626,16 +641,113 @@ async function downloadMany(tracks) {
   refresh();
 }
 
+// ------------------------------------------------------------ estadísticas
+const num = n => n.toLocaleString('es');
+/** Gráfico de columnas de una sola serie. items: [{label, value, tip}]; ticks: etiquetas del eje. */
+function columns(items, { unit, ticks, caption }) {
+  const max = Math.max(1, ...items.map(x => x.value));
+  return `<figure class="chart"><div class="chart-top"><span>máx. ${num(max)} ${unit}</span></div>
+    <div class="cols" role="img" aria-label="${esc(caption)}">${items.map(x =>
+      `<div class="col" tabindex="0" data-tip="${esc(x.tip)}"><i style="height:${((x.value / max) * 100).toFixed(1)}%"></i></div>`).join('')}</div>
+    <div class="cols-x">${ticks.map(l => `<span>${esc(l)}</span>`).join('')}</div>
+    <details class="glist"><summary>Ver los datos</summary><table class="data">${items.map(x => `<tr><td>${esc(x.label)}</td><td>${num(x.value)} ${unit}</td></tr>`).join('')}</table></details></figure>`;
+}
+/** Barras horizontales con el valor al final: sirven a la vez de gráfico y de tabla. */
+function bars(list, unit = '') {
+  const max = Math.max(1, ...list.map(x => x[1]));
+  return `<ol class="hbars">${list.map(([label, value, sub]) =>
+    `<li><span class="hb-label" title="${esc(label)}"><b>${esc(label)}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</span><span class="hb-track"><i style="width:${((value / max) * 100).toFixed(1)}%"></i></span><span class="hb-val">${num(value)}${unit}</span></li>`).join('')}</ol>`;
+}
+function viewStats() {
+  const d = recs.dashboard();
+  if (!d.plays) {
+    return show(`<div class="head"><a class="icon-btn" href="#/ajustes" aria-label="Volver">${icon('back')}</a><h1>Tus estadísticas</h1></div>
+      ${empty('chart', 'Aún no hay escuchas', 'Pon música un rato y aquí verás cuánto escuchas, cuándo y qué.')}`);
+  }
+  const fmtDay = x => x.date.toLocaleDateString('es', { day: 'numeric', month: 'short' });
+  const tile = (value, label, sub = '') => `<div class="stat"><b title="${esc(String(value))}">${esc(String(value))}</b><small>${label}</small>${sub ? `<small class="stat-sub">${sub}</small>` : ''}</div>`;
+  const WEEK = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+  const PARTS = ['Madrugada', 'Mañana', 'Tarde', 'Noche'];
+  const peakHour = d.hoursOfDay.indexOf(Math.max(...d.hoursOfDay));
+  const since = '<p class="chart-note">Este gráfico se empieza a llenar desde hoy: las escuchas anteriores no guardaban la fecha.</p>';
+  show(`<div class="head"><a class="icon-btn" href="#/ajustes" aria-label="Volver">${icon('back')}</a><h1>Tus estadísticas</h1></div>
+    <div class="stat-row tiles">
+      ${tile(num(d.plays), 'reproducciones')}
+      ${tile(`${d.hours.toLocaleString('es', { maximumFractionDigits: 1 })} h`, 'de música')}
+      ${tile(num(d.heard), 'canciones distintas', `de ${num(d.total)} en tu biblioteca`)}
+      ${tile(num(d.artists), 'artistas distintos')}
+      ${tile(`${d.completion} %`, 'escuchadas hasta el final')}
+      ${tile(d.streak ? plural(d.streak, 'día', 'días') : '—', 'racha actual', d.streak ? 'seguidos con música' : '')}
+    </div>
+
+    <section class="panel"><h2>Últimos 30 días</h2><p>Minutos de música por día.</p>
+      ${columns(d.days.map(x => ({ label: fmtDay(x), value: x.min, tip: `${fmtDay(x)} · ${x.min} min · ${plural(x.plays, 'canción', 'canciones')}` })), { unit: 'min', ticks: [fmtDay(d.days[0]), fmtDay(d.days[14]), 'hoy'], caption: 'Minutos escuchados cada día durante los últimos 30 días' })}
+      ${d.hasDays ? '' : since}</section>
+
+    <div class="two-panels">
+      <section class="panel"><h2>A qué hora escuchas</h2>
+        ${d.hasHours ? `<p>Tu hora punta: las ${peakHour}:00.</p>${columns(d.hoursOfDay.map((v, h) => ({ label: `${h}:00`, value: v, tip: `${h}:00–${h + 1}:00 · ${plural(v, 'escucha', 'escuchas')}` })), { unit: 'escuchas', ticks: ['0 h', '6 h', '12 h', '18 h', '23 h'], caption: 'Escuchas por hora del día' })}`
+          : `<p>Escuchas por franja del día.</p>${bars(PARTS.map((n, i) => [n, d.parts[i]]))}`}</section>
+      <section class="panel"><h2>Qué días</h2><p>Escuchas por día de la semana.</p>
+        ${d.week.some(Boolean) ? bars(WEEK.map((n, i) => [n, d.week[i]])) : since}</section>
+    </div>
+
+    <section class="panel"><h2>Tus artistas</h2><p>Por número de escuchas.</p>${bars(d.topArtists)}</section>
+    <section class="panel"><h2>Tus canciones</h2><p>Por número de escuchas.</p>${bars(d.topTracks.map(([t, n]) => [t.title, n, t.artist]))}</section>
+    ${d.topAlbums.length ? `<section class="panel"><h2>Tus álbumes</h2><p>Por número de escuchas.</p>${bars(d.topAlbums.map(([k, n]) => { const [al, ar] = k.split(' — '); return [al, n, ar]; }))}</section>` : ''}
+    <div class="two-panels">
+      ${d.topGenres.length ? `<section class="panel"><h2>Géneros</h2><p>Escuchas de canciones de cada género.</p>${bars(d.topGenres)}</section>` : ''}
+      ${d.topMoods.length ? `<section class="panel"><h2>Lo que transmite</h2><p>Escuchas por ambiente.</p>${bars(d.topMoods.map(([m, n]) => [m[0].toUpperCase() + m.slice(1), n]))}</section>` : ''}
+    </div>
+    <p class="muted" style="text-align:center">Todo se calcula en tu dispositivo a partir de tus escuchas.</p>`);
+}
+// Etiqueta flotante de los gráficos: aparece al pasar el ratón, tocar o enfocar una columna.
+const tip = Object.assign(document.createElement('div'), { id: 'tip', hidden: true });
+document.body.append(tip);
+function showTip(el) {
+  if (!el) { tip.hidden = true; return; }
+  tip.textContent = el.dataset.tip;
+  tip.hidden = false;
+  const r = el.getBoundingClientRect(), w = tip.offsetWidth;
+  tip.style.left = `${Math.max(8, Math.min(innerWidth - w - 8, r.left + r.width / 2 - w / 2))}px`;
+  tip.style.top = `${Math.max(8, r.top - tip.offsetHeight - 8)}px`;
+}
+view.addEventListener('pointerover', e => showTip(e.target.closest('.col')));
+view.addEventListener('pointerdown', e => showTip(e.target.closest('.col')));
+view.addEventListener('focusin', e => showTip(e.target.closest('.col')));
+view.addEventListener('pointerleave', () => showTip(null));
+view.addEventListener('scroll', () => showTip(null), { passive: true });
+
 // ------------------------------------------------- modo desarrollador
 const needsTags = t => !t.aiTagged && !(t.moods || []).length;
 const quoteList = list => (list || []).map(a => (String(a).includes(',') ? `"${a}"` : a)).join(', ');
-const knownGenres = () => recs.tagCounts().genres.map(g => g[0]);
-const aiOptions = () => ({ key: S.settings.aiKey, model: S.settings.aiModel || ai.DEFAULT_MODEL, knownGenres: knownGenres() });
+/** Configuración de IA de este dispositivo: un proveedor activo y una clave y un modelo por proveedor. */
+function aiConf() {
+  const s = S.settings;
+  if (!s.ai) {
+    s.ai = { provider: 'anthropic', keys: {}, models: {}, lists: {}, url: '' };
+    if (s.aiKey) { s.ai.keys.anthropic = s.aiKey; s.ai.models.anthropic = s.aiModel || ai.DEFAULT_MODEL; }   // versión anterior
+    delete s.aiKey; delete s.aiModel;
+  }
+  return s.ai;
+}
+const aiOptions = () => {
+  const A = aiConf();
+  return { provider: A.provider, key: A.keys[A.provider] || '', model: A.models[A.provider] || (A.provider === 'anthropic' ? ai.DEFAULT_MODEL : ''), url: A.url, knownGenres: genreOptions() };
+};
 
 function editTrack(t) {
   let coverFile = null;
   const moods = new Set(t.moods || []);
   const field = (name, label, value, extra = '') => `<label class="lbl">${label}<span class="field"><input name="${name}" value="${esc(value ?? '')}" autocomplete="off" ${extra}></span></label>`;
+  let genres = [...(t.genres || [])];
+  const hasGenre = g => genres.some(x => x.toLowerCase() === g.toLowerCase());
+  const addGenre = g => { g = String(g || '').trim(); if (g && !hasGenre(g)) genres.push(genreOptions().find(x => x.toLowerCase() === g.toLowerCase()) || g); };
+  const paintGenres = () => {
+    const form = $('form', sheet);
+    $('.gsel', form).innerHTML = genres.map(g => `<button type="button" class="chip on" data-gdel="${esc(g)}" aria-label="Quitar ${esc(g)}">${esc(g)} ✕</button>`).join('') || '<small class="muted">Sin géneros</small>';
+    $('.gall', form).innerHTML = genreOptions().map(g => `<button type="button" class="chip ${hasGenre(g) ? 'on' : ''}" data-gtoggle="${esc(g)}">${esc(g)}</button>`).join('');
+  };
   const moodChips = () => MOODS.map(m => `<button type="button" class="chip ${moods.has(m) ? 'on' : ''}" data-mood="${m}">${m}</button>`).join('');
   openSheet(`<form class="dlg editor" method="dialog"><h3>Editar metadatos</h3>
     <div class="ed-cover">${cover(t)}<label class="btn">${icon('edit')}Cambiar portada<input type="file" name="cover" accept="image/*" hidden></label></div>
@@ -644,25 +756,33 @@ function editTrack(t) {
     ${field('album', 'Álbum', t.album)}
     ${field('albumArtist', 'Artista del álbum <small>opcional</small>', t.albumArtist)}
     <div class="two">${field('year', 'Año', t.year || '', 'inputmode="numeric" pattern="[0-9]{0,4}"')}${field('trackNo', 'Nº de pista', t.trackNo || '', 'inputmode="numeric" pattern="[0-9]{0,3}"')}</div>
-    ${field('genres', 'Géneros <small>separados por comas</small>', (t.genres || []).join(', '))}
+    <div class="lbl">Géneros
+      <div class="chips gsel"></div>
+      <span class="field"><input name="genreAdd" list="genre-list" placeholder="Escribe o elige un género" autocomplete="off" maxlength="40"><button type="button" class="chip" data-gadd>Añadir</button></span>
+      <datalist id="genre-list">${genreOptions().map(g => `<option value="${esc(g)}">`).join('')}</datalist>
+      <details class="glist"><summary>Elegir de la lista</summary><div class="chips gall"></div></details></div>
     <div class="lbl">Lo que transmite<div class="chips moods">${moodChips()}</div></div>
     ${t.album ? `<label class="switch ed-album" hidden><input type="checkbox" name="wholeAlbum" checked><span><b>Usar la portada en todo el álbum</b></span></label>` : ''}
-    <div class="actions">${S.settings.aiKey ? `<button type="button" class="btn" data-ai>${icon('spark')}Etiquetar con IA</button>` : ''}
+    <div class="actions">${!ai.missing(aiOptions()) ? `<button type="button" class="btn" data-ai>${icon('spark')}Etiquetar con IA</button>` : ''}
       <span style="flex:1"></span><button type="button" class="btn ghost" data-x>Cancelar</button><button class="btn primary">Guardar</button></div></form>`,
   async e => {
     const form = $('form', sheet);
     const mood = e.target.closest('[data-mood]');
     if (mood) { moods.has(mood.dataset.mood) ? moods.delete(mood.dataset.mood) : moods.add(mood.dataset.mood); mood.classList.toggle('on'); return; }
     if (e.target.closest('[data-x]')) return sheet.close();
+    const gdel = e.target.closest('[data-gdel]'), gtog = e.target.closest('[data-gtoggle]');
+    if (gdel) { genres = genres.filter(g => g !== gdel.dataset.gdel); return paintGenres(); }
+    if (gtog) { hasGenre(gtog.dataset.gtoggle) ? genres = genres.filter(g => g.toLowerCase() !== gtog.dataset.gtoggle.toLowerCase()) : addGenre(gtog.dataset.gtoggle); return paintGenres(); }
+    if (e.target.closest('[data-gadd]')) { addGenre(form.genreAdd.value); form.genreAdd.value = ''; return paintGenres(); }
     const aiBtn = e.target.closest('[data-ai]');
     if (aiBtn) {
       aiBtn.disabled = true;
       const note = toast('Consultando a la IA…', 0);
       try {
-        const draft = { ...t, title: form.elements.title.value.trim(), artists: splitArtists(form.artists.value), album: form.album.value.trim(), year: +form.year.value || 0, genres: splitCommas(form.genres.value) };
+        const draft = { ...t, title: form.elements.title.value.trim(), artists: splitArtists(form.artists.value), album: form.album.value.trim(), year: +form.year.value || 0, genres };
         const [r] = await ai.tagTracks([draft], aiOptions());
         if (r && (r.genres.length || r.moods.length)) {
-          if (r.genres.length) form.genres.value = r.genres.join(', ');
+          if (r.genres.length) { genres = []; r.genres.forEach(addGenre); paintGenres(); }
           moods.clear(); r.moods.forEach(m => moods.add(m));
           $('.moods', form).innerHTML = moodChips();
           note.done('Etiquetas propuestas. Revísalas y pulsa Guardar');
@@ -672,6 +792,9 @@ function editTrack(t) {
     }
   });
   const form = $('form', sheet);
+  paintGenres();
+  form.genreAdd.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addGenre(form.genreAdd.value); form.genreAdd.value = ''; paintGenres(); } });
+  form.genreAdd.addEventListener('change', () => { if (genreOptions().some(g => g.toLowerCase() === form.genreAdd.value.trim().toLowerCase())) { addGenre(form.genreAdd.value); form.genreAdd.value = ''; paintGenres(); } });
   form.cover.onchange = () => {
     coverFile = form.cover.files[0] || null;
     if (!coverFile) return;
@@ -685,7 +808,7 @@ function editTrack(t) {
       title: form.elements.title.value.trim() || t.title, artists: artists.length ? artists : artistsOf(t),
       album: form.album.value.trim(), albumArtist: form.albumArtist.value.trim(),
       year: +form.year.value || 0, trackNo: +form.trackNo.value || 0,
-      genres: splitCommas(form.genres.value), moods: MOODS.filter(m => moods.has(m)),
+      genres: (addGenre(form.genreAdd.value), genres), moods: MOODS.filter(m => moods.has(m)),
     };
     const siblings = coverFile && t.album && form.wholeAlbum?.checked ? allTracks().filter(o => o.id !== t.id && o.album && lib.albumKey(o) === lib.albumKey(t)) : [];
     let uploaded = true;
@@ -706,7 +829,6 @@ function editTrack(t) {
     toast(!uploaded ? 'Guardado, pero la portada no se pudo subir a la nube' : coverFile && !cloud.configured() ? 'Guardado. La portada solo se verá en este dispositivo hasta que conectes una nube' : 'Metadatos guardados');
   };
 }
-const splitCommas = str => [...new Set(String(str || '').split(/[,;]/).map(x => x.trim()).filter(Boolean))];
 
 /** Etiqueta con IA un grupo de canciones, por lotes, guardando cada lote según llega. */
 async function tagMany(tracks) {
@@ -730,7 +852,7 @@ async function tagMany(tracks) {
   note.done(`${plural(tagged, 'canción etiquetada', 'canciones etiquetadas')}${tagged < tracks.length ? ` · ${tracks.length - tagged} sin reconocer` : ''}`, 6000);
 }
 
-const ROUTES = { inicio: viewHome, biblioteca: viewLibrary, album: viewAlbum, artista: viewArtist, playlists: viewPlaylists, playlist: viewPlaylist, favoritos: viewFavs, mix: viewMix, genero: n => viewTag('genero', n), ambiente: n => viewTag('ambiente', n), explorar: viewExplore, archivo: viewArchive, ajustes: viewSettings };
+const ROUTES = { inicio: viewHome, biblioteca: viewLibrary, album: viewAlbum, artista: viewArtist, playlists: viewPlaylists, playlist: viewPlaylist, favoritos: viewFavs, mix: viewMix, estadisticas: viewStats, genero: n => viewTag('genero', n), ambiente: n => viewTag('ambiente', n), explorar: viewExplore, archivo: viewArchive, ajustes: viewSettings };
 
 // ------------------------------------------------------- menú de una canción
 function trackMenu(t, o = {}, i = -1) {
@@ -857,12 +979,30 @@ const ACTIONS = {
     refresh();
   },
   async 'bucket-default'(el) { await cloud.setUploadTarget(el.dataset.bid); refresh(); },
-  async 'ai-forget'() { S.settings.aiKey = ''; await saveKV('settings', false); refresh(); },
+  async 'ai-forget'() { const A = aiConf(); delete A.keys[A.provider]; await saveKV('settings', false); refresh(); },
+  async 'ai-models'(el) {
+    const form = el.closest('form'), A = aiConf();
+    const cfg = { ...aiOptions(), key: form.key.value.trim() || A.keys[A.provider] || '', url: form.url?.value.trim() || A.url };
+    const note = toast('Consultando los modelos disponibles…', 0);
+    try {
+      const list = await ai.listModels(cfg);
+      (A.lists ||= {})[A.provider] = list.slice(0, 300);
+      await saveKV('settings', false);
+      $('#ai-models').innerHTML = list.map(m => `<option value="${esc(m)}">`).join('');
+      note.done(list.length ? `${list.length} modelos disponibles: toca el campo «modelo» para elegir` : 'El servicio no devolvió ningún modelo', 5000);
+      form.model.focus();
+    } catch (e) { note.done(e.message, 6000); }
+  },
+  async 'preset-remove'(el) {
+    S.settings.genrePresets = (S.settings.genrePresets || []).filter(g => g !== el.dataset.g);
+    S.settings.genrePresetsAt = Date.now();
+    await saveKV('settings', false); emit('dirty'); refresh();
+  },
   async 'ai-tag-all'() {
     const list = allTracks().filter(needsTags);
-    const model = ai.AI_MODELS.find(m => m[0] === (S.settings.aiModel || ai.DEFAULT_MODEL))?.[1] || '';
+    const o = aiOptions(), service = ai.PROVIDERS[o.provider].name;
     if (!list.length || !(await confirmDlg(`¿Etiquetar ${plural(list.length, 'canción', 'canciones')} con IA?`,
-      `Se enviarán el título, los artistas, el álbum y el año de cada canción a la API de Claude con tu clave (${model}). Tiene un coste que se carga a tu cuenta de Anthropic.`, 'Etiquetar'))) return;
+      `Se enviarán el título, los artistas, el álbum y el año de cada canción a ${service} con tu clave (modelo ${o.model}). Puede tener un coste que se carga a tu cuenta de ese servicio.`, 'Etiquetar'))) return;
     tagMany(list);
   },
   async 'account-sync'() {
@@ -909,10 +1049,22 @@ document.addEventListener('submit', async e => {
   if (kind === 'jamendo-key') { S.settings.jamendoId = form.key.value.trim(); await saveKV('settings', false); searchMusic(explore.q); }
   if (kind === 'radio') { explore.radioQ = form.q.value.trim(); explore.stations = null; route(); }
   if (kind === 'ai-key') {
-    if (form.key.value.trim()) S.settings.aiKey = form.key.value.trim();
-    S.settings.aiModel = form.model.value;
+    const A = aiConf();
+    if (form.key.value.trim()) A.keys[A.provider] = form.key.value.trim();
+    A.models[A.provider] = form.model.value.trim();
+    if (form.url) A.url = form.url.value.trim();
     await saveKV('settings', false);
     toast('Configuración de IA guardada');
+    refresh();
+  }
+  if (kind === 'preset-add') {
+    const g = form.g.value.trim();
+    const all = genreOptions().map(x => x.toLowerCase());
+    if (g && !all.includes(g.toLowerCase())) {
+      S.settings.genrePresets = [...(S.settings.genrePresets || []), g];
+      S.settings.genrePresetsAt = Date.now();
+      await saveKV('settings', false); emit('dirty');
+    } else if (g) toast('Ese género ya está en la lista');
     refresh();
   }
   if (kind === 'sb-config') {
@@ -1190,6 +1342,7 @@ document.addEventListener('change', e => {
   if (Number.isFinite(P.audio.duration)) player.seek((e.target.value / 1000) * P.audio.duration);
 });
 document.addEventListener('change', async e => {
+  if (e.target.matches?.('[data-ai-provider]')) { aiConf().provider = e.target.value; await saveKV('settings', false); return refresh(); }
   const key = e.target.dataset?.toggle;
   if (!key) return;
   S.settings[key] = e.target.checked;

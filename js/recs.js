@@ -1,6 +1,6 @@
 // Recomendaciones calculadas en el dispositivo a partir de tus hábitos de escucha:
 // qué terminas y qué saltas, a qué hora escuchas cada cosa y qué canciones suenan seguidas.
-import { S, allTracks, isFav, artistsOf, daypart } from './store.js';
+import { S, allTracks, isFav, artistsOf, albumArtistOf, daypart, dayKey } from './store.js';
 
 const DAY = 864e5;
 
@@ -128,5 +128,49 @@ export function summary() {
     plays, skips, hours: seconds / 3600,
     topArtists: [...artists].sort((a, b) => b[1] - a[1]).slice(0, 5),
     topTracks: mostPlayed(5),
+  };
+}
+
+/** Todos los números del panel de estadísticas. */
+export function dashboard() {
+  const tracks = allTracks();
+  let plays = 0, seconds = 0, done = 0, heard = 0;
+  const artists = new Map(), albums = new Map(), genres = new Map(), moods = new Map();
+  const bump = (m, k, n) => m.set(k, (m.get(k) || 0) + n);
+  for (const t of tracks) {
+    const s = stat(t);
+    if (!s.plays) continue;
+    heard++; plays += s.plays; done += Math.min(s.done || 0, s.plays); seconds += s.plays * (t.duration || 0);
+    for (const a of artistsOf(t)) bump(artists, a, s.plays);
+    if (t.album) bump(albums, `${t.album} — ${albumArtistOf(t)}`, s.plays);
+    for (const g of t.genres || []) bump(genres, g, s.plays);
+    for (const m of t.moods || []) bump(moods, m, s.plays);
+  }
+  const top = (m, n) => [...m].sort((a, b) => b[1] - a[1]).slice(0, n);
+
+  // Últimos 30 días (minutos) y racha de días seguidos con música.
+  const days = [];
+  const d = new Date(); d.setHours(12, 0, 0, 0);
+  for (let i = 29; i >= 0; i--) {
+    const x = new Date(d); x.setDate(d.getDate() - i);
+    const v = S.hist.days[dayKey(x)] || [0, 0];
+    days.push({ date: x, plays: v[0], min: Math.round(v[1] / 60) });
+  }
+  let streak = 0;
+  for (let x = new Date(d); ; x.setDate(x.getDate() - 1)) {
+    if (S.hist.days[dayKey(x)]?.[0]) streak++;
+    else if (streak || dayKey(x) !== dayKey(d)) break;      // hoy puede no tener escuchas todavía
+    if (streak > 400) break;
+  }
+  const parts = [0, 0, 0, 0];
+  for (const t of tracks) (stat(t).h || []).forEach((n, i) => { parts[i] += n; });
+
+  return {
+    plays, hours: seconds / 3600, heard, total: tracks.length, artists: artists.size,
+    completion: plays ? Math.round((done / plays) * 100) : 0, streak,
+    days, hasDays: days.some(x => x.plays), hoursOfDay: S.hist.hours, hasHours: S.hist.hours.some(Boolean),
+    week: S.hist.week, parts,
+    topArtists: top(artists, 8), topAlbums: top(albums, 6), topGenres: top(genres, 8), topMoods: top(moods, 8),
+    topTracks: mostPlayed(8).map(t => [t, stat(t).plays]),
   };
 }
