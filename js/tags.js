@@ -33,6 +33,11 @@ export function splitArtists(str) {
   return [...new Set(out.map(s => s.trim()).filter(Boolean))];
 }
 
+/** Separa los géneros de una etiqueta ("Indie Rock / Dream Pop; Shoegaze"). */
+export function splitGenres(str) {
+  return [...new Set(String(str || '').split(/[\/;,|\0]/).map(s => s.trim()).filter(s => s && !/^\(?\d+\)?$/.test(s)))];
+}
+
 /** Lee las etiquetas de un Blob. Nunca rechaza: si falla devuelve {}. */
 export function readTags(blob) {
   return new Promise(resolve => {

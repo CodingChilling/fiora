@@ -6,7 +6,7 @@
 //   PUT  {par}{nombre}    -> subida
 import * as db from './db.js';
 import { S, saveTrack, saveKV, emit, on, albumArtistOf } from './store.js';
-import { buildTrack, trackId, rekey } from './library.js';
+import { buildTrack, trackId, rekey, setRemoteCover } from './library.js';
 import { isAudioName } from './tags.js';
 import { snapshot, merge } from './sync.js';
 import { wavToFlac } from './flac.js';
@@ -193,6 +193,15 @@ export async function upload(t, bucketId, onStage = () => {}) {
   await saveTrack(t);
   emit('library');
   return saved;
+}
+
+// Portadas elegidas a mano: se guardan en el primer bucket para que las vean los demás dispositivos.
+const coverName = cid => `_fiora/portadas/${cid}.jpg`;
+setRemoteCover(cid => (configured() ? objectUrl(coverName(cid), buckets()[0].id) : null));
+export async function uploadCover(cid, blob) {
+  if (!configured()) return false;
+  const r = await fetch(objectUrl(coverName(cid), buckets()[0].id), { method: 'PUT', body: blob, headers: { 'Content-Type': 'image/jpeg' } });
+  return r.ok;
 }
 
 /** Devuelve el archivo de audio de una pista: la copia del dispositivo o, si no hay, lo descarga. */

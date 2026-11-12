@@ -1,6 +1,6 @@
 // Reproductor: una sola etiqueta <audio>, cola, aleatorio, repetición y Media Session.
 import * as db from './db.js';
-import { S, emit, countPlay, saveTrack, saveKV } from './store.js';
+import { S, emit, countPlay, countSkip, countDone, countNext, saveTrack, saveKV } from './store.js';
 import { coverUrl } from './library.js';
 import { objectUrl, configured } from './cloud.js';
 
@@ -22,6 +22,16 @@ let blobUrl = null;
 let loadToken = 0;
 let counted = false;
 let errors = 0;
+let sess = null;          // escucha en curso: {id, max, dur, done, error}
+let lastHeard = null;     // última canción escuchada de verdad: {id, at}
+
+/** Cierra la escucha anterior y anota si se terminó o se saltó. */
+function settle() {
+  const s = sess; sess = null;
+  if (!s || !S.tracks.has(s.id) || s.error) return;
+  if (s.done || (s.dur && s.max / s.dur > 0.9)) countDone(s.id);
+  else if (s.max < 30 && (!s.dur || s.max / s.dur < 0.5)) countSkip(s.id);
+}
 
 const shuffled = arr => {
   const a = arr.slice();
@@ -47,6 +57,8 @@ async function load(autoplay = true) {
   const t = P.current;
   const token = ++loadToken;
   counted = false;
+  settle();
+  if (t && !t.radio) sess = { id: t.id, max: 0, dur: 0 };
   emit('track', t);
   if (!t) { audio.removeAttribute('src'); audio.load(); return; }
   try {
@@ -63,6 +75,7 @@ async function load(autoplay = true) {
 
 function onError(e) {
   const t = P.current;
+  if (sess) sess.error = true;
   emit('toast', `No se pudo reproducir «${t?.title || ''}»${navigator.onLine ? '' : ' (sin conexión)'}`);
   console.warn(e);
   if (++errors < 3 && P.index < P.queue.length - 1) next(true);
@@ -159,7 +172,7 @@ export function setVolume(v) {
 }
 
 // --- Eventos del elemento de audio ----------------------------------------
-audio.addEventListener('ended', () => next(true));
+audio.addEventListener('ended', () => { if (sess) sess.done = true; next(true); });
 audio.addEventListener('play', () => { errors = 0; emit('state'); });
 audio.addEventListener('pause', () => emit('state'));
 audio.addEventListener('waiting', () => emit('state'));
@@ -179,7 +192,10 @@ audio.addEventListener('timeupdate', () => {
       (audio.currentTime > 30 || (audio.duration && audio.currentTime > audio.duration / 2))) {
     counted = true;
     countPlay(t.id);
+    if (lastHeard && lastHeard.id !== t.id && Date.now() - lastHeard.at < 30 * 60000) countNext(lastHeard.id, t.id);
+    lastHeard = { id: t.id, at: Date.now() };
   }
+  if (sess) { sess.max = Math.max(sess.max, audio.currentTime); sess.dur = Number.isFinite(audio.duration) ? audio.duration : 0; }
   emit('time');
   if ('mediaSession' in navigator && Number.isFinite(audio.duration) && audio.duration > 0) {
     try {
