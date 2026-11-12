@@ -195,6 +195,17 @@ export async function upload(t, bucketId, onStage = () => {}) {
   return saved;
 }
 
+/** Devuelve el archivo de audio de una pista: la copia del dispositivo o, si no hay, lo descarga. */
+export async function fetchBlob(t) {
+  if (t.hasBlob) { const b = await db.get('blobs', t.id); if (b) return b; }
+  if (t.noDownload) throw new Error('El artista no permite descargar esta canción');
+  const src = t.cloudName && configured() ? objectUrl(t.cloudName, t.bucketId) : (t.dl || t.url);
+  if (!src) throw new Error('Esta canción no está disponible');
+  const r = await fetch(src);
+  if (!r.ok) throw new Error(`Respuesta ${r.status} al descargar`);
+  return r.blob();
+}
+
 /** Descarga una pista de la nube (o de una URL) para escucharla sin conexión. */
 export async function download(t) {
   const r = await fetch(t.cloudName ? objectUrl(t.cloudName, t.bucketId) : (t.dl || t.url));

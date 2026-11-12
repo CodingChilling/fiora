@@ -216,8 +216,14 @@ function viewMix(id) {
       <div class="info"><div class="kind">Hecha para ti</div><h1>${m.title}</h1><p>${m.sub} · ${plural(tracks.length, 'canción', 'canciones')}</p>${playButtons(tracks)}</div></div>
     ${tracks.length ? rows(tracks) : empty('spark', 'Aún no hay nada aquí', 'Escucha música durante unos días y esta lista se irá llenando.')}`);
 }
+// Pistas de la biblioteca que aún no están guardadas en el dispositivo y se pueden descargar.
+const needsDownload = t => inLibrary(t) && !t.hasBlob && !!(t.cloudName || t.url) && !t.noDownload;
+const downloadAllBtn = tracks => {
+  const n = tracks.filter(needsDownload).length;
+  return n ? `<button class="btn" data-act="download-all">${icon('download')}Descargar${n < tracks.length ? ` ${n}` : ''}</button>` : '';
+};
 const playButtons = tracks => (tracks.length
-  ? `<div class="actions"><button class="btn primary" data-act="play-all">${icon('play')}Reproducir</button><button class="btn" data-act="shuffle-all">${icon('shuffle')}Aleatorio</button></div>` : '');
+  ? `<div class="actions"><button class="btn primary" data-act="play-all">${icon('play')}Reproducir</button><button class="btn" data-act="shuffle-all">${icon('shuffle')}Aleatorio</button>${downloadAllBtn(tracks)}</div>` : '');
 
 // ---------------------------------------------------------------- biblioteca
 function albums(tracks = allTracks()) {
@@ -322,7 +328,7 @@ function viewPlaylist(id) {
   const tracks = playlistTracks(p);
   show(`<div class="hero">${cover({ album: p.name, coverId: tracks.find(t => t.coverId)?.coverId, coverUrl: tracks.find(t => t.coverUrl)?.coverUrl })}
       <div class="info"><div class="kind">Playlist</div><h1>${esc(p.name)}</h1><p>${plural(tracks.length, 'canción', 'canciones')} · ${totalTime(tracks)}</p>
-      <div class="actions">${tracks.length ? `<button class="btn primary" data-act="play-all">${icon('play')}Reproducir</button><button class="btn" data-act="shuffle-all">${icon('shuffle')}Aleatorio</button>` : ''}
+      <div class="actions">${tracks.length ? `<button class="btn primary" data-act="play-all">${icon('play')}Reproducir</button><button class="btn" data-act="shuffle-all">${icon('shuffle')}Aleatorio</button>${downloadAllBtn(tracks)}` : ''}
         <button class="icon-btn" data-act="rename-playlist" data-pid="${esc(p.id)}" aria-label="Cambiar nombre">${icon('edit')}</button>
         <button class="icon-btn" data-act="delete-playlist" data-pid="${esc(p.id)}" aria-label="Eliminar playlist">${icon('trash')}</button></div></div></div>
     ${tracks.length ? rows(tracks, { playlist: p.id }) : empty('list', 'Playlist vacía', 'Añade canciones desde el menú ⋯ de cualquier canción.')}`);
@@ -543,6 +549,30 @@ function uploadTo(tracks) {
   menu(`<div class="sheet-head"><div><b>¿A qué bucket?</b><small>${plural(tracks.length, 'canción', 'canciones')}</small></div></div>`,
     bks.map(b => ({ icon: 'cloudUp', label: b.name, fn: () => uploadMany(tracks, b.id) })));
 }
+/** Guarda el archivo de la canción en el almacenamiento del dispositivo (Descargas / Archivos). */
+async function exportFile(t) {
+  const note = toast(t.hasBlob ? 'Preparando el archivo…' : 'Descargando el archivo…', 0);
+  let blob;
+  try { blob = await cloud.fetchBlob(t); }
+  catch (e) { return note.done(`No se pudo obtener el archivo: ${e.message}`, 6000); }
+  const ext = (t.fileName || '').match(/\.[a-z0-9]{2,5}$/i)?.[0] || '.mp3';
+  const name = `${[t.artist, t.title].filter(Boolean).join(' - ')}${ext}`.replace(/[\\/:*?"<>|]/g, '_');
+  const file = new File([blob], name, { type: blob.type || 'audio/mpeg' });
+  // En iPhone/iPad instalada como app no hay descargas directas: se usa el menú Compartir → "Guardar en Archivos".
+  const ios = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  if (ios && navigator.canShare?.({ files: [file] })) {
+    const share = () => navigator.share({ files: [file] }).then(() => true, e => e?.name === 'AbortError');
+    if (await share()) return note.done();
+    // el permiso del toque caducó mientras se descargaba: se pide un toque más
+    note.done();
+    return menu(`<div class="sheet-head"><div><b>Archivo listo</b><small>${esc(name)}</small></div></div>`, [{ icon: 'folder', label: 'Guardar en Archivos…', fn: share }]);
+  }
+  const url = URL.createObjectURL(file);
+  const a = Object.assign(document.createElement('a'), { href: url, download: name });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+  note.done(`«${name}» guardado en las descargas del dispositivo`, 5000);
+}
 async function downloadMany(tracks) {
   const t = toast('Descargando…', 0);
   let ok = 0, fail = 0;
@@ -586,7 +616,8 @@ function trackMenu(t, o = {}, i = -1) {
         menu(`<div class="sheet-head"><div><b>¿A qué artista?</b></div></div>`, names.map(n => ({ icon: 'user', label: n, fn: () => go(`#/artista/${enc(n)}`) })));
       },
     },
-    lib_ && remote && !t.hasBlob && !t.noDownload && { icon: 'download', label: 'Descargar para escuchar sin conexión', fn: () => downloadMany([t]) },
+    lib_ && remote && !t.hasBlob && !t.noDownload && { icon: 'download', label: 'Descargar en la app (sin conexión)', fn: () => downloadMany([t]) },
+    !t.noDownload && (t.hasBlob || remote) && { icon: 'folder', label: 'Guardar el archivo en el dispositivo', fn: () => exportFile(t) },
     lib_ && remote && t.hasBlob && { icon: 'x', label: 'Quitar la descarga de este dispositivo', fn: async () => { await lib.dropBlob(t.id); toast('Descarga eliminada'); } },
     lib_ && t.hasBlob && !t.cloudName && cloud.configured() && { icon: 'cloudUp', label: 'Subir a la nube', fn: () => uploadTo([t]) },
     t.link && /^https:\/\//.test(t.link) && { icon: 'compass', label: `Ver origen y licencia${t.license ? ` (${t.license})` : ''}`, fn: () => window.open(t.link, '_blank', 'noopener') },
@@ -621,6 +652,7 @@ const ACTIONS = {
   fav(el) { const r = rowInfo(el); if (r?.track) toggleFav(r.track.id); },
   more(el) { const r = rowInfo(el); if (r?.track) trackMenu(r.track, r.opts, r.i); },
   'play-all'() { const l = firstList().filter(playable); if (l.length) { if (P.shuffle) player.toggleShuffle(); player.playQueue(l); } },
+  'download-all'() { const l = firstList().filter(needsDownload); if (l.length) downloadMany(l); },
   'shuffle-all'() { const l = firstList().filter(playable); if (l.length) { if (!P.shuffle) player.toggleShuffle(); player.playQueue(l, Math.floor(Math.random() * l.length)); } },
   'add-music'() {
     menu(`<div class="sheet-head"><div><b>Añadir música</b><small>Se copia a este dispositivo para escucharla sin conexión</small></div></div>`, [

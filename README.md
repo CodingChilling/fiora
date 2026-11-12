@@ -4,6 +4,7 @@ Tu música, sin suscripciones. Una app web instalable (PWA) para escuchar tu pro
 
 - **Tu biblioteca**: importa archivos o carpetas enteras (MP3, FLAC, M4A, OGG, WAV…). Lee título, artista, álbum, carátula y letra de las etiquetas.
 - **Sin conexión**: la música importada o descargada se guarda en el dispositivo y la app se abre sin internet.
+- **Descargas**: baja una canción, un álbum o una playlist entera dentro de la app, o guarda el archivo en la carpeta de descargas del móvil u ordenador.
 - **Nube personal**: conecta uno o varios buckets de Oracle Cloud Object Storage y escucha tu música desde cualquier dispositivo. Playlists, favoritos y estadísticas se sincronizan.
 - **Cuenta**: inicia sesión con correo y contraseña y recupera tus datos en cualquier dispositivo.
 - **Playlists y favoritos**, cola de reproducción, aleatorio y repetición, controles en la pantalla de bloqueo.
