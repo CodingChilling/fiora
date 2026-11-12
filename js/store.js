@@ -1,6 +1,6 @@
 // Estado en memoria de la app (metadatos); los audios y carátulas viven en IndexedDB.
 import * as db from './db.js';
-import { splitArtists } from './tags.js';
+import { splitArtists, splitGenres } from './tags.js';
 
 export const S = {
   tracks: new Map(),   // id -> pista
@@ -8,6 +8,8 @@ export const S = {
   favs: {},            // id -> {on, at}
   stats: {},           // id -> {plays, last}
   stations: [],        // radios guardadas
+  edits: {},           // id -> {at, f: {campos editados a mano o por IA}}
+  trans: {},           // id -> {idSiguiente: veces}  (qué suena después de qué)
   settings: {},        // {buckets, uploadBucket, shrink, volume, ...}
 };
 
@@ -16,18 +18,27 @@ export const emit = (name, detail) => bus.dispatchEvent(new CustomEvent(name, { 
 export const on = (name, fn) => bus.addEventListener(name, e => fn(e.detail));
 
 export async function load() {
-  const [tracks, playlists, favs, stats, stations, settings] = await Promise.all([
+  const [tracks, playlists, favs, stats, stations, settings, edits, trans] = await Promise.all([
     db.all('tracks'), db.all('playlists'),
     db.get('kv', 'favs'), db.get('kv', 'stats'), db.get('kv', 'stations'), db.get('kv', 'settings'),
+    db.get('kv', 'edits'), db.get('kv', 'trans'),
   ]);
+  S.edits = edits || {};
+  S.trans = trans || {};
   S.tracks = new Map(tracks.map(t => [t.id, t]));
   // Pistas guardadas por versiones anteriores: separa sus artistas una sola vez.
   for (const t of tracks) {
-    if (t.artists) continue;
-    const list = splitArtists(t.artist);
-    t.artists = list.length ? list : ['Artista desconocido'];
-    t.artist = t.artists.join(', ');
-    db.put('tracks', t.id, t);
+    let changed = false;
+    if (!t.artists) {
+      const list = splitArtists(t.artist);
+      t.artists = list.length ? list : ['Artista desconocido'];
+      t.artist = t.artists.join(', ');
+      changed = true;
+    }
+    if (!t.genres) { t.genres = splitGenres(t.genre); t.genre = t.genres[0] || ''; changed = true; }
+    if (!t.moods) { t.moods = []; changed = true; }
+    if (applyEdit(t)) changed = true;
+    if (changed) db.put('tracks', t.id, t);
   }
   S.playlists = playlists;
   S.favs = favs || {};
@@ -42,7 +53,32 @@ export function saveKV(name, sync = true) {
   return db.put('kv', name, S[name]);
 }
 
+/** Lo que transmite una canción: vocabulario cerrado para que las mezclas sean coherentes. */
+export const MOODS = ['alegre', 'melancólica', 'enérgica', 'relajada', 'oscura', 'romántica', 'épica', 'nostálgica',
+  'agresiva', 'bailable', 'íntima', 'soñadora', 'festiva', 'triste', 'motivadora'];
+
+/** Aplica a la pista los metadatos editados (a mano o por IA). Devuelve true si cambió algo. */
+export function applyEdit(t) {
+  const e = S.edits[t.id];
+  if (!e || t.editAt === e.at) return false;
+  Object.assign(t, e.f);
+  if (e.f.artists) t.artist = t.artists.join(', ');
+  if (e.f.genres) t.genre = t.genres[0] || '';
+  t.editAt = e.at;
+  return true;
+}
+
+/** Guarda una edición de metadatos; se sincroniza con la cuenta y la nube como el resto de datos. */
+export async function setEdit(t, fields) {
+  S.edits[t.id] = { at: Date.now(), f: { ...(S.edits[t.id]?.f || {}), ...fields } };
+  await saveKV('edits');
+  if (S.tracks.has(t.id)) await saveTrack(t); else applyEdit(t);
+}
+
 export async function saveTrack(t) {
+  applyEdit(t);
+  if (!t.genres) t.genres = splitGenres(t.genre);
+  if (!t.moods) t.moods = [];
   S.tracks.set(t.id, t);
   commonArtist = null;
   await db.put('tracks', t.id, t);
@@ -56,11 +92,29 @@ export function toggleFav(id) {
   return S.favs[id].on;
 }
 
+/** Franja del día: 0 madrugada, 1 mañana, 2 tarde, 3 noche. */
+export const daypart = (d = new Date()) => { const h = d.getHours(); return h < 6 ? 0 : h < 12 ? 1 : h < 19 ? 2 : 3; };
+
+const statOf = id => S.stats[id] || (S.stats[id] = { plays: 0, last: 0 });
+/** Escucha real (más de 30 s o la mitad de la canción). */
 export function countPlay(id) {
-  const s = S.stats[id] || (S.stats[id] = { plays: 0, last: 0 });
+  const s = statOf(id);
   s.plays++;
   s.last = Date.now();
+  (s.h ||= [0, 0, 0, 0])[daypart()]++;
   saveKV('stats');
+}
+/** La canción se saltó nada más empezar. */
+export function countSkip(id) { const s = statOf(id); s.skips = (s.skips || 0) + 1; saveKV('stats'); }
+/** La canción se escuchó hasta el final. */
+export function countDone(id) { const s = statOf(id); s.done = (s.done || 0) + 1; saveKV('stats'); }
+/** Tras `a` se escuchó `b`: sirve para saber qué canciones van bien juntas. */
+export function countNext(a, b) {
+  const m = S.trans[a] || (S.trans[a] = {});
+  m[b] = (m[b] || 0) + 1;
+  const keys = Object.keys(m);
+  if (keys.length > 40) for (const k of keys.sort((x, y) => m[y] - m[x]).slice(30)) delete m[k];
+  saveKV('trans');
 }
 
 export const livePlaylists = () => S.playlists.filter(p => !p.deleted);

@@ -1,11 +1,11 @@
 // Copia de los datos del usuario (playlists, favoritos, estadísticas, emisoras, ajustes)
 // y fusión con una copia remota. Lo usan tanto la cuenta (Supabase) como el bucket de Oracle.
 import * as db from './db.js';
-import { S, saveKV, emit } from './store.js';
+import { S, saveKV, emit, applyEdit } from './store.js';
 
 /** Datos que se guardan fuera del dispositivo. Los ajustes solo viajan con la cuenta. */
 export function snapshot(withPrefs = false) {
-  const data = { v: 1, at: Date.now(), playlists: S.playlists, favs: S.favs, stats: S.stats, stations: S.stations };
+  const data = { v: 2, at: Date.now(), playlists: S.playlists, favs: S.favs, stats: S.stats, stations: S.stations, edits: S.edits, trans: S.trans };
   if (withPrefs) {
     const s = S.settings;
     if (s.buckets?.length && !s.bucketsAt) s.bucketsAt = 1;   // conexión hecha antes de tener cuenta
@@ -33,7 +33,24 @@ export async function merge(remote) {
   for (const [id, s] of Object.entries(remote.stats || {})) {
     const l = S.stats[id] || (S.stats[id] = { plays: 0, last: 0 });
     if (s.plays > l.plays || s.last > l.last) { l.plays = Math.max(l.plays, s.plays); l.last = Math.max(l.last, s.last); changed = true; }
+    for (const k of ['skips', 'done']) if ((s[k] || 0) > (l[k] || 0)) { l[k] = s[k]; changed = true; }
+    if (s.h) { l.h ||= [0, 0, 0, 0]; s.h.forEach((n, i) => { if (n > l.h[i]) { l.h[i] = n; changed = true; } }); }
   }
+  let transChanged = false;
+  for (const [a, m] of Object.entries(remote.trans || {})) {
+    const l = S.trans[a] || (S.trans[a] = {});
+    for (const [b, n] of Object.entries(m)) if (n > (l[b] || 0)) { l[b] = n; transChanged = true; }
+  }
+  // Metadatos editados: gana la edición más reciente de cada canción.
+  let editsChanged = false;
+  for (const [id, e] of Object.entries(remote.edits || {})) {
+    if (S.edits[id] && S.edits[id].at >= e.at) continue;
+    S.edits[id] = e; editsChanged = true;
+    const t = S.tracks.get(id);
+    if (t && applyEdit(t)) await db.put('tracks', id, t);
+  }
+  if (transChanged) await saveKV('trans', false);
+  if (editsChanged) { await saveKV('edits', false); emit('library'); }
   const seen = new Set(S.stations.map(s => s.id));
   for (const st of remote.stations || []) if (!seen.has(st.id)) { S.stations.push(st); changed = true; }
 
@@ -61,8 +78,8 @@ export async function merge(remote) {
 /** Borra los datos personales del dispositivo (al entrar con otra cuenta). La música descargada no se toca. */
 export async function clearPersonal() {
   for (const p of S.playlists) await db.del('playlists', p.id);
-  S.playlists = []; S.favs = {}; S.stats = {}; S.stations = [];
+  S.playlists = []; S.favs = {}; S.stats = {}; S.stations = []; S.trans = {};
   S.settings.buckets = []; S.settings.bucketsAt = 0; delete S.settings.uploadBucket;   // la nube era de la otra persona
-  await Promise.all([saveKV('favs', false), saveKV('stats', false), saveKV('stations', false), saveKV('settings', false)]);
+  await Promise.all([saveKV('favs', false), saveKV('stats', false), saveKV('stations', false), saveKV('trans', false), saveKV('settings', false)]);
   emit('playlists'); emit('favs');
 }

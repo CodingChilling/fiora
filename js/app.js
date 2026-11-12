@@ -1,5 +1,8 @@
 // Interfaz de Fiora: navegación, pantallas, menús y reproductor.
-import { S, load, on, emit, isFav, toggleFav, allTracks, livePlaylists, savePlaylist, saveKV, saveTrack, collator, artistsOf, albumArtistOf } from './store.js';
+import { S, load, on, emit, isFav, toggleFav, allTracks, livePlaylists, savePlaylist, saveKV, saveTrack, collator, artistsOf, albumArtistOf, setEdit, MOODS, daypart } from './store.js';
+import * as db from './db.js';
+import * as ai from './ai.js';
+import { splitArtists, shrinkCover, hash } from './tags.js';
 import * as lib from './library.js';
 import * as player from './player.js';
 import { P } from './player.js';
@@ -156,7 +159,7 @@ const watchSentinels = root => $$('.sentinel', root).forEach(s => more.observe(s
 // ---------------------------------------------------------------- navegación
 const view = $('#view');
 const NAV = [['inicio', 'Inicio', 'home'], ['biblioteca', 'Biblioteca', 'library'], ['playlists', 'Playlists', 'list'], ['explorar', 'Explorar', 'compass'], ['ajustes', 'Ajustes', 'settings']];
-const SECTION = { album: 'biblioteca', artista: 'biblioteca', playlist: 'playlists', favoritos: 'playlists', mix: 'inicio', archivo: 'explorar' };
+const SECTION = { album: 'biblioteca', artista: 'biblioteca', genero: 'biblioteca', ambiente: 'biblioteca', playlist: 'playlists', favoritos: 'playlists', mix: 'inicio', archivo: 'explorar' };
 $('#nav-links').innerHTML = NAV.map(([id, label, ic]) => `<a href="#/${id}" data-nav="${id}">${icon(ic)}<span>${label}</span></a>`).join('');
 
 function show(html) {
@@ -188,7 +191,10 @@ const MIXES = {
   redescubre: { title: 'Redescubre', sub: 'Lo que llevas tiempo sin escuchar', icon: 'compass', hue: 190, get: () => recs.rediscover() },
   top: { title: 'Lo más escuchado', sub: 'Tus canciones de siempre', icon: 'disc', hue: 280, get: () => recs.mostPlayed() },
   recientes: { title: 'Añadidas recientemente', sub: 'Lo último de tu biblioteca', icon: 'plus', hue: 120, get: () => recs.recentlyAdded() },
+  // Solo aparece cuando ya hay suficientes escuchas en esta franja del día.
+  momento: { get title() { return `Para ${recs.PART_NAMES[daypart()]}`; }, sub: 'Lo que sueles escuchar a estas horas', icon: 'radio', hue: 45, get: () => recs.momentMix(), hideEmpty: true },
 };
+const MOOD_HUE = m => (MOODS.indexOf(m) * 47 + 200) % 360;
 function viewHome() {
   const h = new Date().getHours();
   const hello = h < 6 ? 'Buenas noches' : h < 13 ? 'Buenos días' : h < 21 ? 'Buenas tardes' : 'Buenas noches';
@@ -199,11 +205,14 @@ function viewHome() {
   }
   const recent = allTracks().filter(t => S.stats[t.id]?.last).sort((a, b) => S.stats[b.id].last - S.stats[a.id].last).slice(0, 6);
   const newest = albums().sort((a, b) => b.addedAt - a.addedAt).slice(0, 12);
+  const topMoods = recs.tagCounts().moods.filter(([, n]) => n >= 3).slice(0, 6);
   show(`<div class="head"><h1>${hello}</h1></div>
-    <div class="mixes">${Object.entries(MIXES).map(([id, m]) =>
+    <div class="mixes">${Object.entries(MIXES).filter(([, m]) => !m.hideEmpty || m.get().length).map(([id, m]) =>
       `<a class="mix" href="#/mix/${id}"><span class="badge" style="--hue:${m.hue}">${icon(m.icon)}</span><span><b>${m.title}</b><small>${m.sub}</small></span></a>`).join('')}
       <a class="mix" href="#/favoritos"><span class="badge" style="--hue:340">${icon('heart')}</span><span><b>Canciones que te gustan</b><small>${plural(allTracks().filter(t => isFav(t.id)).length, 'canción', 'canciones')}</small></span></a>
     </div>
+    ${topMoods.length ? `<h2>Por ambiente</h2><div class="mixes">${topMoods.map(([m, n]) =>
+      `<a class="mix" href="#/ambiente/${enc(m)}"><span class="badge" style="--hue:${MOOD_HUE(m)}">${icon('spark')}</span><span><b style="text-transform:capitalize">${esc(m)}</b><small>${plural(n, 'canción', 'canciones')}</small></span></a>`).join('')}</div>` : ''}
     ${recent.length ? `<h2>Escuchado hace poco</h2>${rows(recent)}` : ''}
     ${newest.length ? `<h2>Álbumes recientes</h2><div class="strip">${newest.map(albumCard).join('')}</div>` : ''}`);
 }
@@ -222,6 +231,13 @@ const downloadAllBtn = tracks => {
   const n = tracks.filter(needsDownload).length;
   return n ? `<button class="btn" data-act="download-all">${icon('download')}Descargar${n < tracks.length ? ` ${n}` : ''}</button>` : '';
 };
+function viewTag(kind, name) {
+  const mood = kind === 'ambiente';
+  const tracks = mood ? recs.moodMix(name, 500) : recs.byGenre(name).sort((a, b) => collator.compare(a.title, b.title));
+  show(`<div class="hero"><span class="cover" style="--hue:${mood ? MOOD_HUE(name) : hue(name)}"><i>${icon(mood ? 'spark' : 'disc')}</i></span>
+      <div class="info"><div class="kind">${mood ? 'Ambiente' : 'Género'}</div><h1 style="text-transform:${mood ? 'capitalize' : 'none'}">${esc(name)}</h1><p>${plural(tracks.length, 'canción', 'canciones')}${mood ? ' · primero las que más te gustan' : ''}</p>${playButtons(tracks)}</div></div>
+    ${tracks.length ? rows(tracks) : empty('disc', 'Sin canciones', 'Ninguna canción tiene esta etiqueta todavía.')}`);
+}
 const playButtons = tracks => (tracks.length
   ? `<div class="actions"><button class="btn primary" data-act="play-all">${icon('play')}Reproducir</button><button class="btn" data-act="shuffle-all">${icon('shuffle')}Aleatorio</button>${downloadAllBtn(tracks)}</div>` : '');
 
@@ -261,13 +277,19 @@ function libraryList(tab) {
     const list = albums().filter(a => hit(a.title, a.artist)).sort((a, b) => collator.compare(a.title, b.title));
     return list.length ? `<div class="grid">${list.map(albumCard).join('')}</div>` : empty('disc', 'Sin álbumes', 'No hay álbumes que coincidan.');
   }
+  if (tab === 'generos') {
+    const { moods, genres } = recs.tagCounts();
+    const chips = (list, route) => `<div class="chips">${list.filter(([n]) => hit(n)).map(([n, c]) => `<a class="chip" href="#/${route}/${enc(n)}">${esc(n)} <small class="muted">${c}</small></a>`).join('')}</div>`;
+    if (!moods.length && !genres.length) return empty('disc', 'Aún no hay etiquetas', 'Los géneros salen de las etiquetas de tus archivos. Para añadir géneros y ambientes a mano o con IA, activa el modo desarrollador en Ajustes.');
+    return `${moods.length ? `<h2 style="margin-top:6px">Lo que transmite</h2>${chips(moods, 'ambiente')}` : ''}${genres.length ? `<h2>Géneros</h2>${chips(genres, 'genero')}` : ''}`;
+  }
   if (tab === 'artistas') {
     const list = artists().filter(a => hit(a.name)).sort((a, b) => collator.compare(a.name, b.name));
     return list.length ? `<div class="grid">${list.map(a =>
       `<a class="card" href="#/artista/${enc(a.name)}">${cover({ album: a.name, coverId: a.coverId, coverUrl: a.coverUrl }, 'round')}<span><b>${esc(a.name)}</b><small>${plural(a.tracks.length, 'canción', 'canciones')}</small></span></a>`).join('')}</div>`
       : empty('user', 'Sin artistas', 'No hay artistas que coincidan.');
   }
-  const list = allTracks().filter(t => hit(t.title, t.artist, t.album)).sort((a, b) => collator.compare(a.title, b.title));
+  const list = allTracks().filter(t => hit(t.title, t.artist, t.album, ...(t.genres || []), ...(t.moods || []))).sort((a, b) => collator.compare(a.title, b.title));
   return list.length ? rows(list) : empty('search', 'Sin resultados', 'Ninguna canción coincide con la búsqueda.');
 }
 function viewLibrary(tab = 'canciones') {
@@ -276,7 +298,7 @@ function viewLibrary(tab = 'canciones') {
       'Elige archivos o una carpeta entera (MP3, FLAC, M4A, OGG…). Se guardan en este dispositivo para escucharlos sin conexión.',
       `${ADD_BTN}`)}`);
   }
-  const tabs = [['canciones', 'Canciones'], ['albumes', 'Álbumes'], ['artistas', 'Artistas']];
+  const tabs = [['canciones', 'Canciones'], ['albumes', 'Álbumes'], ['artistas', 'Artistas'], ['generos', 'Géneros']];
   show(`<div class="head"><h1>Biblioteca</h1>${ADD_BTN}</div>
     <label class="field" style="margin-bottom:14px">${icon('search')}<input id="lib-q" type="search" placeholder="Buscar en tu biblioteca" value="${esc(libQuery)}" autocomplete="off"></label>
     <div class="tabs">${tabs.map(([id, l]) => `<a href="#/biblioteca/${id}" class="${id === tab ? 'on' : ''}">${l}</a>`).join('')}</div>
@@ -461,6 +483,8 @@ async function viewSettings() {
   const onlyLocal = tracks.filter(t => t.hasBlob && !t.cloudName && !t.url).length;
   const inCloud = tracks.filter(t => t.cloudName).length;
   const sum = recs.summary();
+  const dev = !!S.settings.dev, aiKey = S.settings.aiKey || '';
+  const untagged = tracks.filter(needsTags).length;
   const gb = n => (n / 1073741824).toFixed(n > 1073741824 * 10 ? 0 : 2);
   const bks = cloud.buckets(), target = cloud.uploadTarget();
   const steps = `<ol class="steps"><li>En la consola de Oracle Cloud: <b>Storage → Buckets → Create Bucket</b> (privado).</li>
@@ -511,9 +535,20 @@ async function viewSettings() {
       <p>${plural(tracks.length, 'canción', 'canciones')} en la biblioteca · ${offline} disponibles sin conexión.</p>
       ${est.quota ? `<div class="meter"><i style="width:${Math.min(100, (est.usage / est.quota) * 100).toFixed(1)}%"></i></div><small class="muted">${gb(est.usage)} GB usados de ${gb(est.quota)} GB disponibles para la app</small>` : ''}
       <div class="actions" style="margin-top:14px">${ADD_BTN}${installEvent ? `<button class="btn" data-act="install">${icon('download')}Instalar como app</button>` : ''}</div></div>
+    <div class="panel"><h2>Modo desarrollador</h2>
+      <label class="switch" style="margin-top:4px"><input type="checkbox" data-toggle="dev" ${dev ? 'checked' : ''}><span><b>Editar metadatos de las canciones</b>
+        <small>Añade «Editar metadatos» al menú ⋯ de cada canción: portada, título, artistas, álbum, géneros y lo que transmite. Los cambios se guardan en tu cuenta y tu nube, y se ven en todos tus dispositivos.</small></span></label>
+      ${dev ? `<h2 style="margin-top:22px">Etiquetado con IA</h2>
+        <p>Claude propone los géneros y lo que transmite cada canción a partir de su título, artistas y álbum. Necesita una clave de la API de Claude (console.anthropic.com), tiene coste por uso y se guarda solo en este dispositivo.</p>
+        <form class="stack" data-form="ai-key">
+          <label class="field">${icon('lock')}<input name="key" type="password" autocomplete="off" placeholder="${aiKey ? `Clave guardada (…${esc(aiKey.slice(-4))}). Escribe otra para cambiarla` : 'Clave de la API (sk-ant-…)'}" ${aiKey ? '' : 'required'}></label>
+          <label class="field">${icon('spark')}<select name="model">${ai.AI_MODELS.map(([id, label]) => `<option value="${id}" ${id === (S.settings.aiModel || ai.DEFAULT_MODEL) ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select></label>
+          <div class="actions"><button class="btn primary">Guardar</button>${aiKey ? '<button type="button" class="btn ghost danger" data-act="ai-forget">Quitar clave</button>' : ''}</div></form>
+        ${aiKey ? `<div class="actions" style="margin-top:14px"><button class="btn" data-act="ai-tag-all" ${untagged ? '' : 'disabled'}>${icon('spark')}${untagged ? `Etiquetar ${plural(untagged, 'canción', 'canciones')} sin etiquetar` : 'Todas las canciones están etiquetadas'}</button></div>` : ''}` : ''}</div>
     <div class="panel"><h2>Tus escuchas</h2>
-      <div class="stat-row"><div class="stat"><b>${sum.plays}</b><small>reproducciones</small></div><div class="stat"><b>${sum.hours.toFixed(1)} h</b><small>escuchadas</small></div><div class="stat"><b>${esc(sum.topArtists[0]?.[0] || '—')}</b><small>artista más escuchado</small></div></div>
-      ${sum.topTracks.length ? `<h2 style="margin-top:20px">Tus 5 canciones</h2>${rows(sum.topTracks)}` : '<p style="margin-top:12px">Las estadísticas se calculan en tu dispositivo a medida que escuchas.</p>'}</div>
+      <div class="stat-row"><div class="stat"><b>${sum.plays}</b><small>reproducciones</small></div><div class="stat"><b>${sum.hours.toFixed(1)} h</b><small>escuchadas</small></div><div class="stat"><b>${sum.skips}</b><small>saltadas</small></div><div class="stat"><b>${esc(sum.topArtists[0]?.[0] || '—')}</b><small>artista más escuchado</small></div></div>
+      ${sum.topTracks.length ? `<h2 style="margin-top:20px">Tus 5 canciones</h2>${rows(sum.topTracks)}` : '<p style="margin-top:12px">Las estadísticas se calculan en tu dispositivo a medida que escuchas.</p>'}
+      <p style="margin:14px 0 0">Las recomendaciones aprenden de lo que terminas, lo que saltas, a qué hora escuchas cada cosa y qué canciones pones seguidas.</p></div>
     <p class="muted" style="text-align:center">Fiora · Letras de LRCLIB · Música libre de Internet Archive, Openverse, Wikimedia Commons y Jamendo · Radios de Radio Browser</p>`);
 }
 async function cloudSync(silent = false) {
@@ -584,7 +619,111 @@ async function downloadMany(tracks) {
   refresh();
 }
 
-const ROUTES = { inicio: viewHome, biblioteca: viewLibrary, album: viewAlbum, artista: viewArtist, playlists: viewPlaylists, playlist: viewPlaylist, favoritos: viewFavs, mix: viewMix, explorar: viewExplore, archivo: viewArchive, ajustes: viewSettings };
+// ------------------------------------------------- modo desarrollador
+const needsTags = t => !t.aiTagged && !(t.moods || []).length;
+const quoteList = list => (list || []).map(a => (String(a).includes(',') ? `"${a}"` : a)).join(', ');
+const knownGenres = () => recs.tagCounts().genres.map(g => g[0]);
+const aiOptions = () => ({ key: S.settings.aiKey, model: S.settings.aiModel || ai.DEFAULT_MODEL, knownGenres: knownGenres() });
+
+function editTrack(t) {
+  let coverFile = null;
+  const moods = new Set(t.moods || []);
+  const field = (name, label, value, extra = '') => `<label class="lbl">${label}<span class="field"><input name="${name}" value="${esc(value ?? '')}" autocomplete="off" ${extra}></span></label>`;
+  const moodChips = () => MOODS.map(m => `<button type="button" class="chip ${moods.has(m) ? 'on' : ''}" data-mood="${m}">${m}</button>`).join('');
+  openSheet(`<form class="dlg editor" method="dialog"><h3>Editar metadatos</h3>
+    <div class="ed-cover">${cover(t)}<label class="btn">${icon('edit')}Cambiar portada<input type="file" name="cover" accept="image/*" hidden></label></div>
+    ${field('title', 'Título', t.title, 'required')}
+    ${field('artists', 'Artistas <small>separados por comas; entre comillas si el nombre lleva coma</small>', quoteList(artistsOf(t)), 'required')}
+    ${field('album', 'Álbum', t.album)}
+    ${field('albumArtist', 'Artista del álbum <small>opcional</small>', t.albumArtist)}
+    <div class="two">${field('year', 'Año', t.year || '', 'inputmode="numeric" pattern="[0-9]{0,4}"')}${field('trackNo', 'Nº de pista', t.trackNo || '', 'inputmode="numeric" pattern="[0-9]{0,3}"')}</div>
+    ${field('genres', 'Géneros <small>separados por comas</small>', (t.genres || []).join(', '))}
+    <div class="lbl">Lo que transmite<div class="chips moods">${moodChips()}</div></div>
+    ${t.album ? `<label class="switch ed-album" hidden><input type="checkbox" name="wholeAlbum" checked><span><b>Usar la portada en todo el álbum</b></span></label>` : ''}
+    <div class="actions">${S.settings.aiKey ? `<button type="button" class="btn" data-ai>${icon('spark')}Etiquetar con IA</button>` : ''}
+      <span style="flex:1"></span><button type="button" class="btn ghost" data-x>Cancelar</button><button class="btn primary">Guardar</button></div></form>`,
+  async e => {
+    const form = $('form', sheet);
+    const mood = e.target.closest('[data-mood]');
+    if (mood) { moods.has(mood.dataset.mood) ? moods.delete(mood.dataset.mood) : moods.add(mood.dataset.mood); mood.classList.toggle('on'); return; }
+    if (e.target.closest('[data-x]')) return sheet.close();
+    const aiBtn = e.target.closest('[data-ai]');
+    if (aiBtn) {
+      aiBtn.disabled = true;
+      const note = toast('Consultando a la IA…', 0);
+      try {
+        const draft = { ...t, title: form.elements.title.value.trim(), artists: splitArtists(form.artists.value), album: form.album.value.trim(), year: +form.year.value || 0, genres: splitCommas(form.genres.value) };
+        const [r] = await ai.tagTracks([draft], aiOptions());
+        if (r && (r.genres.length || r.moods.length)) {
+          if (r.genres.length) form.genres.value = r.genres.join(', ');
+          moods.clear(); r.moods.forEach(m => moods.add(m));
+          $('.moods', form).innerHTML = moodChips();
+          note.done('Etiquetas propuestas. Revísalas y pulsa Guardar');
+        } else note.done('La IA no reconoce esta canción lo suficiente para etiquetarla', 5000);
+      } catch (err) { note.done(err.message, 6000); }
+      aiBtn.disabled = false;
+    }
+  });
+  const form = $('form', sheet);
+  form.cover.onchange = () => {
+    coverFile = form.cover.files[0] || null;
+    if (!coverFile) return;
+    const c = $('.ed-cover .cover', form);
+    c.style.backgroundImage = `url("${URL.createObjectURL(coverFile)}")`; c.classList.add('has');
+    const sw = $('.ed-album', form); if (sw) sw.hidden = false;
+  };
+  form.onsubmit = async () => {
+    const artists = splitArtists(form.artists.value);
+    const fields = {
+      title: form.elements.title.value.trim() || t.title, artists: artists.length ? artists : artistsOf(t),
+      album: form.album.value.trim(), albumArtist: form.albumArtist.value.trim(),
+      year: +form.year.value || 0, trackNo: +form.trackNo.value || 0,
+      genres: splitCommas(form.genres.value), moods: MOODS.filter(m => moods.has(m)),
+    };
+    const siblings = coverFile && t.album && form.wholeAlbum?.checked ? allTracks().filter(o => o.id !== t.id && o.album && lib.albumKey(o) === lib.albumKey(t)) : [];
+    let uploaded = true;
+    if (coverFile) {
+      const small = await shrinkCover(coverFile, 600);
+      if (!small) toast('Esa imagen no se pudo leer; la portada no ha cambiado', 5000);
+      else {
+        const cid = 'u' + hash(t.id + Date.now());
+        await db.put('covers', cid, small);
+        Object.assign(fields, { coverId: cid, coverUrl: '' });
+        for (const o of siblings) await setEdit(o, { coverId: cid, coverUrl: '' });
+        if (cloud.configured()) uploaded = await cloud.uploadCover(cid, small).catch(() => false);
+      }
+    }
+    await setEdit(t, fields);
+    emit('library');
+    if (P.current?.id === t.id) { renderMini(); renderNow(); }
+    toast(!uploaded ? 'Guardado, pero la portada no se pudo subir a la nube' : coverFile && !cloud.configured() ? 'Guardado. La portada solo se verá en este dispositivo hasta que conectes una nube' : 'Metadatos guardados');
+  };
+}
+const splitCommas = str => [...new Set(String(str || '').split(/[,;]/).map(x => x.trim()).filter(Boolean))];
+
+/** Etiqueta con IA un grupo de canciones, por lotes, guardando cada lote según llega. */
+async function tagMany(tracks) {
+  const note = toast('Preparando…', 0);
+  let tagged = 0;
+  for (let i = 0; i < tracks.length; i += ai.BATCH) {
+    const chunk = tracks.slice(i, i + ai.BATCH);
+    note.set(`Etiquetando con IA: ${i + 1}–${i + chunk.length} de ${tracks.length}…`);
+    let res;
+    try { res = await ai.tagTracks(chunk, aiOptions()); }
+    catch (e) { emit('library'); return note.done(`${tagged ? `${tagged} etiquetadas. ` : ''}Se detuvo: ${e.message}`, 8000); }
+    for (let k = 0; k < chunk.length; k++) {
+      const r = res[k], t = chunk[k];
+      const got = r && (r.genres.length || r.moods.length);
+      // aiTagged evita volver a enviar (y pagar) las canciones que la IA no reconoce
+      await setEdit(t, got ? { genres: r.genres.length ? r.genres : t.genres || [], moods: r.moods, aiTagged: true } : { aiTagged: true });
+      if (got) tagged++;
+    }
+  }
+  emit('library');
+  note.done(`${plural(tagged, 'canción etiquetada', 'canciones etiquetadas')}${tagged < tracks.length ? ` · ${tracks.length - tagged} sin reconocer` : ''}`, 6000);
+}
+
+const ROUTES = { inicio: viewHome, biblioteca: viewLibrary, album: viewAlbum, artista: viewArtist, playlists: viewPlaylists, playlist: viewPlaylist, favoritos: viewFavs, mix: viewMix, genero: n => viewTag('genero', n), ambiente: n => viewTag('ambiente', n), explorar: viewExplore, archivo: viewArchive, ajustes: viewSettings };
 
 // ------------------------------------------------------- menú de una canción
 function trackMenu(t, o = {}, i = -1) {
@@ -606,6 +745,7 @@ function trackMenu(t, o = {}, i = -1) {
     !o.queue && { icon: 'plus', label: 'Añadir a la cola', fn: () => { player.enqueue([t]); toast('Añadida a la cola'); } },
     !lib_ && { icon: 'library', label: 'Añadir a mi biblioteca', fn: async () => { await saveToLibrary([t]); toast('Añadida a tu biblioteca'); } },
     lib_ && { icon: 'list', label: 'Añadir a playlist…', fn: () => addToPlaylist([t]) },
+    lib_ && S.settings.dev && { icon: 'edit', label: 'Editar metadatos', fn: () => editTrack(t) },
     lib_ && { icon: 'heart', label: isFav(t.id) ? 'Quitar de favoritas' : 'Me gusta', fn: () => toggleFav(t.id) },
     lib_ && { icon: 'spark', label: 'Radio de esta canción', fn: () => { player.playQueue(recs.songRadio(t)); toast('Mezcla creada a partir de la canción'); } },
     lib_ && t.album && { icon: 'disc', label: 'Ir al álbum', fn: () => go(`#/album/${enc(lib.albumKey(t))}`) },
@@ -696,6 +836,14 @@ const ACTIONS = {
     refresh();
   },
   async 'bucket-default'(el) { await cloud.setUploadTarget(el.dataset.bid); refresh(); },
+  async 'ai-forget'() { S.settings.aiKey = ''; await saveKV('settings', false); refresh(); },
+  async 'ai-tag-all'() {
+    const list = allTracks().filter(needsTags);
+    const model = ai.AI_MODELS.find(m => m[0] === (S.settings.aiModel || ai.DEFAULT_MODEL))?.[1] || '';
+    if (!list.length || !(await confirmDlg(`¿Etiquetar ${plural(list.length, 'canción', 'canciones')} con IA?`,
+      `Se enviarán el título, los artistas, el álbum y el año de cada canción a la API de Claude con tu clave (${model}). Tiene un coste que se carga a tu cuenta de Anthropic.`, 'Etiquetar'))) return;
+    tagMany(list);
+  },
   async 'account-sync'() {
     const t = toast('Guardando en tu cuenta…', 0);
     try { await account.sync(); t.done('Datos guardados y sincronizados'); }
@@ -739,6 +887,13 @@ document.addEventListener('submit', async e => {
   if (kind === 'archive') { const q = form.q.value.trim(); if (q || explore.src === 'jamendo') searchMusic(q); }
   if (kind === 'jamendo-key') { S.settings.jamendoId = form.key.value.trim(); await saveKV('settings', false); searchMusic(explore.q); }
   if (kind === 'radio') { explore.radioQ = form.q.value.trim(); explore.stations = null; route(); }
+  if (kind === 'ai-key') {
+    if (form.key.value.trim()) S.settings.aiKey = form.key.value.trim();
+    S.settings.aiModel = form.model.value;
+    await saveKV('settings', false);
+    toast('Configuración de IA guardada');
+    refresh();
+  }
   if (kind === 'sb-config') {
     let url;
     try { url = new URL(form.url.value.trim()); } catch { return toast('Esa URL no es válida'); }
@@ -856,7 +1011,8 @@ function renderNow() {
       <button class="icon-btn" data-act="now-more" aria-label="Más opciones">${icon('more')}</button></div>
     <div class="body"><div class="left">
       <div class="stage">${cover(t)}</div>
-      <div class="meta"><div><b>${esc(t.title)}</b><span>${esc(t.artist || '')}</span></div>
+      <div class="meta"><div><b>${esc(t.title)}</b><span>${esc(t.artist || '')}</span>
+        ${[...(t.genres || []), ...(t.moods || [])].length ? `<span class="tags">${esc([...(t.genres || []).slice(0, 2), ...(t.moods || []).slice(0, 3)].join(' · '))}</span>` : ''}</div>
         ${inLibrary(t) ? `<button class="icon-btn fav js-fav" data-act="now-fav" aria-label="Me gusta">${icon('heart')}</button>` : ''}</div>
       <div><input type="range" class="js-seek" min="0" max="1000" value="0" aria-label="Posición" style="width:100%">
         <div class="times"><span class="js-cur">0:00</span><span class="js-dur"></span></div></div>
@@ -974,6 +1130,7 @@ document.addEventListener('change', async e => {
   S.settings[key] = e.target.checked;
   S.settings[key + 'At'] = Date.now();
   await saveKV('settings', false);
+  if (key === 'dev') return refresh();   // solo cambia lo que se ve en este dispositivo
   emit('dirty');
 });
 addEventListener('keydown', e => {

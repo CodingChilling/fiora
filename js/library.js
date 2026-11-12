@@ -1,7 +1,7 @@
 // Biblioteca: importar archivos del dispositivo, borrar pistas, carátulas.
 import * as db from './db.js';
 import { S, saveTrack, saveKV, emit, savePlaylist, albumArtistOf } from './store.js';
-import { readTags, fromFilename, splitArtists, shrinkCover, probeDuration, isAudioName, hash } from './tags.js';
+import { readTags, fromFilename, splitArtists, splitGenres, shrinkCover, probeDuration, isAudioName, hash } from './tags.js';
 
 export const trackId = (size, name) => `${size}:${name}`;
 export const albumKey = t => `${albumArtistOf(t).toLowerCase()}|${(t.album || '').toLowerCase()}`;
@@ -17,7 +17,7 @@ export async function buildTrack({ id, blob, path, size }) {
     title: tags.title || guess.title,
     artists, artist: artists.join(', '), albumArtist: tags.albumArtist || '',
     album: tags.album || guess.album || '',
-    genre: tags.genre || '', year: tags.year || 0,
+    genres: splitGenres(tags.genre), genre: splitGenres(tags.genre)[0] || '', moods: [], year: tags.year || 0,
     trackNo: tags.trackNo || guess.trackNo || 0,
     lyrics: tags.lyrics || '',
     duration: 0, addedAt: Date.now(),
@@ -93,6 +93,7 @@ export async function rekey(t, newId, { blob, fileName, size }) {
   }
   if (S.favs[old]) { S.favs[newId] = { on: S.favs[old].on, at: Date.now() }; S.favs[old] = { on: false, at: Date.now() }; saveKV('favs'); }
   if (S.stats[old]) { S.stats[newId] = S.stats[old]; delete S.stats[old]; saveKV('stats'); }
+  if (S.edits[old]) { S.edits[newId] = { ...S.edits[old], at: Date.now() }; delete S.edits[old]; t.editAt = S.edits[newId].at; saveKV('edits'); await db.put('tracks', newId, t); }
 }
 
 /** Borra solo la copia sin conexión de una pista que sigue en la nube. */
@@ -106,6 +107,8 @@ export async function dropBlob(id) {
 }
 
 // --- Carátulas -------------------------------------------------------------
+let remoteCover = null;
+export const setRemoteCover = fn => { remoteCover = fn; };
 const coverUrls = new Map();   // coverId -> objectURL | null
 export async function coverUrl(track) {
   if (!track) return null;
@@ -113,7 +116,8 @@ export async function coverUrl(track) {
   const cid = track.coverId;
   if (!cid) return null;
   if (!coverUrls.has(cid)) {
-    coverUrls.set(cid, db.get('covers', cid).then(b => (b ? URL.createObjectURL(b) : null)).catch(() => null));
+    // Las portadas puestas a mano ("u…") que no estén en este dispositivo se piden a la nube.
+    coverUrls.set(cid, db.get('covers', cid).then(b => (b ? URL.createObjectURL(b) : (cid[0] === 'u' && remoteCover ? remoteCover(cid) : null))).catch(() => null));
   }
   return coverUrls.get(cid);
 }

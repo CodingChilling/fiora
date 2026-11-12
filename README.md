@@ -9,7 +9,9 @@ Tu música, sin suscripciones. Una app web instalable (PWA) para escuchar tu pro
 - **Cuenta**: inicia sesión con correo y contraseña y recupera tus datos en cualquier dispositivo.
 - **Playlists y favoritos**, cola de reproducción, aleatorio y repetición, controles en la pantalla de bloqueo.
 - **Letras** sincronizadas (incrustadas en el archivo o de [LRCLIB](https://lrclib.net)) y carátulas.
-- **Para ti**: mezcla diaria, redescubre, lo más escuchado y radio a partir de una canción. Todo se calcula en tu dispositivo.
+- **Para ti**: mezcla diaria, mezclas por ambiente y por hora del día, redescubre y radio a partir de una canción. Aprenden de lo que terminas, lo que saltas y lo que escuchas seguido; todo se calcula en tu dispositivo.
+- **Géneros y ambiente**: cada canción puede tener varios géneros y etiquetas de lo que transmite (alegre, melancólica, enérgica…).
+- **Modo desarrollador**: edita portada, título, artistas, álbum, géneros y ambiente desde la app; los cambios se sincronizan con tu cuenta y tu nube. Los géneros y el ambiente también se pueden etiquetar con IA.
 - **Explorar**: música con licencias abiertas de [Internet Archive](https://archive.org), [Openverse](https://openverse.org), [Wikimedia Commons](https://commons.wikimedia.org) y [Jamendo](https://www.jamendo.com), y emisoras de [Radio Browser](https://www.radio-browser.info).
 
 No hay servidor propio ni seguimiento: es HTML, CSS y JavaScript sin paso de compilación.
@@ -67,6 +69,13 @@ La clave pública está pensada para ir en el navegador: lo que protege los dato
 
 Por defecto Supabase pide confirmar el correo al crear la cuenta. Si la app es solo para ti, puedes desactivarlo en *Authentication → Sign In / Providers → Email → Confirm email*.
 
+## Modo desarrollador y etiquetado con IA
+
+Se activa en **Ajustes → Modo desarrollador**. Añade «Editar metadatos» al menú ⋯ de cada canción.
+
+- Las ediciones se guardan como datos de la app (no reescriben las etiquetas dentro del archivo de audio) y viajan con tu cuenta y con el primer bucket, así que se ven igual en todos tus dispositivos. Las portadas que elijas se suben a `_fiora/portadas/` en ese bucket.
+- **Etiquetado con IA**: pega una clave de la API de Claude (console.anthropic.com) y elige el modelo. La app envía título, artistas, álbum y año, y recibe géneros y ambiente. La llamada sale directamente de tu navegador con tu clave, que se guarda solo en ese dispositivo y nunca se sincroniza. Cada uso tiene coste en tu cuenta de Anthropic.
+
 ## Catálogos de música libre
 
 En **Explorar** eliges dónde buscar. Todo se puede escuchar en línea, añadir a la biblioteca y (si la licencia lo permite) descargar; cada canción enlaza a su origen y su licencia.
@@ -101,6 +110,7 @@ Y abre `http://localhost:8000`.
 | `js/account.js`, `js/sync.js`, `js/config.js` | Cuentas con Supabase y sincronización de datos |
 | `js/sources.js` | Catálogos de música libre y radios |
 | `js/lyrics.js`, `js/recs.js` | Letras y recomendaciones |
+| `js/ai.js` | Etiquetado de géneros y ambiente con IA |
 | `js/db.js`, `js/store.js` | Almacenamiento en IndexedDB |
 | `sw.js`, `manifest.webmanifest` | Modo sin conexión e instalación |
 
