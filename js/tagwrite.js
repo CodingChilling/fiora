@@ -110,9 +110,30 @@ async function parseId3(read) {
         o += 10 + len;
       }
     }
-    // ID3v2.2 (muy antigua): se sustituye por una 2.3 con los campos editados.
+    else if (head[3] === 2) frames = convertV22(await read(10, 10 + size), flags);   // ID3v2.2 -> 2.3
   }
   return { ver, frames, audioStart };
+}
+
+// ID3v2.2 (iTunes antiguo) usa identificadores de 3 letras: se convierten a 2.3 sin perder nada.
+const V22 = { TT1: 'TIT1', TT2: 'TIT2', TT3: 'TIT3', TP1: 'TPE1', TP2: 'TPE2', TP3: 'TPE3', TP4: 'TPE4', TAL: 'TALB', TCO: 'TCON', TYE: 'TYER', TRK: 'TRCK', TPA: 'TPOS', TCM: 'TCOM', TXT: 'TEXT', TBP: 'TBPM', TCR: 'TCOP', TEN: 'TENC', TLA: 'TLAN', TPB: 'TPUB', TOA: 'TOPE', TOT: 'TOAL', TSS: 'TSSE', TCP: 'TCMP', TS2: 'TSO2', TSA: 'TSOA', TSP: 'TSOP', TST: 'TSOT', TSC: 'TSOC', TXX: 'TXXX', COM: 'COMM', ULT: 'USLT', WXX: 'WXXX', UFI: 'UFID', CNT: 'PCNT', POP: 'POPM' };
+function convertV22(body, flags) {
+  if (flags & 0x80) body = deUnsync(body);
+  const out = [];
+  for (let o = 0; o + 6 <= body.length && body[o] !== 0;) {
+    const id = String.fromCharCode(...body.subarray(o, o + 3));
+    const len = (body[o + 3] << 16) | (body[o + 4] << 8) | body[o + 5];
+    if (!/^[A-Z0-9]{3}$/.test(id) || o + 6 + len > body.length) break;
+    let data = body.subarray(o + 6, o + 6 + len), id4 = V22[id];
+    if (id === 'PIC') {   // [codificación][formato de 3 letras][tipo][descripción][imagen] -> APIC con tipo MIME
+      const fmt = String.fromCharCode(...data.subarray(1, 4)).toUpperCase();
+      data = cat([data.subarray(0, 1), latin1(fmt === 'PNG' ? 'image/png' : 'image/jpeg'), new Uint8Array([0]), data.subarray(4)]);
+      id4 = 'APIC';
+    }
+    if (id4) out.push({ id: id4, raw: cat([latin1(id4), u32(data.length), new Uint8Array([0, 0]), data]), data, fflags: 0 });
+    o += 6 + len;
+  }
+  return out;
 }
 
 /**
@@ -122,7 +143,9 @@ async function parseId3(read) {
 const WANT = new Set(['TIT2', 'TPE1', 'TPE2', 'TALB', 'TYER', 'TDRC', 'TRCK', 'TCON', 'TMOO', 'TXXX']);
 async function id3TextFrames(read) {
   const head = await read(0, 10);
-  if (!(head[0] === 0x49 && head[1] === 0x44 && head[2] === 0x33) || !(head[3] === 3 || head[3] === 4)) return { ver: 3, frames: [] };
+  if (!(head[0] === 0x49 && head[1] === 0x44 && head[2] === 0x33)) return { ver: 3, frames: [] };
+  if (head[3] === 2) return parseId3(read);   // ID3v2.2: se lee entera y se convierte
+  if (head[3] !== 3 && head[3] !== 4) return { ver: 3, frames: [] };
   const ver = head[3], flags = head[5], end = 10 + readSyncsafe(head, 6);
   if (ver === 3 && flags & 0x80) return parseId3(read);   // etiqueta con «unsynchronisation»: hay que leerla entera
   let o = 10;
@@ -351,7 +374,7 @@ export async function readFileTags(read, size, fileName = '') {
       const t = td.decode(c), i = t.indexOf('=');
       if (i > 0) (map[t.slice(0, i).toUpperCase()] ||= []).push(t.slice(i + 1));
     }
-    for (const [k, ks] of Object.entries(VORBIS_KEYS)) { const val = ks.map(x => map[x]).find(Boolean); if (val) out[k] = val.join('; '); }
+    for (const [k, ks] of Object.entries(VORBIS_KEYS)) { const val = ks.map(x => map[x]).find(Boolean); if (val) out[k] = val.join('\0'); }   // varios valores: \0, como en ID3v2.4
     return out;
   }
   if (s.slice(4, 8) === 'ftyp') {
@@ -407,6 +430,15 @@ export async function readFileTags(read, size, fileName = '') {
     }
   }
   return out;
+}
+
+/** El archivo se puede editar (un FLAC con una etiqueta ID3 delante, por ejemplo, no). */
+export async function writableKind(read, fileName = '') {
+  const s = String.fromCharCode(...await read(0, 12));
+  if (s.startsWith('fLaC')) return 'flac';
+  if (s.slice(4, 8) === 'ftyp') return 'mp4';
+  if (/\.flac$/i.test(fileName) || /\.(m4a|m4b|mp4)$/i.test(fileName)) return null;
+  return 'mp3';
 }
 
 /**

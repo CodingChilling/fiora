@@ -36,10 +36,19 @@ export function splitArtists(str) {
   return [...new Set(out.map(s => s.trim()).filter(Boolean))];
 }
 
-/** Separa los géneros de una etiqueta ("Indie Rock / Dream Pop; Shoegaze"). */
+/**
+ * Separa los géneros de una etiqueta. Si la etiqueta usa «;» o el separador nulo de ID3v2.4, la
+ * barra forma parte del nombre ("Hip-Hop/Rap; Pop" -> Hip-Hop/Rap, Pop); si no, también separan
+ * «/», «,» y «|» ("Indie Rock / Dream Pop" -> Indie Rock, Dream Pop).
+ */
 export function splitGenres(str) {
-  return [...new Set(String(str || '').split(/[\/;,|\0]/).map(s => s.trim()).filter(s => s && !/^\(?\d+\)?$/.test(s)))];
+  str = String(str || '');
+  const sep = /[;\0]/.test(str) ? /[;\0]/ : /[\/;,|\0]/;
+  return [...new Set(str.split(sep).map(s => s.trim()).filter(s => s && !/^\(?\d+\)?$/.test(s)))];
 }
+
+/** Artistas de una etiqueta: varios valores (\0) y, dentro de cada uno, comas fuera de comillas. */
+export const splitArtistTag = str => [...new Set(String(str || '').split('\0').flatMap(splitArtists))];
 
 /** Separa la lista de «lo que transmite» de una etiqueta MOOD ("alegre; bailable"). */
 export const splitMoods = str => [...new Set(String(str || '').split(/[;,\/|\0]/).map(s => s.trim()).filter(Boolean))];
@@ -49,6 +58,7 @@ export async function readTags(blob) {
   const [base, own] = await Promise.all([readTagsJsm(blob), readFileTags(blobReader(blob), blob.size).catch(() => ({}))]);
   const out = { ...base };
   if (own.genre) out.genre = own.genre;               // conserva bien varios géneros (ID3v2.4 los separa con \0)
+  if (own.artist) { const a = splitArtistTag(own.artist); if (a.length > (out.artists?.length || 0)) out.artists = a; }
   if (own.mood) out.moods = splitMoods(own.mood);
   if (!out.albumArtist && own.albumArtist) out.albumArtist = clean(own.albumArtist);
   if (!out.year && own.year) { const y = String(own.year).match(/\d{4}/); if (y) out.year = +y[0]; }
