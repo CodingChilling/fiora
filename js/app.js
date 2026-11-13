@@ -939,6 +939,7 @@ function editTrack(t) {
       <datalist id="genre-list">${genreOptions().map(g => `<option value="${esc(g)}">`).join('')}</datalist>
       <details class="glist"><summary>Elegir de la lista</summary><div class="chips gall"></div></details></div>
     <div class="lbl">Lo que transmite<div class="chips moods">${moodChips()}</div></div>
+    <p class="file-state" data-filestate>${cloud.canWriteFile(t) ? 'Leyendo lo que hay guardado en el archivo…' : t.url && !t.cloudName ? 'Música libre: los cambios se guardan en la app (el archivo no es tuyo).' : 'Este formato no guarda estos datos dentro del archivo: los cambios se guardan en la app.'}</p>
     ${t.album ? `<label class="switch ed-album" hidden><input type="checkbox" name="wholeAlbum" checked><span><b>Usar la portada en todo el álbum</b></span></label>` : ''}
     <div class="actions">${aiIsReady() ? `<button type="button" class="btn" data-ai>${icon('spark')}Etiquetar con IA</button>` : ''}
       <span style="flex:1"></span><button type="button" class="btn ghost" data-x>Cancelar</button><button class="btn primary">Guardar</button></div></form>`,
@@ -979,6 +980,7 @@ function editTrack(t) {
     c.style.backgroundImage = `url("${URL.createObjectURL(coverFile)}")`; c.classList.add('has');
     const sw = $('.ed-album', form); if (sw) sw.hidden = false;
   };
+  showFileState(t);
   form.onsubmit = async () => {
     const artists = splitArtists(form.artists.value);
     const fields = {
@@ -1010,6 +1012,19 @@ function editTrack(t) {
     toast(coverFile && !cloud.configured() ? 'Guardado. La portada solo se verá en este dispositivo hasta que conectes una nube'
       : !cloud.canWriteFile(t) && !t.url ? 'Metadatos guardados en la app (este formato no permite escribirlos en el archivo)' : 'Metadatos guardados');
   };
+}
+
+/** Muestra en el editor lo que hay escrito ahora mismo en el archivo de la canción. */
+async function showFileState(t) {
+  const el = $('[data-filestate]', sheet);
+  if (!el || !cloud.canWriteFile(t)) return;
+  try {
+    const got = await cloud.fileTags(t);
+    if (!got || !sheet.open || !el.isConnected) return;
+    const where = t.hasBlob ? 'En el archivo' : 'En el archivo de la nube';
+    const g = got.genre ? `«${got.genre}»` : 'nada', m = got.mood ? `«${got.mood}»` : 'nada';
+    el.textContent = `${where}: géneros ${g} · lo que transmite ${m}.${fileOutdated(t) ? ' Hay cambios sin guardar en el archivo: se guardarán al pulsar Guardar.' : ''}`;
+  } catch (e) { if (el.isConnected) el.textContent = `No se pudo leer el archivo (${e.message}).`; }
 }
 
 /** Etiqueta con IA un grupo de canciones, por lotes, guardando cada lote según llega. */
@@ -1048,17 +1063,17 @@ async function offerWrite(files) {
 /** Escribe los metadatos editados en los archivos, uno a uno. */
 async function writeFiles(list) {
   const note = toast('Guardando en el archivo…', 0);
-  let done = 0, toCloud = 0;
+  let done = 0, toCloud = 0, got = null;
   const fails = [];
   for (let i = 0; i < list.length; i++) {
     const t = S.tracks.get(list[i].id) || list[i];
     const label = stage => note.set(list.length > 1 ? `${stage} ${i + 1} de ${list.length}: ${t.title}` : `${stage}: ${t.title}`);
-    try { if (await cloud.writeFile(t, label)) { done++; if (t.cloudName) toCloud++; } }
+    try { if ((got = await cloud.writeFile(t, label))) { done++; if (t.cloudName) toCloud++; } }
     catch (e) { console.warn(e); fails.push(`«${t.title}»: ${e.message}`); }
   }
-  const msg = list.length === 1 && done ? `Guardado en el archivo${toCloud ? ' y en la nube' : ''}`
-    : `${plural(done, 'archivo actualizado', 'archivos actualizados')}${toCloud ? ` (${toCloud} en la nube)` : ''}`;
-  note.done(fails.length ? `${done ? `${msg}. ` : ''}No se pudo guardar ${fails[0]}${fails.length > 1 ? ` y ${fails.length - 1} más` : ''}` : msg, fails.length ? 9000 : 4000);
+  const msg = list.length === 1 && done ? `Guardado y comprobado en el archivo${toCloud ? ' de la nube' : ''}: géneros «${got.genre || '—'}» · lo que transmite «${got.mood || '—'}»`
+    : `${plural(done, 'archivo actualizado y comprobado', 'archivos actualizados y comprobados')}${toCloud ? ` (${toCloud} en la nube)` : ''}`;
+  note.done(fails.length ? `${done ? `${msg}. ` : ''}No se pudo guardar ${fails[0]}${fails.length > 1 ? ` y ${fails.length - 1} más` : ''}` : msg, fails.length ? 10000 : 7000);
   refresh();
 }
 
@@ -1711,6 +1726,10 @@ async function start() {
   if (typeof S.settings.volume === 'number') P.audio.volume = S.settings.volume;
   cloud.migrate();
   await sealAiKeys().catch(e => console.warn('No se pudieron cifrar las claves de IA', e));
+  if (S.settings.dev) {
+    const pending = allTracks().filter(t => fileOutdated(t) && cloud.canWriteFile(t)).length;
+    if (pending) setTimeout(() => toast(`${plural(pending, 'canción tiene', 'canciones tienen')} géneros u otros cambios que aún no están en su archivo. Guárdalos en Ajustes → Modo desarrollador.`, 9000), 1500);
+  }
   const linked = await account.init();   // puede venir de un enlace de correo de Supabase
   addEventListener('hashchange', route);
   await route();
