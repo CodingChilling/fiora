@@ -1,9 +1,9 @@
 // Service worker: guarda la app para abrirla sin conexión. La música vive en IndexedDB, no aquí.
-const CACHE = 'fiora-v13';
+const CACHE = 'fiora-v14';
 const SHELL = [
   './', 'index.html', 'manifest.webmanifest', 'css/styles.css',
   'js/app.js', 'js/db.js', 'js/store.js', 'js/tags.js', 'js/library.js', 'js/player.js',
-  'js/cloud.js', 'js/sources.js', 'js/lyrics.js', 'js/recs.js', 'js/icons.js', 'js/sync.js', 'js/flac.js', 'js/ai.js', 'js/account.js', 'js/config.js',
+  'js/cloud.js', 'js/sources.js', 'js/lyrics.js', 'js/recs.js', 'js/icons.js', 'js/sync.js', 'js/flac.js', 'js/ai.js', 'js/oci.js', 'js/account.js', 'js/config.js',
   'vendor/jsmediatags.min.js', 'icons/icon-64.png', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png',
 ];
 

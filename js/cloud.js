@@ -4,13 +4,14 @@
 //   GET  {par}            -> lista de objetos (JSON)
 //   GET  {par}{nombre}    -> descarga (admite Range)
 //   PUT  {par}{nombre}    -> subida
-//   DELETE {par}{nombre}  -> borrado (si la PAR no lo admite, el archivo se vacía: 0 bytes)
+// Las PAR no permiten borrar: para eso se usa la API de Oracle con una clave de API (oci.js).
 import * as db from './db.js';
 import { S, saveTrack, saveKV, emit, on, albumArtistOf } from './store.js';
 import { buildTrack, trackId, rekey, setRemoteCover } from './library.js';
 import { isAudioName } from './tags.js';
 import { snapshot, merge } from './sync.js';
 import { wavToFlac } from './flac.js';
+import * as oci from './oci.js';
 
 const DATA_OBJECT = '_fiora/datos.json';
 const HEAD_BYTES = 768 * 1024;   // suficiente para las etiquetas y la carátula en casi todos los archivos
@@ -197,20 +198,31 @@ export async function upload(t, bucketId, onStage = () => {}) {
 }
 
 /**
- * Borra de su bucket el archivo de una pista. Las PAR de Oracle no siempre aceptan DELETE:
- * en ese caso el archivo se sobrescribe vacío (0 bytes), lo que libera el espacio, y Fiora
- * deja de mostrarlo en todos los dispositivos. Devuelve 'deleted' o 'emptied'.
+ * Borra de su bucket el archivo de una pista. Las PAR no permiten borrar (limitación de Oracle):
+ * con una clave de API de Oracle configurada se borra de verdad ('deleted'); si no, el archivo se
+ * sobrescribe vacío (0 bytes), lo que libera el espacio y Fiora deja de mostrarlo ('emptied').
  */
 export async function deleteRemote(t) {
   if (!t.cloudName) return null;
   const b = t.bucketId ? buckets().find(x => x.id === t.bucketId) : buckets()[0];
   if (!b) throw new Error('El bucket de esta canción no está conectado');
-  const url = objectUrl(t.cloudName, b.id);
-  const r = await fetch(url, { method: 'DELETE' }).catch(() => null);
-  if (r && (r.ok || r.status === 404)) return 'deleted';
-  const w = await fetch(url, { method: 'PUT', body: new Blob([]), headers: { 'Content-Type': 'application/octet-stream' } });
+  if (oci.configured()) { await oci.deleteObject(b.url, t.cloudName); return 'deleted'; }
+  const w = await fetch(objectUrl(t.cloudName, b.id), { method: 'PUT', body: new Blob([]), headers: { 'Content-Type': 'application/octet-stream' } });
   if (w.ok) return 'emptied';
   throw new Error(`«${b.name}» respondió ${w.status} al borrar. ¿La PAR permite escritura?`);
+}
+
+/** Comprueba la clave de API de Oracle con el primer bucket. */
+export const checkOci = () => oci.check(buckets()[0].url);
+
+/** Borra del todo los archivos de audio vacíos (canciones borradas sin clave de API). */
+export async function purgeEmpty(onProgress = () => {}) {
+  let deleted = 0;
+  for (const b of buckets()) {
+    const empty = (await listObjects(b)).filter(o => !o.size && isAudioName(o.name));
+    for (const o of empty) { onProgress(deleted + 1, o.name); await oci.deleteObject(b.url, o.name); deleted++; }
+  }
+  return deleted;
 }
 
 // Portadas elegidas a mano: se guardan en el primer bucket para que las vean los demás dispositivos.

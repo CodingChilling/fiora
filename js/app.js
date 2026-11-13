@@ -7,6 +7,7 @@ import * as lib from './library.js';
 import * as player from './player.js';
 import { P } from './player.js';
 import * as cloud from './cloud.js';
+import * as oci from './oci.js';
 import * as account from './account.js';
 import * as src from './sources.js';
 import { getLyrics } from './lyrics.js';
@@ -505,6 +506,18 @@ async function viewSettings() {
   const dups = dev ? lib.findDuplicates(dupKeep) : [], extra = dups.reduce((n, g) => n + g.tracks.length - 1, 0);
   const gb = n => (n / 1073741824).toFixed(n > 1073741824 * 10 ? 0 : 2);
   const bks = cloud.buckets(), target = cloud.uploadTarget();
+  const O = S.settings.oci;
+  const ociPanel = !bks.length ? '' : `<h2 style="margin-top:22px">Borrar de verdad en Oracle</h2>
+    ${O ? `<p>Clave de API de Oracle conectada (huella …${esc(O.fingerprint.slice(-5))}). Las canciones que borres de la nube se eliminan de Oracle.</p>
+      <div class="actions"><button class="btn" data-act="oci-purge">${icon('trash')}Borrar los archivos que quedaron vacíos</button><button class="btn ghost danger" data-act="oci-forget">Quitar clave</button></div>`
+    : `<p>Oracle no permite borrar archivos con la URL del bucket (PAR). Sin más, Fiora deja el archivo vacío: no ocupa espacio y desaparece de la app, pero su nombre sigue en el bucket. Para borrarlo del todo, añade una clave de API de tu usuario de Oracle. Se guarda solo en este dispositivo y tiene los mismos permisos que tu usuario: añádela solo en dispositivos tuyos.</p>
+      <ol class="steps"><li>En la consola de Oracle Cloud: icono de tu perfil (arriba a la derecha) → <b>Mi perfil</b> → <b>Claves API</b> (<i>API keys</i>) → <b>Agregar clave API</b>.</li>
+        <li>Elige <b>Generar par de claves API</b>, pulsa <b>Descargar clave privada</b> y después <b>Agregar</b>.</li>
+        <li>Copia el texto de la <b>vista previa del archivo de configuración</b> y pégalo aquí. Luego elige el archivo .pem que has descargado.</li></ol>
+      <form class="stack" data-form="oci">
+        <label class="field area">${icon('lock')}<textarea name="config" rows="5" spellcheck="false" autocomplete="off" placeholder="[DEFAULT]&#10;user=ocid1.user.oc1..…&#10;fingerprint=…&#10;tenancy=ocid1.tenancy.oc1..…&#10;region=…" required></textarea></label>
+        <label class="field">${icon('folder')}<input name="pem" type="file" accept=".pem,.key,text/plain" aria-label="Archivo de la clave privada (.pem)" required></label>
+        <div class="actions"><button class="btn primary">Guardar y comprobar</button></div></form>`}`;
   const steps = `<ol class="steps"><li>En la consola de Oracle Cloud: <b>Storage → Buckets → Create Bucket</b> (privado).</li>
        <li>Dentro del bucket: <b>Pre-Authenticated Requests → Create</b>. Destino: <b>Bucket</b>; acceso: <b>Permit object reads and writes</b>; marca <b>Enable Object Listing</b>; pon una caducidad lejana.</li>
        <li>Copia la URL que aparece (solo se muestra una vez) y pégala aquí.</li></ol>`;
@@ -562,6 +575,7 @@ async function viewSettings() {
         <p>${dups.length ? `${plural(dups.length, 'canción tiene', 'canciones tienen')} más de una copia (mismo título y mismos artistas): ${plural(extra, 'copia sobra', 'copias sobran')}.` : 'No hay canciones repetidas en tu biblioteca.'}
           En modo desarrollador, borrar una canción la elimina también de su bucket.</p>
         ${dups.length ? `<div class="actions"><a class="btn" href="#/repetidas">${icon('list')}Ver canciones repetidas</a></div>` : ''}
+        ${ociPanel}
         <h2 style="margin-top:22px">Géneros predefinidos</h2>
         <p>El editor ofrece una lista de géneros habituales para elegir. Aquí puedes añadir los tuyos.</p>
         ${presets.length ? `<div class="chips">${presets.map(g => `<button class="chip" data-act="preset-remove" data-g="${esc(g)}" aria-label="Quitar ${esc(g)}">${esc(g)} ✕</button>`).join('')}</div>` : ''}
@@ -905,13 +919,13 @@ async function deleteForever(list, keepOf = null) {
     } catch (e) { console.warn(e); fails.push(`«${t.title}»: ${e.message}`); }
   }
   if (gone.size) player.forget(gone);
-  const msg = `${plural(gone.size, 'canción borrada', 'canciones borradas')}${emptied ? ` · ${emptied} vaciada${emptied === 1 ? '' : 's'} en la nube (el bucket no permite borrar)` : ''}`;
+  const msg = `${plural(gone.size, 'canción borrada', 'canciones borradas')}${emptied ? `. ${emptied === 1 ? 'Ha quedado vacía' : `${emptied} han quedado vacías`} en la nube: para borrarlas del todo de Oracle, añade una clave de API en Ajustes → Modo desarrollador` : ''}`;
   note.done(fails.length ? `${msg}. No se pudo borrar ${fails[0]}${fails.length > 1 ? ` y ${fails.length - 1} más` : ''}` : msg, fails.length || emptied ? 8000 : 4000);
   refresh();
 }
 function confirmDelete(t) {
   const b = t.cloudName && (cloud.buckets().find(x => x.id === t.bucketId) || cloud.buckets()[0]);
-  return confirmDlg('¿Borrar la canción para siempre?', `«${t.title}» se borrará de tu biblioteca, de este dispositivo${b ? ` y del bucket «${b.name}» (en todos tus dispositivos)` : ''}. No se puede deshacer.`, 'Borrar');
+  return confirmDlg('¿Borrar la canción para siempre?', `«${t.title}» se borrará de tu biblioteca, de este dispositivo${b ? ` y del bucket «${b.name}» (en todos tus dispositivos)${oci.configured() ? '' : '. Sin clave de API de Oracle, el archivo queda vacío en el bucket, sin ocupar espacio'}` : ''}. No se puede deshacer.`, 'Borrar');
 }
 
 const ROUTES = { inicio: viewHome, biblioteca: viewLibrary, album: viewAlbum, artista: viewArtist, playlists: viewPlaylists, playlist: viewPlaylist, favoritos: viewFavs, mix: viewMix, estadisticas: viewStats, genero: n => viewTag('genero', n), ambiente: n => viewTag('ambiente', n), explorar: viewExplore, archivo: viewArchive, ajustes: viewSettings, repetidas: viewDuplicates };
@@ -1085,6 +1099,15 @@ const ACTIONS = {
       `Se conserva una copia de cada canción.${inCloud ? ` ${plural(inCloud, 'copia está', 'copias están')} en la nube: se ${inCloud === 1 ? 'borrará' : 'borrarán'} también del bucket y desaparecerá${inCloud === 1 ? '' : 'n'} en todos tus dispositivos.` : ''} No se puede deshacer.`, 'Borrar'))) return;
     await deleteForever(list, keepOf);
   },
+  async 'oci-forget'() { await oci.forget(); toast('Clave de Oracle quitada de este dispositivo'); refresh(); },
+  async 'oci-purge'() {
+    if (!(await confirmDlg('¿Borrar los archivos vacíos?', 'Se buscarán en tus buckets los archivos de audio vacíos (canciones borradas antes de añadir la clave) y se eliminarán de Oracle.', 'Borrar'))) return;
+    const t = toast('Buscando archivos vacíos…', 0);
+    try {
+      const n = await cloud.purgeEmpty((i, name) => t.set(`Borrando ${i}: ${name.split('/').pop()}`));
+      t.done(n ? `${plural(n, 'archivo borrado', 'archivos borrados')} de Oracle` : 'No había archivos vacíos', 5000);
+    } catch (e) { t.done(e.message, 9000); }
+  },
   async 'preset-remove'(el) {
     S.settings.genrePresets = (S.settings.genrePresets || []).filter(g => g !== el.dataset.g);
     S.settings.genrePresetsAt = Date.now();
@@ -1180,6 +1203,18 @@ document.addEventListener('submit', async e => {
       }
     } catch (err) { t.done(err.message, 6000); }
     refresh();
+  }
+  if (kind === 'oci') {
+    const t = toast('Comprobando la clave con Oracle…', 0);
+    try {
+      const cfg = oci.parseConfig(form.config.value);
+      const file = form.pem.files[0];
+      if (!file) throw new Error('Elige el archivo .pem de la clave privada');
+      await oci.save(cfg, await oci.importPem(await file.text()));
+      try { await cloud.checkOci(); } catch (err) { await oci.forget(); throw err; }
+      t.done('Clave de Oracle conectada: lo que borres de la nube se eliminará de Oracle', 5000);
+      refresh();
+    } catch (err) { t.done(err.message, 9000); }
   }
   if (kind === 'par') {
     const t = toast('Comprobando la conexión…', 0);
