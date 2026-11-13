@@ -8,6 +8,7 @@ import * as player from './player.js';
 import { P } from './player.js';
 import * as cloud from './cloud.js';
 import * as oci from './oci.js';
+import * as vault from './vault.js';
 import * as account from './account.js';
 import * as src from './sources.js';
 import { getLyrics } from './lyrics.js';
@@ -499,8 +500,8 @@ async function viewSettings() {
   const inCloud = tracks.filter(t => t.cloudName).length;
   const sum = recs.summary();
   const dev = !!S.settings.dev;
-  const A = aiConf(), prov = ai.PROVIDERS[A.provider], aiKey = A.keys[A.provider] || '', aiModel = A.models[A.provider] || '';
-  const aiReady = !ai.missing(aiOptions());
+  const A = aiConf(), prov = ai.PROVIDERS[A.provider], savedKey = A.keys[A.provider], aiKey = savedKey ? (savedKey.hint || String(savedKey).slice(-4) || '····') : '', aiModel = A.models[A.provider] || '';
+  const aiReady = aiIsReady();
   const presets = S.settings.genrePresets || [];
   const untagged = tracks.filter(needsTags).length;
   const dups = dev ? lib.findDuplicates(dupKeep) : [], extra = dups.reduce((n, g) => n + g.tracks.length - 1, 0);
@@ -581,11 +582,11 @@ async function viewSettings() {
         ${presets.length ? `<div class="chips">${presets.map(g => `<button class="chip" data-act="preset-remove" data-g="${esc(g)}" aria-label="Quitar ${esc(g)}">${esc(g)} ✕</button>`).join('')}</div>` : ''}
         <form class="search" data-form="preset-add"><label class="field">${icon('plus')}<input name="g" placeholder="Nuevo género (p. ej. Indie Español)" autocomplete="off" maxlength="40" required></label><button class="btn">Añadir</button></form>
         <h2 style="margin-top:22px">Etiquetado con IA</h2>
-        <p>Un modelo de IA propone los géneros y lo que transmite cada canción a partir de su título, artistas y álbum. Elige el servicio y pega su clave de API: tiene coste por uso y se guarda solo en este dispositivo.</p>
+        <p>Un modelo de IA propone los géneros y lo que transmite cada canción a partir de su título, artistas y álbum. Elige el servicio y pega su clave de API: tiene coste por uso y se guarda cifrada, solo en este dispositivo.</p>
         <form class="stack" data-form="ai-key">
           <label class="field">${icon('compass')}<select name="provider" data-ai-provider aria-label="Servicio de IA">${Object.entries(ai.PROVIDERS).map(([id, x]) => `<option value="${id}" ${id === A.provider ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></label>
           ${prov.needsUrl ? `<label class="field">${icon('cloud')}<input name="url" type="url" value="${esc(A.url || '')}" placeholder="Dirección de la API (https://…/v1)" autocomplete="off" required></label>` : ''}
-          <label class="field">${icon('lock')}<input name="key" type="password" autocomplete="off" placeholder="${aiKey ? `Clave guardada (…${esc(aiKey.slice(-4))}). Escribe otra para cambiarla` : esc(prov.keyHint)}" ${aiKey || prov.needsUrl ? '' : 'required'}></label>
+          <label class="field">${icon('lock')}<input name="key" type="password" autocomplete="off" placeholder="${aiKey ? `Clave guardada y cifrada (…${esc(aiKey)}). Escribe otra para cambiarla` : esc(prov.keyHint)}" ${aiKey || prov.needsUrl ? '' : 'required'}></label>
           ${A.provider === 'anthropic'
             ? `<label class="field">${icon('spark')}<select name="model" aria-label="Modelo">${ai.AI_MODELS.map(([id, label]) => `<option value="${id}" ${id === (aiModel || ai.DEFAULT_MODEL) ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select></label>`
             : `<label class="field">${icon('spark')}<input name="model" list="ai-models" value="${esc(aiModel)}" placeholder="Nombre del modelo (pulsa «Ver modelos disponibles»)" autocomplete="off" required></label>
@@ -759,10 +760,24 @@ function aiConf() {
   }
   return s.ai;
 }
-const aiOptions = () => {
+/** Opciones para llamar a la IA. La clave se descifra justo antes de usarla y no se guarda descifrada. */
+const aiOptions = async (key = null) => {
   const A = aiConf();
-  return { provider: A.provider, key: A.keys[A.provider] || '', model: A.models[A.provider] || (A.provider === 'anthropic' ? ai.DEFAULT_MODEL : ''), url: A.url, knownGenres: genreOptions() };
+  return { provider: A.provider, key: key ?? await vault.unseal(A.keys[A.provider], A.provider), model: A.models[A.provider] || (A.provider === 'anthropic' ? ai.DEFAULT_MODEL : ''), url: A.url, knownGenres: genreOptions() };
 };
+/** ¿Está todo listo para usar la IA? (sin descifrar la clave) */
+const aiIsReady = () => { const A = aiConf(); return !ai.missing({ provider: A.provider, key: A.keys[A.provider] ? 'x' : '', model: A.models[A.provider] || (A.provider === 'anthropic' ? ai.DEFAULT_MODEL : ''), url: A.url }); };
+/** Cifra las claves que quedasen sin cifrar de versiones anteriores. */
+async function sealAiKeys() {
+  const A = aiConf();
+  let changed = false;
+  for (const [p, k] of Object.entries(A.keys)) {
+    if (typeof k !== 'string') continue;
+    if (k) A.keys[p] = await vault.seal(k, p); else delete A.keys[p];
+    changed = true;
+  }
+  if (changed) await saveKV('settings', false);
+}
 
 function editTrack(t) {
   let coverFile = null;
@@ -791,7 +806,7 @@ function editTrack(t) {
       <details class="glist"><summary>Elegir de la lista</summary><div class="chips gall"></div></details></div>
     <div class="lbl">Lo que transmite<div class="chips moods">${moodChips()}</div></div>
     ${t.album ? `<label class="switch ed-album" hidden><input type="checkbox" name="wholeAlbum" checked><span><b>Usar la portada en todo el álbum</b></span></label>` : ''}
-    <div class="actions">${!ai.missing(aiOptions()) ? `<button type="button" class="btn" data-ai>${icon('spark')}Etiquetar con IA</button>` : ''}
+    <div class="actions">${aiIsReady() ? `<button type="button" class="btn" data-ai>${icon('spark')}Etiquetar con IA</button>` : ''}
       <span style="flex:1"></span><button type="button" class="btn ghost" data-x>Cancelar</button><button class="btn primary">Guardar</button></div></form>`,
   async e => {
     const form = $('form', sheet);
@@ -808,7 +823,7 @@ function editTrack(t) {
       const note = toast('Consultando a la IA…', 0);
       try {
         const draft = { ...t, title: form.elements.title.value.trim(), artists: splitArtists(form.artists.value), album: form.album.value.trim(), year: +form.year.value || 0, genres };
-        const [r] = await ai.tagTracks([draft], aiOptions());
+        const [r] = await ai.tagTracks([draft], await aiOptions());
         if (r && (r.genres.length || r.moods.length)) {
           if (r.genres.length) { genres = []; r.genres.forEach(addGenre); paintGenres(); }
           moods.clear(); r.moods.forEach(m => moods.add(m));
@@ -861,12 +876,13 @@ function editTrack(t) {
 /** Etiqueta con IA un grupo de canciones, por lotes, guardando cada lote según llega. */
 async function tagMany(tracks) {
   const note = toast('Preparando…', 0);
-  let tagged = 0;
+  let tagged = 0, opts;
+  try { opts = await aiOptions(); } catch (e) { return note.done(e.message, 8000); }
   for (let i = 0; i < tracks.length; i += ai.BATCH) {
     const chunk = tracks.slice(i, i + ai.BATCH);
     note.set(`Etiquetando con IA: ${i + 1}–${i + chunk.length} de ${tracks.length}…`);
     let res;
-    try { res = await ai.tagTracks(chunk, aiOptions()); }
+    try { res = await ai.tagTracks(chunk, opts); }
     catch (e) { emit('library'); return note.done(`${tagged ? `${tagged} etiquetadas. ` : ''}Se detuvo: ${e.message}`, 8000); }
     for (let k = 0; k < chunk.length; k++) {
       const r = res[k], t = chunk[k];
@@ -1061,9 +1077,9 @@ const ACTIONS = {
   async 'ai-forget'() { const A = aiConf(); delete A.keys[A.provider]; await saveKV('settings', false); refresh(); },
   async 'ai-models'(el) {
     const form = el.closest('form'), A = aiConf();
-    const cfg = { ...aiOptions(), key: form.key.value.trim() || A.keys[A.provider] || '', url: form.url?.value.trim() || A.url };
     const note = toast('Consultando los modelos disponibles…', 0);
     try {
+      const cfg = { ...(await aiOptions(form.key.value.trim() || null)), url: form.url?.value.trim() || A.url };
       const list = await ai.listModels(cfg);
       (A.lists ||= {})[A.provider] = list.slice(0, 300);
       await saveKV('settings', false);
@@ -1115,7 +1131,7 @@ const ACTIONS = {
   },
   async 'ai-tag-all'() {
     const list = allTracks().filter(needsTags);
-    const o = aiOptions(), service = ai.PROVIDERS[o.provider].name;
+    const A = aiConf(), o = { provider: A.provider, model: A.models[A.provider] || (A.provider === 'anthropic' ? ai.DEFAULT_MODEL : '') }, service = ai.PROVIDERS[o.provider].name;
     if (!list.length || !(await confirmDlg(`¿Etiquetar ${plural(list.length, 'canción', 'canciones')} con IA?`,
       `Se enviarán el título, los artistas, el álbum y el año de cada canción a ${service} con tu clave (modelo ${o.model}). Puede tener un coste que se carga a tu cuenta de ese servicio.`, 'Etiquetar'))) return;
     tagMany(list);
@@ -1165,7 +1181,7 @@ document.addEventListener('submit', async e => {
   if (kind === 'radio') { explore.radioQ = form.q.value.trim(); explore.stations = null; route(); }
   if (kind === 'ai-key') {
     const A = aiConf();
-    if (form.key.value.trim()) A.keys[A.provider] = form.key.value.trim();
+    if (form.key.value.trim()) A.keys[A.provider] = await vault.seal(form.key.value.trim(), A.provider);
     A.models[A.provider] = form.model.value.trim();
     if (form.url) A.url = form.url.value.trim();
     await saveKV('settings', false);
@@ -1524,6 +1540,7 @@ async function start() {
   }
   if (typeof S.settings.volume === 'number') P.audio.volume = S.settings.volume;
   cloud.migrate();
+  await sealAiKeys().catch(e => console.warn('No se pudieron cifrar las claves de IA', e));
   const linked = await account.init();   // puede venir de un enlace de correo de Supabase
   addEventListener('hashchange', route);
   await route();

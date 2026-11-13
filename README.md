@@ -96,6 +96,14 @@ En **Explorar** eliges dónde buscar. Todo se puede escuchar en línea, añadir 
 
 La clave de Jamendo se pega en **Explorar → Jamendo** (se guarda en ese dispositivo) o en `js/config.js`.
 
+## Seguridad
+
+- **Política de seguridad de contenido (CSP)** en `index.html`: solo se ejecuta el código de la propia app. Quedan bloqueados los scripts externos, los scripts y manejadores inline (`onclick=…`, `javascript:`) y `eval`, así que un texto malicioso en unas etiquetas, un catálogo o unas letras no puede ejecutar código. Las conexiones solo pueden ir por HTTPS (catálogos, nube, cuentas, IA) y, para modelos de IA locales, a `localhost`. Los estilos inline están permitidos porque la app los usa para colores y anchos, y no ejecutan código.
+- **Claves de IA cifradas**: cada dispositivo genera una clave AES-GCM de 256 bits no exportable (el navegador la guarda, pero nadie puede leer su valor). Las claves de API se guardan cifradas con ella y ligadas a su proveedor, y solo se descifran en memoria al llamar al servicio. Las que se guardaron sin cifrar en versiones anteriores se cifran al abrir la app.
+- **Clave de API de Oracle**: se guarda como clave privada no exportable; solo sirve para firmar en ese dispositivo.
+- Ninguna de estas claves se sincroniza con tu cuenta ni con el bucket.
+- Límite de cualquier app web: la propia página puede usar sus claves, así que lo que protege frente a código malicioso es la CSP; el cifrado protege frente a quien copie los datos del navegador. Pon un límite de gasto en tus cuentas de IA y, en Oracle, usa un usuario con permiso solo sobre tus buckets.
+
 ## Probarla en local
 
 ```bash
@@ -114,6 +122,7 @@ Y abre `http://localhost:8000`.
 | `js/library.js`, `js/tags.js` | Importación y lectura de etiquetas |
 | `js/cloud.js` | Oracle Cloud Object Storage (uno o varios buckets) |
 | `js/flac.js` | Conversión sin pérdida de WAV a FLAC |
+| `js/vault.js` | Cifrado de las claves de IA con una clave del dispositivo no exportable |
 | `js/oci.js` | Peticiones firmadas a la API de Oracle (borrado real de archivos) |
 | `js/account.js`, `js/sync.js`, `js/config.js` | Cuentas con Supabase y sincronización de datos |
 | `js/sources.js` | Catálogos de música libre y radios |
