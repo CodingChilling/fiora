@@ -83,7 +83,7 @@ export async function removeTrack(id) {
 /** Cambia el archivo de una pista (p. ej. WAV → FLAC): nuevo id, y playlists, favoritos y estadísticas la siguen. */
 export async function rekey(t, newId, { blob, fileName, size }) {
   const old = t.id;
-  await db.put('blobs', newId, blob);
+  if (blob) await db.put('blobs', newId, blob);   // sin blob: la pista solo queda en la nube
   await Promise.all([db.del('blobs', old), db.del('tracks', old)]);
   S.tracks.delete(old);
   Object.assign(t, { id: newId, fileName, size });
@@ -93,7 +93,7 @@ export async function rekey(t, newId, { blob, fileName, size }) {
   }
   if (S.favs[old]) { S.favs[newId] = { on: S.favs[old].on, at: Date.now() }; S.favs[old] = { on: false, at: Date.now() }; saveKV('favs'); }
   if (S.stats[old]) { S.stats[newId] = S.stats[old]; delete S.stats[old]; saveKV('stats'); }
-  if (S.edits[old]) { S.edits[newId] = { ...S.edits[old], at: Date.now() }; delete S.edits[old]; t.editAt = S.edits[newId].at; saveKV('edits'); await db.put('tracks', newId, t); }
+  if (S.edits[old]) { S.edits[newId] = { ...S.edits[old] }; delete S.edits[old]; t.editAt = S.edits[newId].at; saveKV('edits'); await db.put('tracks', newId, t); }
 }
 
 /** Borra solo la copia sin conexión de una pista que sigue en la nube. */

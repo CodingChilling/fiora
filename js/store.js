@@ -1,4 +1,5 @@
 // Estado en memoria de la app (metadatos); los audios y carátulas viven en IndexedDB.
+import { TAG_KEYS } from './tagwrite.js';
 import * as db from './db.js';
 import { splitArtists, splitGenres } from './tags.js';
 
@@ -76,6 +77,18 @@ export const MOODS = ['alegre', 'melancólica', 'enérgica', 'relajada', 'oscura
   'agresiva', 'bailable', 'íntima', 'soñadora', 'festiva', 'triste', 'motivadora'];
 
 /** Aplica a la pista los metadatos editados (a mano o por IA). Devuelve true si cambió algo. */
+// --- Metadatos escritos en el propio archivo --------------------------------
+/** Huella de los campos de una edición que van dentro del archivo (título, artistas, géneros…). */
+export const fileSig = e => JSON.stringify(TAG_KEYS.filter(k => e?.f && k in e.f).map(k => [k, e.f[k]]));
+export const tagFields = e => Object.fromEntries(TAG_KEYS.filter(k => e?.f && k in e.f).map(k => [k, e.f[k]]));
+/** La canción tiene cambios que todavía no están escritos en su archivo. */
+export function fileOutdated(t) {
+  const e = S.edits[t.id];
+  if (!e) return false;
+  const sig = fileSig(e);
+  return sig !== '[]' && sig !== e.fileSig;
+}
+
 export function applyEdit(t) {
   const e = S.edits[t.id];
   if (!e || t.editAt === e.at) return false;

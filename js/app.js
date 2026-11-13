@@ -1,5 +1,5 @@
 // Interfaz de Fiora: navegación, pantallas, menús y reproductor.
-import { S, load, on, emit, isFav, toggleFav, allTracks, livePlaylists, savePlaylist, saveKV, saveTrack, collator, artistsOf, albumArtistOf, setEdit, MOODS, daypart, genreOptions } from './store.js';
+import { fileOutdated, S, load, on, emit, isFav, toggleFav, allTracks, livePlaylists, savePlaylist, saveKV, saveTrack, collator, artistsOf, albumArtistOf, setEdit, MOODS, daypart, genreOptions } from './store.js';
 import * as db from './db.js';
 import * as ai from './ai.js';
 import { splitArtists, shrinkCover, hash } from './tags.js';
@@ -631,6 +631,8 @@ async function viewSettings() {
   const aiReady = aiIsReady();
   const presets = S.settings.genrePresets || [];
   const untagged = tracks.filter(needsTags).length;
+  const pendingFiles = dev ? tracks.filter(fileOutdated) : [];
+  const writable = pendingFiles.filter(cloud.canWriteFile);
   const dups = dev ? lib.findDuplicates(dupKeep) : [], extra = dups.reduce((n, g) => n + g.tracks.length - 1, 0);
   const gb = n => (n / 1073741824).toFixed(n > 1073741824 * 10 ? 0 : 2);
   const bks = cloud.buckets(), target = cloud.uploadTarget();
@@ -704,6 +706,11 @@ async function viewSettings() {
           En modo desarrollador, borrar una canción la elimina también de su bucket.</p>
         ${dups.length ? `<div class="actions"><a class="btn" href="#/repetidas">${icon('list')}Ver canciones repetidas</a></div>` : ''}
         ${ociPanel}
+        <h2 style="margin-top:22px">Metadatos en los archivos</h2>
+        <p>Al guardar en el editor, los cambios se escriben dentro del archivo (MP3, FLAC y M4A) y, si la canción está en la nube, se sube el archivo actualizado. El sonido no cambia.
+          ${writable.length ? `Hay ${plural(writable.length, 'canción', 'canciones')} con cambios que aún no están en su archivo.` : 'Todos los cambios están ya en los archivos.'}
+          ${pendingFiles.length > writable.length ? `${plural(pendingFiles.length - writable.length, 'canción', 'canciones')} solo ${pendingFiles.length - writable.length === 1 ? 'guarda' : 'guardan'} los cambios en la app (formato OGG, WAV u Opus, música libre o sin acceso al archivo).` : ''}</p>
+        ${writable.length ? `<div class="actions"><button class="btn" data-act="write-files">${icon('sync')}Guardar en ${plural(writable.length, 'archivo', 'archivos')}</button></div>` : ''}
         <h2 style="margin-top:22px">Géneros predefinidos</h2>
         <p>El editor ofrece una lista de géneros habituales para elegir. Aquí puedes añadir los tuyos.</p>
         ${presets.length ? `<div class="chips">${presets.map(g => `<button class="chip" data-act="preset-remove" data-g="${esc(g)}" aria-label="Quitar ${esc(g)}">${esc(g)} ✕</button>`).join('')}</div>` : ''}
@@ -734,7 +741,7 @@ async function cloudSync(silent = false) {
   const t = silent ? null : toast('Sincronizando con la nube…', 0);
   try {
     const r = await cloud.syncAll((i, n, name) => t?.set(`Leyendo ${i} de ${n}: ${name.split('/').pop()}`));
-    const msg = r.added || r.removed ? `Nube sincronizada: ${r.added} nuevas${r.removed ? `, ${r.removed} quitadas` : ''}` : 'Todo sincronizado';
+    const msg = r.added || r.removed || r.updated ? `Nube sincronizada: ${r.added} nuevas${r.updated ? `, ${r.updated} actualizadas` : ''}${r.removed ? `, ${r.removed} quitadas` : ''}` : 'Todo sincronizado';
     if (r.errors.length) { if (t) t.done(`No se pudo leer un bucket: ${r.errors[0]}`, 7000); }
     else if (t) t.done(msg); else if (r.added) toast(msg);
   } catch (e) {
@@ -766,7 +773,7 @@ function uploadTo(tracks) {
 async function exportFile(t) {
   const note = toast(t.hasBlob ? 'Preparando el archivo…' : 'Descargando el archivo…', 0);
   let blob;
-  try { blob = await cloud.fetchBlob(t); }
+  try { blob = await cloud.taggedBlob(t, await cloud.fetchBlob(t)); }
   catch (e) { return note.done(`No se pudo obtener el archivo: ${e.message}`, 6000); }
   const ext = (t.fileName || '').match(/\.[a-z0-9]{2,5}$/i)?.[0] || '.mp3';
   const name = `${[t.artist, t.title].filter(Boolean).join(' - ')}${ext}`.replace(/[\\/:*?"<>|]/g, '_');
@@ -996,7 +1003,12 @@ function editTrack(t) {
     await setEdit(t, fields);
     emit('library');
     if (P.current?.id === t.id) { renderMini(); renderNow(); }
-    toast(!uploaded ? 'Guardado, pero la portada no se pudo subir a la nube' : coverFile && !cloud.configured() ? 'Guardado. La portada solo se verá en este dispositivo hasta que conectes una nube' : 'Metadatos guardados');
+    if (!uploaded) toast('La portada no se pudo subir a la nube', 5000);
+    // Los cambios se escriben también dentro del archivo (y se sube a la nube si está allí).
+    const files = [t, ...siblings].filter(x => fileOutdated(x) && cloud.canWriteFile(x));
+    if (files.length) return writeFiles(files);
+    toast(coverFile && !cloud.configured() ? 'Guardado. La portada solo se verá en este dispositivo hasta que conectes una nube'
+      : !cloud.canWriteFile(t) && !t.url ? 'Metadatos guardados en la app (este formato no permite escribirlos en el archivo)' : 'Metadatos guardados');
   };
 }
 
@@ -1021,6 +1033,33 @@ async function tagMany(tracks) {
   }
   emit('library');
   note.done(`${plural(tagged, 'canción etiquetada', 'canciones etiquetadas')}${tagged < tracks.length ? ` · ${tracks.length - tagged} sin reconocer` : ''}`, 6000);
+  const files = tracks.map(x => S.tracks.get(x.id) || x).filter(x => fileOutdated(x) && cloud.canWriteFile(x));
+  if (files.length) offerWrite(files);
+}
+
+/** Pregunta antes de escribir en muchos archivos (los que solo están en la nube hay que bajarlos y volver a subirlos). */
+async function offerWrite(files) {
+  const remote = files.filter(x => !x.hasBlob), bytes = remote.reduce((n, x) => n + (x.size || 0), 0);
+  const ok = await confirmDlg(`¿Guardar los cambios en ${plural(files.length, 'archivo', 'archivos')}?`,
+    `Los géneros y demás datos se escribirán dentro de cada archivo${files.some(x => x.cloudName) ? ' y se subirán a tu nube' : ''}.${remote.length ? ` ${plural(remote.length, 'canción', 'canciones')} solo ${remote.length === 1 ? 'está' : 'están'} en la nube: se ${remote.length === 1 ? 'descargará' : 'descargarán'} y volverán a subir (${mb(bytes * 2)} en total).` : ''} El sonido no cambia.`, 'Guardar');
+  if (ok) writeFiles(files);
+}
+
+/** Escribe los metadatos editados en los archivos, uno a uno. */
+async function writeFiles(list) {
+  const note = toast('Guardando en el archivo…', 0);
+  let done = 0, toCloud = 0;
+  const fails = [];
+  for (let i = 0; i < list.length; i++) {
+    const t = S.tracks.get(list[i].id) || list[i];
+    const label = stage => note.set(list.length > 1 ? `${stage} ${i + 1} de ${list.length}: ${t.title}` : `${stage}: ${t.title}`);
+    try { if (await cloud.writeFile(t, label)) { done++; if (t.cloudName) toCloud++; } }
+    catch (e) { console.warn(e); fails.push(`«${t.title}»: ${e.message}`); }
+  }
+  const msg = list.length === 1 && done ? `Guardado en el archivo${toCloud ? ' y en la nube' : ''}`
+    : `${plural(done, 'archivo actualizado', 'archivos actualizados')}${toCloud ? ` (${toCloud} en la nube)` : ''}`;
+  note.done(fails.length ? `${done ? `${msg}. ` : ''}No se pudo guardar ${fails[0]}${fails.length > 1 ? ` y ${fails.length - 1} más` : ''}` : msg, fails.length ? 9000 : 4000);
+  refresh();
 }
 
 // ------------------------------------------------- canciones repetidas (desarrollador)
@@ -1216,6 +1255,7 @@ const ACTIONS = {
     } catch (e) { note.done(e.message, 6000); }
   },
   'lib-filter'() { openFilters(); },
+  'write-files'() { const l = allTracks().filter(t => fileOutdated(t) && cloud.canWriteFile(t)); if (l.length) offerWrite(l); },
   'lib-unfilter'(el) { clearFilter(el.dataset.k, el.dataset.v); paintLibrary(); },
   'lib-clear'() { resetFilters(); paintLibrary(); },
   'dup-keep'(el) {
