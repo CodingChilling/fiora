@@ -1,10 +1,22 @@
 // Biblioteca: importar archivos del dispositivo, borrar pistas, carátulas.
 import * as db from './db.js';
-import { S, saveTrack, saveKV, emit, savePlaylist, albumArtistOf, artistsOf } from './store.js';
+import { S, saveTrack, saveKV, emit, savePlaylist, albumArtistOf, artistsOf, MOODS } from './store.js';
 import { readTags, fromFilename, splitArtists, splitGenres, shrinkCover, probeDuration, isAudioName, hash } from './tags.js';
 
 export const trackId = (size, name) => `${size}:${name}`;
 export const albumKey = t => `${albumArtistOf(t).toLowerCase()}|${(t.album || '').toLowerCase()}`;
+
+// «Lo que transmite» leído del archivo, llevado al vocabulario de la app (también acepta inglés).
+const fold = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+const MOOD_EN = { happy: 'alegre', joyful: 'alegre', cheerful: 'alegre', sad: 'triste', melancholic: 'melancólica', melancholy: 'melancólica', energetic: 'enérgica', relaxed: 'relajada', relaxing: 'relajada', calm: 'relajada', chill: 'relajada', dark: 'oscura', romantic: 'romántica', epic: 'épica', nostalgic: 'nostálgica', aggressive: 'agresiva', angry: 'agresiva', danceable: 'bailable', dance: 'bailable', intimate: 'íntima', dreamy: 'soñadora', festive: 'festiva', party: 'festiva', uplifting: 'motivadora', motivational: 'motivadora', motivating: 'motivadora' };
+export function moodsFrom(list) {
+  const out = [];
+  for (const m of list || []) {
+    const f = fold(m), hit = MOODS.find(x => fold(x) === f) || MOOD_EN[f];
+    if (hit && !out.includes(hit)) out.push(hit);
+  }
+  return out;
+}
 
 /** Construye el registro de una pista a partir de un Blob (completo o parcial) y su ruta. */
 export async function buildTrack({ id, blob, path, size }) {
@@ -17,7 +29,7 @@ export async function buildTrack({ id, blob, path, size }) {
     title: tags.title || guess.title,
     artists, artist: artists.join(', '), albumArtist: tags.albumArtist || '',
     album: tags.album || guess.album || '',
-    genres: splitGenres(tags.genre), genre: splitGenres(tags.genre)[0] || '', moods: [], year: tags.year || 0,
+    genres: splitGenres(tags.genre), genre: splitGenres(tags.genre)[0] || '', moods: moodsFrom(tags.moods), year: tags.year || 0,
     trackNo: tags.trackNo || guess.trackNo || 0,
     lyrics: tags.lyrics || '',
     duration: 0, addedAt: Date.now(),

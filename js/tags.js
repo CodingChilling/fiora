@@ -1,4 +1,7 @@
 // Lectura de etiquetas (ID3 / MP4 / FLAC) con jsmediatags, carátulas y duración.
+// jsmediatags no lee «lo que transmite» (MOOD) ni, en FLAC, el artista del álbum o el año:
+// esos campos se leen con el lector propio de tagwrite.js.
+import { readFileTags, blobReader } from './tagwrite.js';
 const AUDIO_EXT = /\.(mp3|m4a|aac|flac|ogg|oga|opus|wav|webm)$/i;
 export const isAudioName = name => AUDIO_EXT.test(name);
 
@@ -38,8 +41,20 @@ export function splitGenres(str) {
   return [...new Set(String(str || '').split(/[\/;,|\0]/).map(s => s.trim()).filter(s => s && !/^\(?\d+\)?$/.test(s)))];
 }
 
+/** Separa la lista de «lo que transmite» de una etiqueta MOOD ("alegre; bailable"). */
+export const splitMoods = str => [...new Set(String(str || '').split(/[;,\/|\0]/).map(s => s.trim()).filter(Boolean))];
+
 /** Lee las etiquetas de un Blob. Nunca rechaza: si falla devuelve {}. */
-export function readTags(blob) {
+export async function readTags(blob) {
+  const [base, own] = await Promise.all([readTagsJsm(blob), readFileTags(blobReader(blob), blob.size).catch(() => ({}))]);
+  const out = { ...base };
+  if (own.genre) out.genre = own.genre;               // conserva bien varios géneros (ID3v2.4 los separa con \0)
+  if (own.mood) out.moods = splitMoods(own.mood);
+  if (!out.albumArtist && own.albumArtist) out.albumArtist = clean(own.albumArtist);
+  if (!out.year && own.year) { const y = String(own.year).match(/\d{4}/); if (y) out.year = +y[0]; }
+  return out;
+}
+function readTagsJsm(blob) {
   return new Promise(resolve => {
     const jsm = window.jsmediatags;
     if (!jsm) return resolve({});

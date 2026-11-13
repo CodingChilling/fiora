@@ -1,4 +1,4 @@
-// Escritura de metadatos dentro del propio archivo de audio, sin tocar el sonido:
+// Lectura y escritura de metadatos dentro del propio archivo de audio, sin tocar el sonido:
 //   MP3  -> etiqueta ID3v2 (se conserva la versión 2.3/2.4 y todos los marcos que no se editan)
 //   FLAC -> bloque VORBIS_COMMENT (y PICTURE si cambia la portada)
 //   M4A  -> átomos moov/udta/meta/ilst (se corrigen los desplazamientos stco/co64 si hace falta)
@@ -40,6 +40,8 @@ const readSyncsafe = (b, o) => (b[o] << 21) | (b[o + 1] << 14) | (b[o + 2] << 7)
 const readU32 = (b, o) => ((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]) >>> 0;
 const latin1 = s => Uint8Array.from(s, c => c.charCodeAt(0) & 255);
 const bytes = async (blob, a, b) => new Uint8Array(await blob.slice(a, b).arrayBuffer());
+/** Lector de trozos de un Blob: read(desde, hasta) -> Uint8Array. */
+export const blobReader = blob => (a, b) => bytes(blob, a, b);
 
 async function imageInfo(blob) {
   try { const bmp = await createImageBitmap(blob); return { w: bmp.width, h: bmp.height }; } catch { return { w: 0, h: 0 }; }
@@ -63,19 +65,31 @@ function id3Txxx(ver, desc, value) {
     ? cat([new Uint8Array([3]), te.encode(desc), new Uint8Array([0]), te.encode(value)])
     : cat([new Uint8Array([1]), utf16(desc), new Uint8Array([0, 0]), utf16(value)]));
 }
-const deUnsync = b => { const out = []; for (let i = 0; i < b.length; i++) { out.push(b[i]); if (b[i] === 0xff && b[i + 1] === 0) i++; } return Uint8Array.from(out); };
-function txxxDesc(data) {
-  const enc = data[0];
-  if (enc === 0 || enc === 3) { const end = data.indexOf(0, 1); return td.decode(data.subarray(1, end < 0 ? data.length : end)); }
-  let i = 1; while (i + 1 < data.length && !(data[i] === 0 && data[i + 1] === 0)) i += 2;   // UTF-16: termina en 00 00
-  const d = data.subarray(1, i);
+// Texto de un marco ID3 según su codificación (0 Latin-1, 1 UTF-16 con BOM, 2 UTF-16BE, 3 UTF-8).
+function decodeEnc(enc, d) {
+  if (enc === 0) return String.fromCharCode(...d);
+  if (enc === 3) return td.decode(d);
   let le = enc !== 2, skip = 0;
   if (d[0] === 0xff && d[1] === 0xfe) { le = true; skip = 2; } else if (d[0] === 0xfe && d[1] === 0xff) { le = false; skip = 2; }
-  return new TextDecoder(le ? 'utf-16le' : 'utf-16be').decode(d.subarray(skip));
+  // en UTF-16 cada valor puede llevar su propio BOM (ID3v2.4 con varios valores)
+  return new TextDecoder(le ? 'utf-16le' : 'utf-16be').decode(d.subarray(skip)).replace(/\ufeff/g, '');
 }
+/** Valor de un marco de texto (varios valores, separados por \0). */
+const id3TextValue = data => decodeEnc(data[0], data.subarray(1)).replace(/\0+$/, '');
+/** Descripción y valor de un marco TXXX. */
+function id3Txxx_read(data) {
+  const enc = data[0];
+  let i = 1;
+  if (enc === 0 || enc === 3) { while (i < data.length && data[i] !== 0) i++; return { desc: decodeEnc(enc, data.subarray(1, i)), value: decodeEnc(enc, data.subarray(i + 1)).replace(/\0+$/, '') }; }
+  while (i + 1 < data.length && !(data[i] === 0 && data[i + 1] === 0)) i += 2;
+  return { desc: decodeEnc(enc, data.subarray(1, i)), value: decodeEnc(enc, data.subarray(i + 2)).replace(/\0+$/, '') };
+}
+const deUnsync = b => { const out = []; for (let i = 0; i < b.length; i++) { out.push(b[i]); if (b[i] === 0xff && b[i + 1] === 0) i++; } return Uint8Array.from(out); };
+const txxxDesc = data => id3Txxx_read(data).desc;
 
-async function writeMp3(blob, f, cover) {
-  const head = await bytes(blob, 0, 10);
+/** Marcos de la etiqueta ID3v2 del principio del archivo (versiones 2.3 y 2.4). */
+async function parseId3(read) {
+  const head = await read(0, 10);
   let ver = 3, frames = [], audioStart = 0;
   if (head[0] === 0x49 && head[1] === 0x44 && head[2] === 0x33) {   // "ID3"
     const flags = head[5];
@@ -83,7 +97,7 @@ async function writeMp3(blob, f, cover) {
     audioStart = 10 + size + (flags & 0x10 ? 10 : 0);
     if (head[3] === 3 || head[3] === 4) {
       ver = head[3];
-      let body = await bytes(blob, 10, 10 + size);
+      let body = await read(10, 10 + size);
       if (ver === 3 && flags & 0x80) body = deUnsync(body);
       let o = 0;
       if (flags & 0x40) o = ver === 4 ? readSyncsafe(body, 0) : readU32(body, 0) + 4;   // cabecera extendida: se descarta
@@ -98,6 +112,11 @@ async function writeMp3(blob, f, cover) {
     }
     // ID3v2.2 (muy antigua): se sustituye por una 2.3 con los campos editados.
   }
+  return { ver, frames, audioStart };
+}
+
+async function writeMp3(blob, f, cover) {
+  const { ver, frames, audioStart } = await parseId3(blobReader(blob));
   const v = texts(f);
   const replace = new Set([
     'title' in v && 'TIT2', 'artist' in v && 'TPE1', 'albumArtist' in v && 'TPE2', 'album' in v && 'TALB',
@@ -120,35 +139,47 @@ async function writeMp3(blob, f, cover) {
   }
   const body = cat([...add, ...keep, new Uint8Array(1024)]);   // 1 KB de relleno
   const header = cat([latin1('ID3'), new Uint8Array([ver, 0, 0]), syncsafe(body.length)]);
-  return new Blob([header, body, blob.slice(audioStart)], { type: blob.type || 'audio/mpeg' });
+  const out = new Blob([header, body, blob.slice(audioStart)], { type: blob.type || 'audio/mpeg' });
+  out.tagRange = [0, header.length + body.length];
+  return out;
 }
 
 // ----------------------------------------------------------------------- FLAC
 const VORBIS_KEYS = { title: ['TITLE'], artist: ['ARTIST'], albumArtist: ['ALBUMARTIST', 'ALBUM ARTIST'], album: ['ALBUM'], year: ['DATE', 'YEAR'], track: ['TRACKNUMBER'], genre: ['GENRE'], mood: ['MOOD'] };
-async function writeFlac(blob, f, cover) {
+/** Bloques de metadatos de un FLAC y dónde empieza el audio. */
+async function parseFlac(read, untilComments = false) {
   const blocks = [];
   let o = 4, last = false;
-  while (!last) {
-    const h = await bytes(blob, o, o + 4);
+  while (!last && !(untilComments && blocks.some(b => b.type === 4))) {
+    const h = await read(o, o + 4);
     if (h.length < 4) throw new Error('FLAC incompleto');
     last = !!(h[0] & 0x80);
     const type = h[0] & 0x7f, len = (h[1] << 16) | (h[2] << 8) | h[3];
-    blocks.push({ type, data: await bytes(blob, o + 4, o + 4 + len) });
+    blocks.push({ type, data: await read(o + 4, o + 4 + len) });
     o += 4 + len;
   }
+  return { blocks, audioStart: o };
+}
+/** Comentarios Vorbis: proveedor y lista de "CLAVE=valor" (en bytes). */
+function parseVorbis(d) {
+  const dv = new DataView(d.buffer, d.byteOffset, d.byteLength);
+  const vl = dv.getUint32(0, true), vendor = d.subarray(4, 4 + vl), comments = [];
+  let p = 4 + vl; const n = dv.getUint32(p, true); p += 4;
+  for (let i = 0; i < n && p + 4 <= d.length; i++) {
+    const l = dv.getUint32(p, true); comments.push(d.subarray(p + 4, p + 4 + l)); p += 4 + l;
+  }
+  return { vendor, comments };
+}
+async function writeFlac(blob, f, cover) {
+  const { blocks, audioStart: o } = await parseFlac(blobReader(blob));
   const v = texts(f);
   const drop = new Set(Object.entries(VORBIS_KEYS).filter(([k]) => k in v).flatMap(([, ks]) => ks));
   let vendor = te.encode('Fiora'), comments = [];
   const vc = blocks.find(b => b.type === 4);
   if (vc) {
-    const d = vc.data, dv = new DataView(d.buffer, d.byteOffset, d.byteLength);
-    const vl = dv.getUint32(0, true); vendor = d.subarray(4, 4 + vl);
-    let p = 4 + vl; const n = dv.getUint32(p, true); p += 4;
-    for (let i = 0; i < n && p + 4 <= d.length; i++) {
-      const l = dv.getUint32(p, true); const c = d.subarray(p + 4, p + 4 + l); p += 4 + l;
-      const key = td.decode(c).split('=')[0].toUpperCase();
-      if (!drop.has(key)) comments.push(c);
-    }
+    const parsed = parseVorbis(vc.data);
+    vendor = parsed.vendor;
+    comments = parsed.comments.filter(c => !drop.has(td.decode(c).split('=')[0].toUpperCase()));
   }
   for (const [k, ks] of Object.entries(VORBIS_KEYS)) if (v[k]) comments.push(te.encode(`${ks[0]}=${v[k]}`));
   const vcData = cat([u32le(vendor.length), vendor, u32le(comments.length), ...comments.flatMap(c => [u32le(c.length), c])]);
@@ -164,7 +195,10 @@ async function writeFlac(blob, f, cover) {
     const len = b.data.length;
     parts.push(new Uint8Array([(i === out.length - 1 ? 0x80 : 0) | b.type, (len >> 16) & 255, (len >> 8) & 255, len & 255]), b.data);
   });
-  return new Blob([cat(parts), blob.slice(o)], { type: blob.type || 'audio/flac' });
+  const head = cat(parts);
+  const result = new Blob([head, blob.slice(o)], { type: blob.type || 'audio/flac' });
+  result.tagRange = [0, head.length];
+  return result;
 }
 
 // ------------------------------------------------------------------------ MP4
@@ -215,24 +249,31 @@ function shiftOffsets(box, delta) {
     }
   }
 }
-async function writeMp4(blob, f, cover) {
-  // Cajas de primer nivel (solo cabeceras; el audio se queda en el Blob).
+/** Cajas de primer nivel de un MP4 y la caja moov ya analizada. */
+async function parseMp4(read, total) {
   const top = [];
-  for (let o = 0; o + 8 <= blob.size;) {
-    const h = await bytes(blob, o, o + 16);
+  for (let o = 0; o + 8 <= total;) {
+    const h = await read(o, o + 16);
+    if (h.length < 8) break;
     let size = readU32(h, 0);
     const type = String.fromCharCode(...h.subarray(4, 8));
     if (size === 1) size = readU32(h, 8) * 4294967296 + readU32(h, 12);
-    else if (size === 0) size = blob.size - o;
+    else if (size === 0) size = total - o;
     if (size < 8) throw new Error('MP4 no válido');
     top.push({ type, start: o, size });
     o += size;
   }
-  if (top.some(x => x.type === 'moof')) throw new Error('MP4 fragmentado: no se puede editar');
   const mv = top.find(x => x.type === 'moov');
   if (!mv) throw new Error('MP4 sin moov');
-  const raw = await bytes(blob, mv.start, mv.start + mv.size);
+  const raw = await read(mv.start, mv.start + mv.size);
+  if (raw.length < mv.size) throw new Error('MP4 incompleto');
   const [moov] = parseBoxes(raw, 0, raw.length);
+  return { top, mv, moov };
+}
+const findBox = (box, ...path) => path.reduce((b, t) => b?.children?.find(c => c.type === t), box);
+async function writeMp4(blob, f, cover) {
+  const { top, mv, moov } = await parseMp4(blobReader(blob), blob.size);
+  if (top.some(x => x.type === 'moof')) throw new Error('MP4 fragmentado: no se puede editar');
   let udta = moov.children.find(c => c.type === 'udta');
   if (!udta) moov.children.push(udta = mk('udta', []));
   let meta = udta.children.find(c => c.type === 'meta');
@@ -261,7 +302,58 @@ async function writeMp4(blob, f, cover) {
   let out = serialize(moov);
   const delta = out.length - mv.size;
   if (delta && top.some(x => x.type === 'mdat' && x.start > mv.start)) { shiftOffsets(moov, delta); out = serialize(moov); }
-  return new Blob([blob.slice(0, mv.start), out, blob.slice(mv.start + mv.size)], { type: blob.type || 'audio/mp4' });
+  const result = new Blob([blob.slice(0, mv.start), out, blob.slice(mv.start + mv.size)], { type: blob.type || 'audio/mp4' });
+  result.tagRange = [mv.start, mv.start + out.length];
+  return result;
+}
+
+// --------------------------------------------------------------------- lectura
+/**
+ * Lee del archivo los campos de texto: {title, artist, albumArtist, album, year, track, genre, mood}
+ * (los que existan). `read(desde, hasta)` devuelve trozos del archivo; `size` es su tamaño.
+ * Sirve tanto para un Blob como para leer por rangos un archivo de la nube.
+ */
+export async function readFileTags(read, size, fileName = '') {
+  const h = await read(0, 12);
+  const s = String.fromCharCode(...h);
+  const out = {};
+  if (s.startsWith('fLaC')) {
+    const { blocks } = await parseFlac(read, true);
+    const vc = blocks.find(b => b.type === 4);
+    if (!vc) return out;
+    const map = {};
+    for (const c of parseVorbis(vc.data).comments) {
+      const t = td.decode(c), i = t.indexOf('=');
+      if (i > 0) (map[t.slice(0, i).toUpperCase()] ||= []).push(t.slice(i + 1));
+    }
+    for (const [k, ks] of Object.entries(VORBIS_KEYS)) { const val = ks.map(x => map[x]).find(Boolean); if (val) out[k] = val.join('; '); }
+    return out;
+  }
+  if (s.slice(4, 8) === 'ftyp') {
+    const { moov } = await parseMp4(read, size);
+    const ilst = findBox(moov, 'udta', 'meta', 'ilst');
+    if (!ilst) return out;
+    const ITEMS = { '©nam': 'title', '©ART': 'artist', aART: 'albumArtist', '©alb': 'album', '©day': 'year', '©gen': 'genre' };
+    for (const item of ilst.children || []) {
+      if (ITEMS[item.type] && item.data?.length > 16) out[ITEMS[item.type]] = td.decode(item.data.subarray(16));
+      if (item.type === 'trkn' && item.data?.length >= 22) out.track = String((item.data[18] << 8) | item.data[19]);
+      if (item.type === '----') {
+        const name = item.children?.find(c => c.type === 'name'), data = item.children?.find(c => c.type === 'data');
+        if (name && data && td.decode(name.data.subarray(4)).toUpperCase() === 'MOOD') out.mood = td.decode(data.data.subarray(8));
+      }
+    }
+    return out;
+  }
+  if (s.startsWith('ID3')) {
+    const { frames, ver } = await parseId3(read);
+    const T = { TIT2: 'title', TPE1: 'artist', TPE2: 'albumArtist', TALB: 'album', TYER: 'year', TDRC: 'year', TRCK: 'track', TCON: 'genre', TMOO: 'mood' };
+    for (const fr of frames) {
+      if (fr.fflags & (ver === 4 ? 0x4f : 0xe0)) continue;   // comprimido, cifrado o agrupado: no se interpreta
+      if (T[fr.id]) out[T[fr.id]] = id3TextValue(fr.data);
+      else if (fr.id === 'TXXX') { const x = id3Txxx_read(fr.data); if (x.desc.toUpperCase() === 'MOOD') out.mood = x.value; }
+    }
+  }
+  return out;
 }
 
 /**

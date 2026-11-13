@@ -8,11 +8,11 @@
 import * as db from './db.js';
 import { S, saveTrack, saveKV, emit, on, albumArtistOf, fileSig, tagFields } from './store.js';
 import { buildTrack, trackId, rekey, setRemoteCover } from './library.js';
-import { isAudioName } from './tags.js';
+import { isAudioName, splitArtists, splitGenres, splitMoods } from './tags.js';
 import { snapshot, merge } from './sync.js';
 import { wavToFlac } from './flac.js';
 import * as oci from './oci.js';
-import { writeTags, canWrite } from './tagwrite.js';
+import { writeTags, canWrite, readFileTags, blobReader } from './tagwrite.js';
 
 const DATA_OBJECT = '_fiora/datos.json';
 const HEAD_BYTES = 768 * 1024;   // suficiente para las etiquetas y la carátula en casi todos los archivos
@@ -157,7 +157,7 @@ export async function syncLibrary(onProgress = () => {}) {
         const fresh = await buildTrack({ id, blob, path: o.name, size: o.size });
         const had = prev.hasBlob;
         await rekey(prev, id, { blob: null, fileName: prev.fileName, size: o.size });
-        for (const k of ['title', 'artists', 'artist', 'albumArtist', 'album', 'genres', 'genre', 'year', 'trackNo']) prev[k] = fresh[k];
+        for (const k of ['title', 'artists', 'artist', 'albumArtist', 'album', 'genres', 'genre', 'moods', 'year', 'trackNo']) prev[k] = fresh[k];
         if (fresh.lyrics) prev.lyrics = fresh.lyrics;
         prev.coverId = fresh.coverId || prev.coverId;
         Object.assign(prev, { hasBlob: false, cloudName: o.name, bucketId: b.id, editAt: 0 });
@@ -279,6 +279,11 @@ export async function writeFile(t, onStage = () => {}) {
     const r = await fetch(objectUrl(t.cloudName, b.id), { method: 'PUT', body: out, headers: { 'Content-Type': out.type || 'application/octet-stream' } });
     if (!r.ok) throw new Error(`«${b.name}» respondió ${r.status} al subir`);
   }
+  // Comprobación: se vuelve a leer el archivo (de la nube si se subió) y deben estar los cambios.
+  onStage('Comprobando');
+  const got = await readFileTags(t.cloudName ? remoteReader(t, out.size, out.tagRange) : blobReader(out), out.size, t.fileName);
+  const wrong = mismatch(f, got);
+  if (wrong) throw new Error(`al comprobar el archivo${t.cloudName ? ' de la nube' : ''} no aparece ${wrong}`);
   const keep = !!t.hasBlob;
   const newId = trackId(out.size, t.fileName);
   if (newId !== t.id && !S.tracks.has(newId)) await rekey(t, newId, { blob: keep ? out : null, fileName: t.fileName, size: out.size });
@@ -288,7 +293,49 @@ export async function writeFile(t, onStage = () => {}) {
   await saveKV('edits');
   await saveTrack(t);
   emit('library');
-  return true;
+  return got;
+}
+
+/** Lee por rangos un archivo de la nube (con un primer trozo ya pedido, si se sabe dónde está la etiqueta). */
+function remoteReader(t, size, range = [0, Math.min(size, 256 * 1024)]) {
+  const b = t.bucketId ? buckets().find(x => x.id === t.bucketId) : buckets()[0];
+  const url = objectUrl(t.cloudName, b.id);
+  const get = async (a, z) => {
+    if (z <= a) return new Uint8Array(0);
+    const r = await fetch(url, { headers: { Range: `bytes=${a}-${z - 1}` }, cache: 'no-store' });
+    if (!r.ok) throw new Error(`respuesta ${r.status} al leer el archivo`);
+    const buf = new Uint8Array(await r.arrayBuffer());
+    return r.status === 206 ? buf : buf.subarray(a, z);   // si ignora el rango, llega el archivo entero
+  };
+  let first = null;
+  return async (a, z) => {
+    z = Math.min(z, size);
+    first ||= get(range[0], range[1]).then(d => ({ a: range[0], d }));
+    const { a: s, d } = await first;
+    if (a >= s && z <= s + d.length) return d.subarray(a - s, z - s);
+    return get(a, z);
+  };
+}
+/** Qué campo escrito no coincide con lo leído del archivo ('' si todo está bien). */
+function mismatch(f, got) {
+  const same = (x, y) => JSON.stringify(x.map(v => v.toLowerCase())) === JSON.stringify(y.map(v => v.toLowerCase()));
+  if ('genres' in f && !same(splitGenres(got.genre), f.genres || [])) return `el género (se leyó «${got.genre || ''}»)`;
+  if ('moods' in f && !same(splitMoods(got.mood), f.moods || [])) return `lo que transmite (se leyó «${got.mood || ''}»)`;
+  if ('title' in f && (got.title || '') !== (f.title || '')) return 'el título';
+  if ('artists' in f && !same(splitArtists(got.artist), f.artists || [])) return 'los artistas';
+  if ('album' in f && (got.album || '') !== (f.album || '')) return 'el álbum';
+  return '';
+}
+
+/** Lo que hay ahora mismo escrito en el archivo de la canción (o null si no se puede saber). */
+export async function fileTags(t) {
+  if (!canWrite(t.fileName)) return null;
+  if (t.hasBlob) {
+    const blob = await db.get('blobs', t.id);
+    if (blob) return readFileTags(blobReader(blob), blob.size, t.fileName);
+  }
+  if (t.cloudName && configured() && t.size) return readFileTags(remoteReader(t, t.size), t.size, t.fileName);
+  return null;
 }
 
 /** Archivo con los metadatos editados ya escritos (para guardarlo en el dispositivo). */
