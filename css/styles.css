@@ -384,3 +384,7 @@ table.data td:last-child { text-align: right; color: var(--muted); white-space: 
 .filters .chip small { opacity: .7; font-weight: 500; }
 .filters .actions { position: sticky; bottom: calc(-18px - var(--safe-b)); background: inherit; margin: 10px -18px 0; padding: 12px 18px calc(4px + var(--safe-b)); background: var(--surface); border-top: 1px solid var(--line); }
 .file-state { margin: 0; font-size: 13px; color: var(--muted); background: var(--surface-2); border-radius: 10px; padding: 8px 12px; overflow-wrap: anywhere; }
+.sub-panel { display: flex; flex-direction: column; gap: 6px; margin: 14px 0 4px; padding: 12px 14px; border-radius: 12px; background: var(--surface-2); min-width: 0; }
+.sub-panel small { color: var(--muted); }
+.sub-panel .actions { margin-top: 6px; }
+.sub-panel .actions .btn { max-width: 100%; white-space: normal; text-align: left; background: var(--surface); }

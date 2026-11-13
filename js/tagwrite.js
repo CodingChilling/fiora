@@ -115,6 +115,31 @@ async function parseId3(read) {
   return { ver, frames, audioStart };
 }
 
+/**
+ * Solo los marcos de texto que interesan, sin leer el resto (la portada puede ocupar cientos de KB):
+ * así, leer las etiquetas de un archivo de la nube cuesta unos pocos KB.
+ */
+const WANT = new Set(['TIT2', 'TPE1', 'TPE2', 'TALB', 'TYER', 'TDRC', 'TRCK', 'TCON', 'TMOO', 'TXXX']);
+async function id3TextFrames(read) {
+  const head = await read(0, 10);
+  if (!(head[0] === 0x49 && head[1] === 0x44 && head[2] === 0x33) || !(head[3] === 3 || head[3] === 4)) return { ver: 3, frames: [] };
+  const ver = head[3], flags = head[5], end = 10 + readSyncsafe(head, 6);
+  if (ver === 3 && flags & 0x80) return parseId3(read);   // etiqueta con «unsynchronisation»: hay que leerla entera
+  let o = 10;
+  if (flags & 0x40) { const eh = await read(10, 14); o += ver === 4 ? readSyncsafe(eh, 0) : readU32(eh, 0) + 4; }
+  const frames = [];
+  while (o + 10 <= end) {
+    const h = await read(o, o + 10);
+    if (h.length < 10 || h[0] === 0) break;
+    const id = String.fromCharCode(...h.subarray(0, 4));
+    if (!/^[A-Z0-9]{4}$/.test(id)) break;
+    const len = ver === 4 ? readSyncsafe(h, 4) : readU32(h, 4);
+    if (WANT.has(id)) frames.push({ id, data: await read(o + 10, o + 10 + len), fflags: h[9] });
+    o += 10 + len;
+  }
+  return { ver, frames };
+}
+
 async function writeMp3(blob, f, cover) {
   const { ver, frames, audioStart } = await parseId3(blobReader(blob));
   const v = texts(f);
@@ -155,7 +180,8 @@ async function parseFlac(read, untilComments = false) {
     if (h.length < 4) throw new Error('FLAC incompleto');
     last = !!(h[0] & 0x80);
     const type = h[0] & 0x7f, len = (h[1] << 16) | (h[2] << 8) | h[3];
-    blocks.push({ type, data: await read(o + 4, o + 4 + len) });
+    // al solo leer, los bloques que no son de comentarios (portada…) se saltan sin descargarlos
+    blocks.push({ type, data: untilComments && type !== 4 ? null : await read(o + 4, o + 4 + len) });
     o += 4 + len;
   }
   return { blocks, audioStart: o };
@@ -270,7 +296,6 @@ async function parseMp4(read, total) {
   const [moov] = parseBoxes(raw, 0, raw.length);
   return { top, mv, moov };
 }
-const findBox = (box, ...path) => path.reduce((b, t) => b?.children?.find(c => c.type === t), box);
 async function writeMp4(blob, f, cover) {
   const { top, mv, moov } = await parseMp4(blobReader(blob), blob.size);
   if (top.some(x => x.type === 'moof')) throw new Error('MP4 fragmentado: no se puede editar');
@@ -330,11 +355,39 @@ export async function readFileTags(read, size, fileName = '') {
     return out;
   }
   if (s.slice(4, 8) === 'ftyp') {
-    const { moov } = await parseMp4(read, size);
-    const ilst = findBox(moov, 'udta', 'meta', 'ilst');
-    if (!ilst) return out;
     const ITEMS = { '©nam': 'title', '©ART': 'artist', aART: 'albumArtist', '©alb': 'album', '©day': 'year', '©gen': 'genre' };
-    for (const item of ilst.children || []) {
+    // Se recorren solo las cabeceras (moov > udta > meta > ilst): ni las pistas ni la portada se descargan.
+    const heads = async (a, z) => {
+      const list = [];
+      for (let o = a; o + 8 <= z;) {
+        const h = await read(o, o + 16);
+        if (h.length < 8) break;
+        let sz = readU32(h, 0), hdr = 8;
+        if (sz === 1) { sz = readU32(h, 8) * 4294967296 + readU32(h, 12); hdr = 16; } else if (sz === 0) sz = z - o;
+        if (sz < hdr) break;
+        list.push({ type: String.fromCharCode(...h.subarray(4, 8)), start: o, hdr, size: sz });
+        o += sz;
+      }
+      return list;
+    };
+    const into = async (box, type, full = false) => {
+      const c = (await heads(box.start + box.hdr + (full ? 4 : 0), box.start + box.size)).find(x => x.type === type);
+      return c;
+    };
+    const moovH = (await heads(0, size)).find(x => x.type === 'moov');
+    const udta = moovH && await into(moovH, 'udta');
+    const metaH = udta && await into(udta, 'meta');
+    if (!metaH) return out;
+    const m4 = await read(metaH.start + metaH.hdr + 4, metaH.start + metaH.hdr + 8);
+    const ilstH = await into(metaH, 'ilst', String.fromCharCode(...m4) !== 'hdlr');
+    if (!ilstH) return out;
+    const items = [];
+    for (const it of await heads(ilstH.start + ilstH.hdr, ilstH.start + ilstH.size)) {
+      if (!ITEMS[it.type] && it.type !== 'trkn' && it.type !== '----') continue;   // covr y demás: no se descargan
+      const raw = await read(it.start, it.start + it.size);
+      items.push(...parseBoxes(raw, 0, raw.length));
+    }
+    for (const item of items) {
       if (ITEMS[item.type] && item.data?.length > 16) out[ITEMS[item.type]] = td.decode(item.data.subarray(16));
       if (item.type === 'trkn' && item.data?.length >= 22) out.track = String((item.data[18] << 8) | item.data[19]);
       if (item.type === '----') {
@@ -345,7 +398,7 @@ export async function readFileTags(read, size, fileName = '') {
     return out;
   }
   if (s.startsWith('ID3')) {
-    const { frames, ver } = await parseId3(read);
+    const { frames, ver } = await id3TextFrames(read);
     const T = { TIT2: 'title', TPE1: 'artist', TPE2: 'albumArtist', TALB: 'album', TYER: 'year', TDRC: 'year', TRCK: 'track', TCON: 'genre', TMOO: 'mood' };
     for (const fr of frames) {
       if (fr.fflags & (ver === 4 ? 0x4f : 0xe0)) continue;   // comprimido, cifrado o agrupado: no se interpreta

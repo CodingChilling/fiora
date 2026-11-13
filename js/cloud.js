@@ -6,8 +6,8 @@
 //   PUT  {par}{nombre}    -> subida
 // Las PAR no permiten borrar: para eso se usa la API de Oracle con una clave de API (oci.js).
 import * as db from './db.js';
-import { S, saveTrack, saveKV, emit, on, albumArtistOf, fileSig, tagFields } from './store.js';
-import { buildTrack, trackId, rekey, setRemoteCover } from './library.js';
+import { S, saveTrack, saveKV, emit, on, albumArtistOf, fileSig, tagFields, fileOutdated } from './store.js';
+import { buildTrack, trackId, rekey, setRemoteCover, moodsFrom } from './library.js';
 import { isAudioName, splitArtists, splitGenres, splitMoods } from './tags.js';
 import { snapshot, merge } from './sync.js';
 import { wavToFlac } from './flac.js';
@@ -256,10 +256,10 @@ export const canWriteFile = t => canWrite(t.fileName) && !!(t.hasBlob || (t.clou
  * en lugar del anterior. Como cambia el tamaño, cambia el id: playlists, me gusta, escuchas y
  * ediciones pasan al nuevo. Los demás dispositivos lo reconocen al sincronizar.
  */
-export async function writeFile(t, onStage = () => {}) {
+export async function writeFile(t, onStage = () => {}, fields = null) {
   const e = S.edits[t.id];
-  if (!e) return false;
-  const f = tagFields(e);
+  if (!e && !fields) return false;
+  const f = fields || tagFields(e);
   onStage(t.hasBlob ? 'Preparando' : 'Descargando');
   const blob = await fetchBlob(t);
   let cover = null;
@@ -289,48 +289,71 @@ export async function writeFile(t, onStage = () => {}) {
   if (newId !== t.id && !S.tracks.has(newId)) await rekey(t, newId, { blob: keep ? out : null, fileName: t.fileName, size: out.size });
   else if (keep) await db.put('blobs', t.id, out);
   t.hasBlob = keep;
-  S.edits[t.id].fileSig = fileSig(S.edits[t.id]);
-  await saveKV('edits');
+  if (S.edits[t.id]) { S.edits[t.id].fileSig = fileSig(S.edits[t.id]); await saveKV('edits'); }
   await saveTrack(t);
   emit('library');
   return got;
 }
 
-/** Lee por rangos un archivo de la nube (con un primer trozo ya pedido, si se sabe dónde está la etiqueta). */
-function remoteReader(t, size, range = [0, Math.min(size, 256 * 1024)]) {
+/** Lee por rangos un archivo de la nube: pide ventanas de 64 KB y las reutiliza. */
+function remoteReader(t, size, preload = null) {
   const b = t.bucketId ? buckets().find(x => x.id === t.bucketId) : buckets()[0];
   const url = objectUrl(t.cloudName, b.id);
   const get = async (a, z) => {
-    if (z <= a) return new Uint8Array(0);
     const r = await fetch(url, { headers: { Range: `bytes=${a}-${z - 1}` }, cache: 'no-store' });
     if (!r.ok) throw new Error(`respuesta ${r.status} al leer el archivo`);
     const buf = new Uint8Array(await r.arrayBuffer());
     return r.status === 206 ? buf : buf.subarray(a, z);   // si ignora el rango, llega el archivo entero
   };
-  let first = null;
+  const windows = [];
+  let first = preload;
   return async (a, z) => {
     z = Math.min(z, size);
-    first ||= get(range[0], range[1]).then(d => ({ a: range[0], d }));
-    const { a: s, d } = await first;
-    if (a >= s && z <= s + d.length) return d.subarray(a - s, z - s);
-    return get(a, z);
+    if (z <= a) return new Uint8Array(0);
+    if (first) { const [pa, pz] = first; first = null; windows.push({ a: pa, d: await get(pa, Math.min(pz, size)) }); }
+    for (const w of windows) if (a >= w.a && z <= w.a + w.d.length) return w.d.subarray(a - w.a, z - w.a);
+    const d = await get(a, Math.min(size, Math.max(z, a + 65536)));
+    windows.push({ a, d });
+    if (windows.length > 6) windows.shift();
+    return d.subarray(0, z - a);
   };
 }
-/** Qué campo escrito no coincide con lo leído del archivo ('' si todo está bien). */
+/** Qué campo no coincide entre lo que debería tener el archivo y lo leído ('' si todo está bien). */
 function mismatch(f, got) {
-  const same = (x, y) => JSON.stringify(x.map(v => v.toLowerCase())) === JSON.stringify(y.map(v => v.toLowerCase()));
+  const low = l => l.map(v => v.toLowerCase());
+  const same = (x, y) => JSON.stringify(low(x)) === JSON.stringify(low(y));
   if ('genres' in f && !same(splitGenres(got.genre), f.genres || [])) return `el género (se leyó «${got.genre || ''}»)`;
-  if ('moods' in f && !same(splitMoods(got.mood), f.moods || [])) return `lo que transmite (se leyó «${got.mood || ''}»)`;
+  if ('moods' in f && !same(moodsFrom(splitMoods(got.mood)), f.moods || [])) return `lo que transmite (se leyó «${got.mood || ''}»)`;
   if ('title' in f && (got.title || '') !== (f.title || '')) return 'el título';
   if ('artists' in f && !same(splitArtists(got.artist), f.artists || [])) return 'los artistas';
   if ('album' in f && (got.album || '') !== (f.album || '')) return 'el álbum';
+  if ('albumArtist' in f && (got.albumArtist || '') !== (f.albumArtist || '')) return 'el artista del álbum';
+  if ('year' in f && (+(String(got.year || '').match(/\d{4}/) || [0])[0] || 0) !== (+f.year || 0)) return 'el año';
+  if ('trackNo' in f && (parseInt(got.track, 10) || 0) !== (+f.trackNo || 0)) return 'el número de pista';
   return '';
 }
 
+/**
+ * Lo que la app sabe de una canción y debería estar dentro de su archivo: los campos editados y,
+ * aunque no se hayan editado, los géneros y lo que transmite que tenga la canción.
+ */
+export function desiredTags(t) {
+  const f = S.edits[t.id] ? tagFields(S.edits[t.id]) : {};
+  if (!('genres' in f) && t.genres?.length) f.genres = t.genres;
+  if (!('moods' in f) && t.moods?.length) f.moods = t.moods;
+  return f;
+}
+/** Qué le falta al archivo de la nube ('' si ya tiene todo). Solo lee la parte de las etiquetas. */
+export async function cloudFileGap(t) {
+  const f = desiredTags(t);
+  const gap = mismatch(f, (await fileTags(t, true)) || {});
+  return gap || (fileOutdated(t) && 'coverId' in f ? 'la portada' : '');
+}
+
 /** Lo que hay ahora mismo escrito en el archivo de la canción (o null si no se puede saber). */
-export async function fileTags(t) {
+export async function fileTags(t, fromCloud = false) {
   if (!canWrite(t.fileName)) return null;
-  if (t.hasBlob) {
+  if (t.hasBlob && !(fromCloud && t.cloudName && configured())) {
     const blob = await db.get('blobs', t.id);
     if (blob) return readFileTags(blobReader(blob), blob.size, t.fileName);
   }
