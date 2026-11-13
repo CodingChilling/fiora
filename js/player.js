@@ -211,6 +211,13 @@ export function removeFromQueue(i, user = false) {
   emit('queue');
 }
 
+/** Quita de las colas las canciones borradas de la biblioteca (menos la que está sonando). */
+export function forget(ids) {
+  P.user = P.user.filter(t => !ids.has(t.id));
+  for (let i = P.queue.length - 1; i >= 0; i--) if (ids.has(P.queue[i].id)) removeFromQueue(i);
+  emit('queue');
+}
+
 export function clearUserQueue() { P.user = []; emit('queue'); }
 
 export function setVolume(v) {

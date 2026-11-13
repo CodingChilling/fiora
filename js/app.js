@@ -123,18 +123,27 @@ const albumLink = t => (t.album && inLibrary(t) ? `<span class="link" data-act="
 
 function rowHTML(t, i, o) {
   const cur = P.current && P.current.id === t.id && (o.queue ? !o.user && !P.fromUser && i === P.index : true) ? ' is-playing' : '';
-  const where = t.radio || o.queue ? '' : !t.hasBlob && (t.cloudName || t.url)
+  const where = t.radio || o.queue || o.dup ? '' : !t.hasBlob && (t.cloudName || t.url)
     ? `<span class="where" title="En línea">${icon('cloud')}</span>`
     : t.hasBlob && (t.cloudName || t.url) ? `<span class="where" title="Disponible sin conexión">${icon('offline')}</span>` : '';
-  const sub = t.radio ? esc(t.artist) : [artistLinks(t), o.hideAlbum ? '' : albumLink(t), o.remote ? esc(t.license || '') : ''].filter(Boolean).join(' · ');
+  const sub = t.radio ? esc(t.artist) : o.dup ? copyInfo(t)
+    : [artistLinks(t), o.hideAlbum ? '' : albumLink(t), o.remote ? esc(t.license || '') : ''].filter(Boolean).join(' · ');
   return `<li class="row${cur}${playable(t) ? '' : ' unavailable'}" data-i="${i}" data-id="${esc(t.id)}">
     ${o.numbered ? `<span class="num">${t.trackNo || i + 1}</span>` : ''}
     <button class="row-main" data-act="play">${o.numbered ? '' : cover(t)}<span class="row-text"><b>${esc(t.title)}</b><small>${sub}</small></span></button>
     ${where}
-    ${!t.radio && inLibrary(t) ? `<button class="icon-btn fav ${isFav(t.id) ? 'on' : ''}" data-act="fav" aria-label="Me gusta">${icon('heart')}</button>` : ''}
-    <span class="dur">${fmt(t.duration)}</span>
+    ${o.dup ? (i === 0 ? '<span class="keep-tag">Se conserva</span>' : '<button class="chip" data-act="dup-keep">Conservar</button>') : ''}
+    ${!o.dup && !t.radio && inLibrary(t) ? `<button class="icon-btn fav ${isFav(t.id) ? 'on' : ''}" data-act="fav" aria-label="Me gusta">${icon('heart')}</button>` : ''}
+    ${o.dup ? '' : `<span class="dur">${fmt(t.duration)}</span>`}
     <button class="icon-btn" data-act="more" aria-label="Más opciones">${icon('more')}</button>
   </li>`;
+}
+// Detalles de una copia en la lista de repetidas: dónde está, si tiene portada y cuándo se añadió.
+function copyInfo(t) {
+  const b = t.cloudName && (cloud.buckets().find(x => x.id === t.bucketId) || (!t.bucketId && cloud.buckets()[0]));
+  const where = b ? `nube «${esc(b.name)}»${t.hasBlob ? ' y este dispositivo' : ''}` : t.hasBlob ? 'solo en este dispositivo' : t.url ? 'en línea' : 'sin archivo';
+  const date = t.addedAt ? `añadida el ${new Date(t.addedAt).toLocaleDateString('es')}` : '';
+  return [where, t.coverId || t.coverUrl ? 'con portada' : 'sin portada', date, esc(t.album || t.fileName || '')].filter(Boolean).join(' · ');
 }
 function rowsChunk(k, from) {
   const { tracks, opts } = getList(k);
@@ -164,7 +173,7 @@ const watchSentinels = root => $$('.sentinel', root).forEach(s => more.observe(s
 // ---------------------------------------------------------------- navegación
 const view = $('#view');
 const NAV = [['inicio', 'Inicio', 'home'], ['biblioteca', 'Biblioteca', 'library'], ['playlists', 'Playlists', 'list'], ['explorar', 'Explorar', 'compass'], ['ajustes', 'Ajustes', 'settings']];
-const SECTION = { estadisticas: 'ajustes', album: 'biblioteca', artista: 'biblioteca', genero: 'biblioteca', ambiente: 'biblioteca', playlist: 'playlists', favoritos: 'playlists', mix: 'inicio', archivo: 'explorar' };
+const SECTION = { estadisticas: 'ajustes', repetidas: 'ajustes', album: 'biblioteca', artista: 'biblioteca', genero: 'biblioteca', ambiente: 'biblioteca', playlist: 'playlists', favoritos: 'playlists', mix: 'inicio', archivo: 'explorar' };
 $('#nav-links').innerHTML = NAV.map(([id, label, ic]) => `<a href="#/${id}" data-nav="${id}">${icon(ic)}<span>${label}</span></a>`).join('');
 
 function show(html) {
@@ -493,6 +502,7 @@ async function viewSettings() {
   const aiReady = !ai.missing(aiOptions());
   const presets = S.settings.genrePresets || [];
   const untagged = tracks.filter(needsTags).length;
+  const dups = dev ? lib.findDuplicates(dupKeep) : [], extra = dups.reduce((n, g) => n + g.tracks.length - 1, 0);
   const gb = n => (n / 1073741824).toFixed(n > 1073741824 * 10 ? 0 : 2);
   const bks = cloud.buckets(), target = cloud.uploadTarget();
   const steps = `<ol class="steps"><li>En la consola de Oracle Cloud: <b>Storage → Buckets → Create Bucket</b> (privado).</li>
@@ -548,7 +558,11 @@ async function viewSettings() {
     <div class="panel"><h2>Modo desarrollador</h2>
       <label class="switch" style="margin-top:4px"><input type="checkbox" data-toggle="dev" ${dev ? 'checked' : ''}><span><b>Editar metadatos de las canciones</b>
         <small>Añade «Editar metadatos» al menú ⋯ de cada canción: portada, título, artistas, álbum, géneros y lo que transmite. Los cambios se guardan en tu cuenta y tu nube, y se ven en todos tus dispositivos.</small></span></label>
-      ${dev ? `<h2 style="margin-top:22px">Géneros predefinidos</h2>
+      ${dev ? `<h2 style="margin-top:22px">Canciones repetidas</h2>
+        <p>${dups.length ? `${plural(dups.length, 'canción tiene', 'canciones tienen')} más de una copia (mismo título y mismos artistas): ${plural(extra, 'copia sobra', 'copias sobran')}.` : 'No hay canciones repetidas en tu biblioteca.'}
+          En modo desarrollador, borrar una canción la elimina también de su bucket.</p>
+        ${dups.length ? `<div class="actions"><a class="btn" href="#/repetidas">${icon('list')}Ver canciones repetidas</a></div>` : ''}
+        <h2 style="margin-top:22px">Géneros predefinidos</h2>
         <p>El editor ofrece una lista de géneros habituales para elegir. Aquí puedes añadir los tuyos.</p>
         ${presets.length ? `<div class="chips">${presets.map(g => `<button class="chip" data-act="preset-remove" data-g="${esc(g)}" aria-label="Quitar ${esc(g)}">${esc(g)} ✕</button>`).join('')}</div>` : ''}
         <form class="search" data-form="preset-add"><label class="field">${icon('plus')}<input name="g" placeholder="Nuevo género (p. ej. Indie Español)" autocomplete="off" maxlength="40" required></label><button class="btn">Añadir</button></form>
@@ -852,7 +866,55 @@ async function tagMany(tracks) {
   note.done(`${plural(tagged, 'canción etiquetada', 'canciones etiquetadas')}${tagged < tracks.length ? ` · ${tracks.length - tagged} sin reconocer` : ''}`, 6000);
 }
 
-const ROUTES = { inicio: viewHome, biblioteca: viewLibrary, album: viewAlbum, artista: viewArtist, playlists: viewPlaylists, playlist: viewPlaylist, favoritos: viewFavs, mix: viewMix, estadisticas: viewStats, genero: n => viewTag('genero', n), ambiente: n => viewTag('ambiente', n), explorar: viewExplore, archivo: viewArchive, ajustes: viewSettings };
+// ------------------------------------------------- canciones repetidas (desarrollador)
+const dupKeep = {};   // copia elegida a mano en cada grupo: clave -> id
+function viewDuplicates() {
+  if (!S.settings.dev) return show(empty('settings', 'Solo en modo desarrollador', 'Activa el modo desarrollador en Ajustes para revisar las canciones repetidas.', `<a class="btn primary" href="#/ajustes">Ir a Ajustes</a>`));
+  const groups = lib.findDuplicates(dupKeep);
+  const extra = groups.flatMap(g => g.tracks.slice(1));
+  const ignored = (S.settings.dupIgnore || []).length;
+  const back = ignored ? `<p class="muted" style="margin-top:18px">${plural(ignored, 'grupo marcado', 'grupos marcados')} como «no son repetidas». <button class="chip" data-act="dup-unignore">Volver a revisarlos</button></p>` : '';
+  if (!groups.length) return show(`<div class="head"><h1>Canciones repetidas</h1></div>${empty('heart', 'No hay canciones repetidas', 'Ninguna canción de tu biblioteca tiene el mismo título y los mismos artistas que otra.', `<a class="btn" href="#/ajustes">Volver a Ajustes</a>`)}${back}`);
+  const inCloud = extra.filter(t => t.cloudName).length;
+  show(`<div class="head"><h1>Canciones repetidas</h1></div>
+    <div class="panel"><p style="margin-top:0">${plural(groups.length, 'canción tiene', 'canciones tienen')} más de una copia. De cada una se conserva la copia con portada; si todas la tienen (o ninguna), la más reciente. Toca «Conservar» para elegir otra.</p>
+      <p>Las playlists, los «me gusta» y las escuchas de las copias borradas pasan a la que se conserva.${inCloud ? ` ${plural(inCloud, 'copia está', 'copias están')} en la nube y se ${inCloud === 1 ? 'borrará' : 'borrarán'} también de su bucket.` : ''}</p>
+      <div class="actions"><button class="btn danger" data-act="dup-auto">${icon('trash')}Borrar ${plural(extra.length, 'copia repetida', 'copias repetidas')}</button></div></div>
+    ${groups.map(g => `<section class="dup-group"><div class="dup-head"><b>${esc(g.tracks[0].title)}</b><small>${esc(artistsOf(g.tracks[0]).join(', '))} · ${g.tracks.length} copias</small>
+      <button class="chip" data-act="dup-ignore" data-key="${esc(g.key)}">No son repetidas</button></div>${rows(g.tracks, { dup: g.key })}</section>`).join('')}
+    ${back}`);
+}
+
+/**
+ * Borra canciones para siempre: de la biblioteca, de este dispositivo y, si están en la nube, de su bucket.
+ * `keepOf` (id -> pista) indica a qué copia pasan las playlists, «me gusta» y escuchas de cada una.
+ */
+async function deleteForever(list, keepOf = null) {
+  const note = toast('Borrando…', 0);
+  const gone = new Set(), fails = [];
+  let emptied = 0;
+  for (let i = 0; i < list.length; i++) {
+    const t = list[i];
+    note.set(`Borrando ${i + 1} de ${list.length}: ${t.title}`);
+    try {
+      if (t.cloudName && cloud.configured() && (await cloud.deleteRemote(t)) === 'emptied') emptied++;
+      const keep = keepOf?.get(t.id);
+      if (keep && S.tracks.has(keep.id)) await lib.mergeInto(t, keep);
+      await lib.removeTrack(t.id);
+      gone.add(t.id);
+    } catch (e) { console.warn(e); fails.push(`«${t.title}»: ${e.message}`); }
+  }
+  if (gone.size) player.forget(gone);
+  const msg = `${plural(gone.size, 'canción borrada', 'canciones borradas')}${emptied ? ` · ${emptied} vaciada${emptied === 1 ? '' : 's'} en la nube (el bucket no permite borrar)` : ''}`;
+  note.done(fails.length ? `${msg}. No se pudo borrar ${fails[0]}${fails.length > 1 ? ` y ${fails.length - 1} más` : ''}` : msg, fails.length || emptied ? 8000 : 4000);
+  refresh();
+}
+function confirmDelete(t) {
+  const b = t.cloudName && (cloud.buckets().find(x => x.id === t.bucketId) || cloud.buckets()[0]);
+  return confirmDlg('¿Borrar la canción para siempre?', `«${t.title}» se borrará de tu biblioteca, de este dispositivo${b ? ` y del bucket «${b.name}» (en todos tus dispositivos)` : ''}. No se puede deshacer.`, 'Borrar');
+}
+
+const ROUTES = { inicio: viewHome, biblioteca: viewLibrary, album: viewAlbum, artista: viewArtist, playlists: viewPlaylists, playlist: viewPlaylist, favoritos: viewFavs, mix: viewMix, estadisticas: viewStats, genero: n => viewTag('genero', n), ambiente: n => viewTag('ambiente', n), explorar: viewExplore, archivo: viewArchive, ajustes: viewSettings, repetidas: viewDuplicates };
 
 // ------------------------------------------------------- menú de una canción
 function trackMenu(t, o = {}, i = -1) {
@@ -891,6 +953,9 @@ function trackMenu(t, o = {}, i = -1) {
     lib_ && t.hasBlob && !t.cloudName && cloud.configured() && { icon: 'cloudUp', label: 'Subir a la nube', fn: () => uploadTo([t]) },
     t.link && /^https:\/\//.test(t.link) && { icon: 'compass', label: `Ver origen y licencia${t.license ? ` (${t.license})` : ''}`, fn: () => window.open(t.link, '_blank', 'noopener') },
     o.playlist && { icon: 'x', label: 'Quitar de esta playlist', fn: async () => { const p = S.playlists.find(x => x.id === o.playlist); p.trackIds = p.trackIds.filter(x => x !== t.id); await savePlaylist(p); refresh(); } },
+    lib_ && S.settings.dev && t.cloudName && cloud.configured() && {
+      icon: 'trash', label: 'Borrar también de la nube', danger: true, fn: async () => { if (await confirmDelete(t)) deleteForever([t]); },
+    },
     lib_ && {
       icon: 'trash', label: 'Eliminar de la biblioteca', danger: true, fn: async () => {
         const extra = t.cloudName ? ' El archivo seguirá en tu nube y volverá a aparecer al sincronizar.' : '';
@@ -992,6 +1057,33 @@ const ACTIONS = {
       note.done(list.length ? `${list.length} modelos disponibles: toca el campo «modelo» para elegir` : 'El servicio no devolvió ningún modelo', 5000);
       form.model.focus();
     } catch (e) { note.done(e.message, 6000); }
+  },
+  'dup-keep'(el) {
+    const r = rowInfo(el);
+    if (!r?.track || !r.opts.dup) return;
+    dupKeep[r.opts.dup] = r.track.id;
+    refresh();
+  },
+  async 'dup-ignore'(el) {
+    S.settings.dupIgnore = [...new Set([...(S.settings.dupIgnore || []), el.dataset.key])];
+    await saveKV('settings', false);
+    toast('No se volverán a marcar como repetidas');
+    refresh();
+  },
+  async 'dup-unignore'() {
+    S.settings.dupIgnore = [];
+    await saveKV('settings', false);
+    refresh();
+  },
+  async 'dup-auto'() {
+    const groups = lib.findDuplicates(dupKeep);
+    const keepOf = new Map(), list = [];
+    for (const g of groups) for (const t of g.tracks.slice(1)) { list.push(t); keepOf.set(t.id, g.tracks[0]); }
+    if (!list.length) return;
+    const inCloud = list.filter(t => t.cloudName).length;
+    if (!(await confirmDlg(`¿Borrar ${plural(list.length, 'copia repetida', 'copias repetidas')}?`,
+      `Se conserva una copia de cada canción.${inCloud ? ` ${plural(inCloud, 'copia está', 'copias están')} en la nube: se ${inCloud === 1 ? 'borrará' : 'borrarán'} también del bucket y desaparecerá${inCloud === 1 ? '' : 'n'} en todos tus dispositivos.` : ''} No se puede deshacer.`, 'Borrar'))) return;
+    await deleteForever(list, keepOf);
   },
   async 'preset-remove'(el) {
     S.settings.genrePresets = (S.settings.genrePresets || []).filter(g => g !== el.dataset.g);
