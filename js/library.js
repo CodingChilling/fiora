@@ -1,6 +1,6 @@
 // Biblioteca: importar archivos del dispositivo, borrar pistas, carátulas.
 import * as db from './db.js';
-import { S, saveTrack, saveKV, emit, savePlaylist, albumArtistOf } from './store.js';
+import { S, saveTrack, saveKV, emit, savePlaylist, albumArtistOf, artistsOf } from './store.js';
 import { readTags, fromFilename, splitArtists, splitGenres, shrinkCover, probeDuration, isAudioName, hash } from './tags.js';
 
 export const trackId = (size, name) => `${size}:${name}`;
@@ -104,6 +104,65 @@ export async function dropBlob(id) {
   t.hasBlob = false;
   await saveTrack(t);
   emit('library');
+}
+
+// --- Canciones repetidas ----------------------------------------------------
+// Dos pistas son la misma canción si tienen el mismo título y los mismos artistas
+// (sin importar mayúsculas, tildes, signos ni el orden de los artistas).
+const norm = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+export function dupKey(t) {
+  const artists = artistsOf(t).map(norm).filter(a => a && a !== 'artista desconocido');
+  const title = norm(t.title);
+  return artists.length && title ? `${[...new Set(artists)].sort().join(' & ')} — ${title}` : '';
+}
+
+/** Orden de preferencia: primero la que tiene portada; si empatan, la más reciente. */
+const keepScore = t => [t.coverId || t.coverUrl ? 1 : 0, t.addedAt || 0];
+export function rankCopies(list) {
+  return [...list].sort((a, b) => { const x = keepScore(a), y = keepScore(b); return y[0] - x[0] || y[1] - x[1]; });
+}
+
+/**
+ * Grupos de canciones repetidas: [{key, tracks}] con la copia que se conserva en primer lugar.
+ * `keep` permite fijar a mano qué copia se conserva en un grupo ({key: id}).
+ */
+export function findDuplicates(keep = {}) {
+  const ignore = new Set(S.settings.dupIgnore || []);
+  const groups = new Map();
+  for (const t of S.tracks.values()) {
+    const k = dupKey(t);
+    if (!k || ignore.has(k)) continue;
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(t);
+  }
+  const out = [];
+  for (const [key, list] of groups) {
+    if (list.length < 2) continue;
+    const tracks = rankCopies(list);
+    const fixed = tracks.findIndex(t => t.id === keep[key]);
+    if (fixed > 0) tracks.unshift(...tracks.splice(fixed, 1));
+    out.push({ key, tracks });
+  }
+  return out.sort((a, b) => a.key.localeCompare(b.key));
+}
+
+/** Pasa a `keep` lo que tenía la copia que se va a borrar: playlists, me gusta y escuchas. */
+export async function mergeInto(dup, keep) {
+  for (const p of S.playlists) {
+    if (!p.trackIds.includes(dup.id)) continue;
+    p.trackIds = [...new Set(p.trackIds.map(x => (x === dup.id ? keep.id : x)))];
+    await savePlaylist(p);
+  }
+  if (S.favs[dup.id]?.on && !S.favs[keep.id]?.on) { S.favs[keep.id] = { on: true, at: Date.now() }; saveKV('favs'); }
+  const a = S.stats[dup.id];
+  if (a) {
+    const b = S.stats[keep.id] || (S.stats[keep.id] = { plays: 0, last: 0 });
+    for (const f of ['plays', 'skips', 'done']) if (a[f]) b[f] = (b[f] || 0) + a[f];
+    b.last = Math.max(b.last || 0, a.last || 0);
+    if (a.h) b.h = (b.h || [0, 0, 0, 0]).map((n, i) => n + (a.h[i] || 0));
+    saveKV('stats');
+  }
+  if (!keep.coverId && dup.coverId) { keep.coverId = dup.coverId; await saveTrack(keep); }
 }
 
 // --- Carátulas -------------------------------------------------------------

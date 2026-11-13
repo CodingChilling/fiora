@@ -4,6 +4,7 @@
 //   GET  {par}            -> lista de objetos (JSON)
 //   GET  {par}{nombre}    -> descarga (admite Range)
 //   PUT  {par}{nombre}    -> subida
+//   DELETE {par}{nombre}  -> borrado (si la PAR no lo admite, el archivo se vacía: 0 bytes)
 import * as db from './db.js';
 import { S, saveTrack, saveKV, emit, on, albumArtistOf } from './store.js';
 import { buildTrack, trackId, rekey, setRemoteCover } from './library.js';
@@ -123,7 +124,7 @@ export async function syncLibrary(onProgress = () => {}) {
 
   for (const b of buckets()) {
     let objects;
-    try { objects = (await listObjects(b)).filter(o => isAudioName(o.name)); }
+    try { objects = (await listObjects(b)).filter(o => o.size > 0 && isAudioName(o.name)); }   // los vacíos son canciones borradas
     catch (e) { failed.add(b.id); errors.push(e.message); continue; }
     let n = 0;
     for (const o of objects) {
@@ -193,6 +194,23 @@ export async function upload(t, bucketId, onStage = () => {}) {
   await saveTrack(t);
   emit('library');
   return saved;
+}
+
+/**
+ * Borra de su bucket el archivo de una pista. Las PAR de Oracle no siempre aceptan DELETE:
+ * en ese caso el archivo se sobrescribe vacío (0 bytes), lo que libera el espacio, y Fiora
+ * deja de mostrarlo en todos los dispositivos. Devuelve 'deleted' o 'emptied'.
+ */
+export async function deleteRemote(t) {
+  if (!t.cloudName) return null;
+  const b = t.bucketId ? buckets().find(x => x.id === t.bucketId) : buckets()[0];
+  if (!b) throw new Error('El bucket de esta canción no está conectado');
+  const url = objectUrl(t.cloudName, b.id);
+  const r = await fetch(url, { method: 'DELETE' }).catch(() => null);
+  if (r && (r.ok || r.status === 404)) return 'deleted';
+  const w = await fetch(url, { method: 'PUT', body: new Blob([]), headers: { 'Content-Type': 'application/octet-stream' } });
+  if (w.ok) return 'emptied';
+  throw new Error(`«${b.name}» respondió ${w.status} al borrar. ¿La PAR permite escritura?`);
 }
 
 // Portadas elegidas a mano: se guardan en el primer bucket para que las vean los demás dispositivos.
