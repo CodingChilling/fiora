@@ -731,7 +731,7 @@ async function viewSettings() {
           <div class="actions"><button class="btn primary">Guardar</button>
             ${A.provider !== 'anthropic' ? '<button type="button" class="btn" data-act="ai-models">Ver modelos disponibles</button>' : ''}
             ${aiKey ? '<button type="button" class="btn ghost danger" data-act="ai-forget">Quitar clave</button>' : ''}</div>
-          ${prov.site ? `<small class="muted">La clave se crea en ${prov.site}.</small>` : '<small class="muted">Vale cualquier servicio con API compatible con la de OpenAI (OpenRouter, Groq, Mistral, un modelo local…), siempre que admita llamadas desde el navegador.</small>'}</form>
+          ${prov.site ? `<small class="muted">La clave se crea en ${prov.site}.${prov.help ? ` ${esc(prov.help)}` : ''}</small>` : '<small class="muted">Vale cualquier servicio con API compatible con la de OpenAI (OpenRouter, Groq, Mistral, un modelo local…), siempre que admita llamadas desde el navegador.</small>'}</form>
         ${aiReady ? `<div class="actions" style="margin-top:14px"><button class="btn" data-act="ai-tag-all" ${untagged ? '' : 'disabled'}>${icon('spark')}${untagged ? `Etiquetar ${plural(untagged, 'canción', 'canciones')} sin etiquetar` : 'Todas las canciones están etiquetadas'}</button></div>` : ''}` : ''}</div>
     <div class="panel"><h2>Tus escuchas</h2>
       <div class="stat-row"><div class="stat"><b>${sum.plays}</b><small>reproducciones</small></div><div class="stat"><b>${sum.hours.toFixed(1)} h</b><small>escuchadas</small></div><div class="stat wide"><b title="${esc(sum.topArtists[0]?.[0] || '')}">${esc(sum.topArtists[0]?.[0] || '—')}</b><small>artista más escuchado</small></div></div>
