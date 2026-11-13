@@ -368,3 +368,18 @@ table.data td:last-child { text-align: right; color: var(--muted); white-space: 
 .field.area { align-items: flex-start; padding-top: 12px; padding-bottom: 8px; }
 .field textarea { flex: 1; min-width: 0; min-height: 96px; background: none; border: 0; outline: 0; resize: vertical; color: inherit; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .field input[type=file] { font-size: 13px; color: var(--muted); padding-top: 10px; }
+
+/* Filtros de la biblioteca */
+.lib-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 14px; min-width: 0; }
+.lib-tools .btn.on { border-color: var(--accent); color: var(--accent); }
+.lib-tools .count { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-size: 12px; }
+.lib-tools .chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.lib-tools [data-k="moods"], .filters [data-f="moods"] { text-transform: capitalize; }
+.lib-count { margin: 0 0 10px; }
+.dlg.filters { max-height: 82vh; overflow: hidden auto; gap: 6px; }
+.filters h4 { margin: 12px 0 0; font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.filters .chips { margin: 6px 0 0; }
+.filters .chip { background: var(--surface-2); padding: 6px 12px; font-size: 13px; }
+.filters .chip.on { background: var(--accent); color: var(--accent-ink); }
+.filters .chip small { opacity: .7; font-weight: 500; }
+.filters .actions { position: sticky; bottom: calc(-18px - var(--safe-b)); background: inherit; margin: 10px -18px 0; padding: 12px 18px calc(4px + var(--safe-b)); background: var(--surface); border-top: 1px solid var(--line); }
