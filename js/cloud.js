@@ -49,7 +49,7 @@ async function listObjects(b) {
   const out = [];
   let start = '';
   do {
-    const r = await fetch(`${b.url}?fields=name,size&limit=1000${start ? `&start=${encodeURIComponent(start)}` : ''}`);
+    const r = await fetch(`${b.url}?fields=name,size,etag,timeModified&limit=1000${start ? `&start=${encodeURIComponent(start)}` : ''}`);
     if (!r.ok) throw new Error(`«${b.name}» respondió ${r.status} al listar. Revisa que la PAR tenga activado el listado de objetos y no haya caducado.`);
     const j = await r.json();
     out.push(...(j.objects || []));
@@ -142,6 +142,16 @@ export async function syncLibrary(onProgress = () => {}) {
       const old = S.tracks.get(id);
       if (old) {
         if (old.cloudName !== o.name || old.bucketId !== b.id) { old.cloudName = o.name; old.bucketId = b.id; await saveTrack(old); }
+        if (fileChanged(old, o)) {
+          // Mismo tamaño pero contenido distinto (p. ej. «Rock» -> «Folk» desde otro dispositivo).
+          onProgress(n, objects.length, o.name);
+          try {
+            const got = await readFileTags(rangeReader(objectUrl(o.name, b.id), o.size), o.size, o.name);
+            await takeFromFile(old, tagsAsTrack(got), o);
+            if (old.hasBlob) redownload.push(old);
+            updated++;
+          } catch (e) { console.warn('No se pudieron leer las etiquetas de', o.name, e); }
+        } else if (o.etag && old.etag !== o.etag) { old.etag = o.etag; old.tagsAt ||= Date.now(); await saveTrack(old); }
         continue;
       }
       onProgress(n, objects.length, o.name);
@@ -157,17 +167,16 @@ export async function syncLibrary(onProgress = () => {}) {
         const fresh = await buildTrack({ id, blob, path: o.name, size: o.size });
         const had = prev.hasBlob;
         await rekey(prev, id, { blob: null, fileName: prev.fileName, size: o.size });
-        for (const k of ['title', 'artists', 'artist', 'albumArtist', 'album', 'genres', 'genre', 'moods', 'year', 'trackNo']) prev[k] = fresh[k];
         if (fresh.lyrics) prev.lyrics = fresh.lyrics;
         prev.coverId = fresh.coverId || prev.coverId;
-        Object.assign(prev, { hasBlob: false, cloudName: o.name, bucketId: b.id, editAt: 0 });
-        await saveTrack(prev);    // vuelve a aplicar las ediciones de la app por encima
+        Object.assign(prev, { hasBlob: false, cloudName: o.name, bucketId: b.id });
+        await takeFromFile(prev, fresh, o);
         if (had) redownload.push(prev);
         updated++;
         continue;
       }
       const t = await buildTrack({ id, blob, path: o.name, size: o.size });
-      t.cloudName = o.name; t.bucketId = b.id;
+      Object.assign(t, { cloudName: o.name, bucketId: b.id, etag: o.etag || '', tagsAt: Date.now() });
       await saveTrack(t);
       added++;
     }
@@ -176,6 +185,47 @@ export async function syncLibrary(onProgress = () => {}) {
   const removed = await dropMissing(found, failed);
   if (added || removed || updated) emit('library');
   return { added, removed, updated, total: found.size, errors };
+}
+
+// --- Cambios hechos en los archivos desde otros dispositivos ------------------
+/**
+ * ¿Ha cambiado el archivo desde que se leyeron sus etiquetas? Se mira el etag del objeto (cambia
+ * con cada subida) y, si aún no se conocía, su fecha de modificación.
+ */
+function fileChanged(t, o) {
+  if (o.etag && t.etag) return o.etag !== t.etag;
+  const mod = Date.parse(o.timeModified || '');
+  return !!mod && mod > (t.tagsAt || t.addedAt || 0) + 5000;
+}
+/** Etiquetas leídas del archivo con la forma de una pista. */
+function tagsAsTrack(got) {
+  const out = { genres: splitGenres(got.genre), moods: moodsFrom(splitMoods(got.mood)) };
+  if (got.title) out.title = got.title;
+  if (got.artist) out.artists = splitArtistTag(got.artist);
+  if (got.album) out.album = got.album;
+  if (got.albumArtist) out.albumArtist = got.albumArtist;
+  const y = String(got.year || '').match(/\d{4}/); if (y) out.year = +y[0];
+  if (parseInt(got.track, 10)) out.trackNo = parseInt(got.track, 10);
+  return out;
+}
+const sameVal = (a, b) => JSON.stringify(Array.isArray(a) ? a.map(x => String(x).toLowerCase()) : a ?? '') === JSON.stringify(Array.isArray(b) ? b.map(x => String(x).toLowerCase()) : b ?? '');
+/**
+ * Toma de un archivo actualizado sus etiquetas. Lo que dice el archivo gana a las ediciones que ya
+ * se escribieron en algún archivo (son más antiguas que él); las ediciones de este dispositivo que
+ * aún no están en ningún archivo se mantienen encima, para no perderlas.
+ */
+async function takeFromFile(t, fresh, o) {
+  for (const k of ['title', 'artists', 'albumArtist', 'album', 'genres', 'moods', 'year', 'trackNo']) if (k in fresh) t[k] = fresh[k];
+  t.artist = (t.artists || []).join(', ');
+  t.genre = t.genres?.[0] || '';
+  const e = S.edits[t.id];
+  if (e && e.fileSig && e.fileSig === fileSig(e)) {
+    let changed = false;
+    for (const k of Object.keys(e.f)) if (k in fresh && !sameVal(e.f[k], fresh[k])) { delete e.f[k]; changed = true; }
+    if (changed) { e.fileSig = fileSig(e); await saveKV('edits', false); }
+  }
+  Object.assign(t, { etag: o.etag || '', tagsAt: Date.now(), editAt: 0 });
+  await saveTrack(t);   // aplica encima lo que quede de las ediciones
 }
 
 /**
@@ -290,6 +340,7 @@ export async function writeFile(t, onStage = () => {}, fields = null) {
   else if (keep) await db.put('blobs', t.id, out);
   t.hasBlob = keep;
   if (S.edits[t.id]) { S.edits[t.id].fileSig = fileSig(S.edits[t.id]); await saveKV('edits'); }
+  Object.assign(t, { etag: '', tagsAt: Date.now() });   // el etag nuevo se apunta en la próxima sincronización
   await saveTrack(t);
   emit('library');
   return got;
@@ -298,7 +349,9 @@ export async function writeFile(t, onStage = () => {}, fields = null) {
 /** Lee por rangos un archivo de la nube: pide ventanas de 64 KB y las reutiliza. */
 function remoteReader(t, size, preload = null) {
   const b = t.bucketId ? buckets().find(x => x.id === t.bucketId) : buckets()[0];
-  const url = objectUrl(t.cloudName, b.id);
+  return rangeReader(objectUrl(t.cloudName, b.id), size, preload);
+}
+function rangeReader(url, size, preload = null) {
   const get = async (a, z) => {
     const r = await fetch(url, { headers: { Range: `bytes=${a}-${z - 1}` }, cache: 'no-store' });
     if (!r.ok) throw new Error(`respuesta ${r.status} al leer el archivo`);
