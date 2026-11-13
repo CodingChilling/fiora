@@ -2,7 +2,7 @@
 // y fusión con una copia remota. Lo usan tanto la cuenta (Supabase) como el bucket de Oracle.
 import { forget as forgetOci } from './oci.js';
 import * as db from './db.js';
-import { S, saveKV, emit, applyEdit } from './store.js';
+import { S, saveKV, emit, applyEdit, fileSig } from './store.js';
 
 /** Datos que se guardan fuera del dispositivo. Los ajustes solo viajan con la cuenta. */
 export function snapshot(withPrefs = false) {
@@ -46,7 +46,13 @@ export async function merge(remote) {
   // Metadatos editados: gana la edición más reciente de cada canción.
   let editsChanged = false;
   for (const [id, e] of Object.entries(remote.edits || {})) {
-    if (S.edits[id] && S.edits[id].at >= e.at) continue;
+    const l = S.edits[id];
+    if (l && l.at === e.at) {
+      // Misma edición: si el otro dispositivo ya la escribió en el archivo, aquí también consta.
+      if (e.fileSig && e.fileSig !== l.fileSig && e.fileSig === fileSig(l)) { l.fileSig = e.fileSig; editsChanged = true; }
+      continue;
+    }
+    if (l && l.at > e.at) continue;
     S.edits[id] = e; editsChanged = true;
     const t = S.tracks.get(id);
     if (t && applyEdit(t)) await db.put('tracks', id, t);

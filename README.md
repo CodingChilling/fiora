@@ -76,7 +76,9 @@ Por defecto Supabase pide confirmar el correo al crear la cuenta. Si la app es s
 
 Se activa en **Ajustes → Modo desarrollador**. Añade «Editar metadatos» al menú ⋯ de cada canción.
 
-- Las ediciones se guardan como datos de la app (no reescriben las etiquetas dentro del archivo de audio) y viajan con tu cuenta y con el primer bucket, así que se ven igual en todos tus dispositivos. Las portadas que elijas se suben a `_fiora/portadas/` en ese bucket.
+- **Las ediciones se escriben dentro del archivo** (MP3: ID3v2; FLAC: comentarios Vorbis; M4A: átomos de iTunes) y, si la canción está en la nube, se sube el archivo actualizado en lugar del anterior. Solo se tocan los campos editados; el resto de etiquetas y el sonido quedan exactamente igual. Varios artistas se escriben separados por comas (con comillas los que llevan coma) y varios géneros, separados por «; ». Los demás dispositivos reconocen el archivo actualizado como la misma canción al sincronizar: conservan playlists, «me gusta» y escuchas, y vuelven a descargar la copia sin conexión si la tenían.
+- Tras etiquetar con IA, la app pregunta antes de escribir en los archivos, porque las canciones que solo están en la nube hay que descargarlas y volver a subirlas. En Ajustes aparece cuántas canciones tienen cambios pendientes de escribir.
+- Las ediciones también se guardan como datos de la app y viajan con tu cuenta y con el primer bucket. Así se ven en los formatos que no admiten escribir etiquetas (OGG, Opus, WAV) y en la música libre. Las portadas que elijas se suben a `_fiora/portadas/` en ese bucket y se incrustan en el archivo (reducidas a 400 px).
 - **Canciones repetidas**: detecta las canciones con el mismo título y los mismos artistas (sin importar mayúsculas, tildes ni el orden de los artistas) y las lista en Ajustes. Un botón borra las copias sobrantes: se conserva la que tiene portada y, si todas la tienen (o ninguna), la más reciente; también puedes elegir a mano qué copia conservar o marcar un grupo como «no son repetidas». Las playlists, los «me gusta» y las escuchas de las copias borradas pasan a la que se conserva.
 - **Borrar de la nube**: en modo desarrollador, el menú ⋯ de una canción de la nube tiene «Borrar también de la nube», y las copias repetidas que están en la nube se borran de su bucket. Oracle no permite borrar con la URL del bucket (*«Pre-authenticated requests can't be used to delete buckets or objects»*), así que:
   - **Sin más configuración**, el archivo se sobrescribe vacío (0 bytes): no ocupa espacio y desaparece de la app en todos tus dispositivos, pero su nombre sigue en el bucket.
@@ -123,6 +125,7 @@ Y abre `http://localhost:8000`.
 | `js/library.js`, `js/tags.js` | Importación y lectura de etiquetas |
 | `js/cloud.js` | Oracle Cloud Object Storage (uno o varios buckets) |
 | `js/flac.js` | Conversión sin pérdida de WAV a FLAC |
+| `js/tagwrite.js` | Escritura de metadatos dentro de MP3, FLAC y M4A |
 | `js/vault.js` | Cifrado de las claves de IA con una clave del dispositivo no exportable |
 | `js/oci.js` | Peticiones firmadas a la API de Oracle (borrado real de archivos) |
 | `js/account.js`, `js/sync.js`, `js/config.js` | Cuentas con Supabase y sincronización de datos |

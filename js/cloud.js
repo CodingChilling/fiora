@@ -6,12 +6,13 @@
 //   PUT  {par}{nombre}    -> subida
 // Las PAR no permiten borrar: para eso se usa la API de Oracle con una clave de API (oci.js).
 import * as db from './db.js';
-import { S, saveTrack, saveKV, emit, on, albumArtistOf } from './store.js';
+import { S, saveTrack, saveKV, emit, on, albumArtistOf, fileSig, tagFields } from './store.js';
 import { buildTrack, trackId, rekey, setRemoteCover } from './library.js';
 import { isAudioName } from './tags.js';
 import { snapshot, merge } from './sync.js';
 import { wavToFlac } from './flac.js';
 import * as oci from './oci.js';
+import { writeTags, canWrite } from './tagwrite.js';
 
 const DATA_OBJECT = '_fiora/datos.json';
 const HEAD_BYTES = 768 * 1024;   // suficiente para las etiquetas y la carátula en casi todos los archivos
@@ -121,7 +122,12 @@ export async function syncLibrary(onProgress = () => {}) {
   const found = new Map();      // id de pista -> id del bucket donde está
   const failed = new Set();     // buckets que no se pudieron consultar: sus pistas no se tocan
   const errors = [];
-  let added = 0;
+  let added = 0, updated = 0;
+  const redownload = [];
+  // Pistas por objeto de la nube: si un archivo cambia de tamaño (p. ej. se le escribieron
+  // metadatos desde otro dispositivo), sigue siendo la misma canción.
+  const byName = new Map();
+  for (const t of S.tracks.values()) if (t.cloudName) byName.set(`${t.bucketId || buckets()[0]?.id}|${t.cloudName}`, t);
 
   for (const b of buckets()) {
     let objects;
@@ -144,15 +150,32 @@ export async function syncLibrary(onProgress = () => {}) {
         const r = await fetch(objectUrl(o.name, b.id), { headers: { Range: `bytes=0-${HEAD_BYTES - 1}` } });
         if (r.ok) blob = await r.blob();
       } catch { /* sin etiquetas: se usa el nombre del archivo */ }
+      const prev = byName.get(`${b.id}|${o.name}`);
+      if (prev && prev.id !== id) {
+        // Archivo actualizado: la canción cambia de id (y la siguen playlists, me gusta y escuchas),
+        // toma las etiquetas nuevas y, si estaba descargada, se vuelve a descargar.
+        const fresh = await buildTrack({ id, blob, path: o.name, size: o.size });
+        const had = prev.hasBlob;
+        await rekey(prev, id, { blob: null, fileName: prev.fileName, size: o.size });
+        for (const k of ['title', 'artists', 'artist', 'albumArtist', 'album', 'genres', 'genre', 'year', 'trackNo']) prev[k] = fresh[k];
+        if (fresh.lyrics) prev.lyrics = fresh.lyrics;
+        prev.coverId = fresh.coverId || prev.coverId;
+        Object.assign(prev, { hasBlob: false, cloudName: o.name, bucketId: b.id, editAt: 0 });
+        await saveTrack(prev);    // vuelve a aplicar las ediciones de la app por encima
+        if (had) redownload.push(prev);
+        updated++;
+        continue;
+      }
       const t = await buildTrack({ id, blob, path: o.name, size: o.size });
       t.cloudName = o.name; t.bucketId = b.id;
       await saveTrack(t);
       added++;
     }
   }
+  for (const t of redownload) { onProgress(0, 0, `Descargando de nuevo ${t.fileName}`); await download(t).catch(e => console.warn('No se pudo volver a descargar', e)); }
   const removed = await dropMissing(found, failed);
-  if (added || removed) emit('library');
-  return { added, removed, total: found.size, errors };
+  if (added || removed || updated) emit('library');
+  return { added, removed, updated, total: found.size, errors };
 }
 
 /**
@@ -223,6 +246,58 @@ export async function purgeEmpty(onProgress = () => {}) {
     for (const o of empty) { onProgress(deleted + 1, o.name); await oci.deleteObject(b.url, o.name); deleted++; }
   }
   return deleted;
+}
+
+/** Se puede escribir en el archivo de esta canción (formato compatible y archivo accesible). */
+export const canWriteFile = t => canWrite(t.fileName) && !!(t.hasBlob || (t.cloudName && configured() && (!t.bucketId || buckets().some(b => b.id === t.bucketId))));
+
+/**
+ * Escribe los metadatos editados dentro del archivo de la canción y, si está en la nube, lo sube
+ * en lugar del anterior. Como cambia el tamaño, cambia el id: playlists, me gusta, escuchas y
+ * ediciones pasan al nuevo. Los demás dispositivos lo reconocen al sincronizar.
+ */
+export async function writeFile(t, onStage = () => {}) {
+  const e = S.edits[t.id];
+  if (!e) return false;
+  const f = tagFields(e);
+  onStage(t.hasBlob ? 'Preparando' : 'Descargando');
+  const blob = await fetchBlob(t);
+  let cover = null;
+  if (f.coverId) {
+    cover = await db.get('covers', f.coverId);
+    if (!cover && f.coverId[0] === 'u' && configured()) {
+      const r = await fetch(objectUrl(coverName(f.coverId), buckets()[0].id)).catch(() => null);
+      if (r?.ok) cover = await r.blob();
+    }
+  }
+  onStage('Escribiendo las etiquetas');
+  const out = await writeTags(blob, t.fileName, f, cover);
+  if (!out) throw new Error('Este formato no permite escribir etiquetas');
+  if (t.cloudName) {
+    onStage('Subiendo');
+    const b = t.bucketId ? buckets().find(x => x.id === t.bucketId) : buckets()[0];
+    const r = await fetch(objectUrl(t.cloudName, b.id), { method: 'PUT', body: out, headers: { 'Content-Type': out.type || 'application/octet-stream' } });
+    if (!r.ok) throw new Error(`«${b.name}» respondió ${r.status} al subir`);
+  }
+  const keep = !!t.hasBlob;
+  const newId = trackId(out.size, t.fileName);
+  if (newId !== t.id && !S.tracks.has(newId)) await rekey(t, newId, { blob: keep ? out : null, fileName: t.fileName, size: out.size });
+  else if (keep) await db.put('blobs', t.id, out);
+  t.hasBlob = keep;
+  S.edits[t.id].fileSig = fileSig(S.edits[t.id]);
+  await saveKV('edits');
+  await saveTrack(t);
+  emit('library');
+  return true;
+}
+
+/** Archivo con los metadatos editados ya escritos (para guardarlo en el dispositivo). */
+export async function taggedBlob(t, blob) {
+  const e = S.edits[t.id];
+  if (!e || !canWrite(t.fileName) || fileSig(e) === '[]') return blob;
+  const f = tagFields(e);
+  const cover = f.coverId ? await db.get('covers', f.coverId).catch(() => null) : null;
+  try { return (await writeTags(blob, t.fileName, f, cover)) || blob; } catch { return blob; }
 }
 
 // Portadas elegidas a mano: se guardan en el primer bucket para que las vean los demás dispositivos.
