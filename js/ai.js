@@ -1,8 +1,8 @@
 // Etiquetado con IA: pide a un modelo los géneros y el ambiente de un grupo de canciones.
 // La app no tiene servidor, así que la petición sale del navegador con la clave de API que el
 // usuario pega en Ajustes → Modo desarrollador. Esa clave se guarda solo en este dispositivo.
-// Proveedores: Claude (Anthropic), OpenAI, Gemini (Google AI Studio) y cualquier servicio con API
-// compatible con la de OpenAI.
+// Proveedores: Claude (Anthropic), OpenAI, Gemini (Google AI Studio), Hugging Face (Inference
+// Providers, con API compatible con la de OpenAI) y cualquier otro servicio compatible con OpenAI.
 import { MOODS } from './store.js';
 
 const ANTHROPIC = 'https://api.anthropic.com/v1/messages';
@@ -11,6 +11,10 @@ export const PROVIDERS = {
   anthropic: { name: 'Claude (Anthropic)', keyHint: 'Clave de la API (sk-ant-…)', site: 'console.anthropic.com' },
   openai: { name: 'OpenAI (GPT, Codex)', keyHint: 'Clave de la API (sk-…)', site: 'platform.openai.com', url: 'https://api.openai.com/v1' },
   gemini: { name: 'Gemini (Google AI Studio)', keyHint: 'Clave de la API (AIza…)', site: 'aistudio.google.com/api-keys' },
+  huggingface: {
+    name: 'Hugging Face', keyHint: 'Token de acceso (hf_…)', site: 'huggingface.co/settings/tokens', url: 'https://router.huggingface.co/v1',
+    help: 'Crea un token de tipo «Fine-grained» con el permiso «Make calls to Inference Providers». Los modelos los sirven distintos proveedores; Hugging Face elige uno disponible y lo cobra en tu cuenta (con un saldo gratuito mensual).',
+  },
   custom: { name: 'Otro servicio compatible con OpenAI', keyHint: 'Clave de la API (si la pide)', needsUrl: true },
 };
 
@@ -50,7 +54,7 @@ Básate en lo que sepas de la canción y del artista. Si no reconoces la canció
 
 Devuelve una entrada por cada canción recibida, con el mismo "i".`;
 
-const baseUrl = cfg => (cfg.provider === 'custom' ? String(cfg.url || '') : PROVIDERS.openai.url).trim().replace(/\/+$/, '');
+const baseUrl = cfg => (cfg.provider === 'custom' ? String(cfg.url || '') : PROVIDERS[cfg.provider]?.url || PROVIDERS.openai.url).trim().replace(/\/+$/, '');
 
 /** Falta algo para poder llamar al proveedor elegido: devuelve qué, o '' si está todo. */
 export function missing(cfg) {
@@ -181,8 +185,11 @@ export async function listModels(cfg) {
   try { r = await fetch(`${baseUrl(cfg)}/models`, { headers }); }
   catch { throw new Error('No se pudo contactar con el servicio'); }
   const data = await r.json().catch(() => null);
-  if (!r.ok) throw httpError(r.status, data?.error?.message || `Respuesta ${r.status}`);
-  return (data?.data || data?.models || []).map(m => m.id || m.name).filter(Boolean).sort();
+  if (!r.ok) throw httpError(r.status, data?.error?.message || (typeof data?.error === 'string' ? data.error : '') || `Respuesta ${r.status}`);
+  let list = data?.data || data?.models || [];
+  // Hugging Face lista también modelos sin proveedor activo o que no generan texto: se quitan.
+  if (cfg.provider === 'huggingface') list = list.filter(m => (m.architecture?.output_modalities || ['text']).includes('text') && (!m.providers || m.providers.some(p => p.status === 'live')));
+  return list.map(m => m.id || m.name).filter(Boolean).sort();
 }
 
 /** Saca el objeto JSON de una respuesta que puede venir envuelta en texto o en un bloque de código. */
