@@ -739,14 +739,20 @@ async function viewSettings() {
       <p style="margin:14px 0 0">Las recomendaciones aprenden de lo que terminas, a qué hora escuchas cada cosa y qué canciones pones seguidas.</p></div>
     <p class="muted" style="text-align:center">Fiora · Letras de LRCLIB · Música libre de Internet Archive, Openverse, Wikimedia Commons y Jamendo · Radios de Radio Browser</p>`);
 }
+let syncing = null;
 async function cloudSync(silent = false) {
   if (!cloud.configured() || !navigator.onLine) return;
+  if (syncing) { if (!silent) toast('Ya se está sincronizando…'); return syncing; }
+  syncing = doCloudSync(silent).finally(() => { syncing = null; lastAutoSync = Date.now(); });
+  return syncing;
+}
+async function doCloudSync(silent) {
   const t = silent ? null : toast('Sincronizando con la nube…', 0);
   try {
     const r = await cloud.syncAll((i, n, name) => t?.set(`Leyendo ${i} de ${n}: ${name.split('/').pop()}`));
     const msg = r.added || r.removed || r.updated ? `Nube sincronizada: ${r.added} nuevas${r.updated ? `, ${r.updated} actualizadas` : ''}${r.removed ? `, ${r.removed} quitadas` : ''}` : 'Todo sincronizado';
     if (r.errors.length) { if (t) t.done(`No se pudo leer un bucket: ${r.errors[0]}`, 7000); }
-    else if (t) t.done(msg); else if (r.added) toast(msg);
+    else if (t) t.done(msg); else if (r.added || r.updated) toast(msg);
   } catch (e) {
     console.warn(e);
     if (t) t.done(`No se pudo sincronizar: ${e.message}`, 6000);
@@ -1800,5 +1806,15 @@ async function start() {
   if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(e => console.warn('Sin modo offline', e));
   cloudSync(true);
   addEventListener('online', () => { accountSync(); cloudSync(true); });
+  // En el móvil la app suele quedarse en segundo plano días enteros sin volver a arrancar: se
+  // sincroniza al volver a ella y, mientras está abierta, cada 5 minutos.
+  const autoSync = () => {
+    if (document.visibilityState !== 'visible' || Date.now() - lastAutoSync < 60000) return;
+    lastAutoSync = Date.now();
+    accountSync(); cloudSync(true);
+  };
+  document.addEventListener('visibilitychange', autoSync);
+  setInterval(autoSync, 5 * 60000);
 }
+let lastAutoSync = Date.now();
 start();
