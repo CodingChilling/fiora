@@ -8,11 +8,11 @@
 import * as db from './db.js';
 import { S, saveTrack, saveKV, emit, on, albumArtistOf, fileSig, tagFields, fileOutdated } from './store.js';
 import { buildTrack, trackId, rekey, setRemoteCover, moodsFrom } from './library.js';
-import { isAudioName, splitArtists, splitGenres, splitMoods } from './tags.js';
+import { isAudioName, splitArtistTag, splitGenres, splitMoods } from './tags.js';
 import { snapshot, merge } from './sync.js';
 import { wavToFlac } from './flac.js';
 import * as oci from './oci.js';
-import { writeTags, canWrite, readFileTags, blobReader } from './tagwrite.js';
+import { writeTags, canWrite, readFileTags, blobReader, writableKind } from './tagwrite.js';
 
 const DATA_OBJECT = '_fiora/datos.json';
 const HEAD_BYTES = 768 * 1024;   // suficiente para las etiquetas y la carátula en casi todos los archivos
@@ -319,13 +319,14 @@ function remoteReader(t, size, preload = null) {
   };
 }
 /** Qué campo no coincide entre lo que debería tener el archivo y lo leído ('' si todo está bien). */
-function mismatch(f, got) {
+export function mismatch(f, got) {
   const low = l => l.map(v => v.toLowerCase());
   const same = (x, y) => JSON.stringify(low(x)) === JSON.stringify(low(y));
-  if ('genres' in f && !same(splitGenres(got.genre), f.genres || [])) return `el género (se leyó «${got.genre || ''}»)`;
+  // los dos lados pasan por la misma separación (así «Hip-Hop/Rap» se compara igual que se lee)
+  if ('genres' in f && !same(splitGenres(got.genre), splitGenres((f.genres || []).join('; ')))) return `el género (se leyó «${got.genre || ''}»)`;
   if ('moods' in f && !same(moodsFrom(splitMoods(got.mood)), f.moods || [])) return `lo que transmite (se leyó «${got.mood || ''}»)`;
   if ('title' in f && (got.title || '') !== (f.title || '')) return 'el título';
-  if ('artists' in f && !same(splitArtists(got.artist), f.artists || [])) return 'los artistas';
+  if ('artists' in f && !same(splitArtistTag(got.artist), f.artists || [])) return 'los artistas';
   if ('album' in f && (got.album || '') !== (f.album || '')) return 'el álbum';
   if ('albumArtist' in f && (got.albumArtist || '') !== (f.albumArtist || '')) return 'el artista del álbum';
   if ('year' in f && (+(String(got.year || '').match(/\d{4}/) || [0])[0] || 0) !== (+f.year || 0)) return 'el año';
@@ -334,19 +335,20 @@ function mismatch(f, got) {
 }
 
 /**
- * Lo que la app sabe de una canción y debería estar dentro de su archivo: los campos editados y,
- * aunque no se hayan editado, los géneros y lo que transmite que tenga la canción.
+ * Lo que debería estar dentro del archivo: todo lo editado en la app (a mano o con IA), también
+ * antes de que se escribiera en los archivos. Lo que la app leyó del propio archivo no se vuelve
+ * a escribir: ya está en él.
  */
 export function desiredTags(t) {
-  const f = S.edits[t.id] ? tagFields(S.edits[t.id]) : {};
-  if (!('genres' in f) && t.genres?.length) f.genres = t.genres;
-  if (!('moods' in f) && t.moods?.length) f.moods = t.moods;
-  return f;
+  return S.edits[t.id] ? tagFields(S.edits[t.id]) : {};
 }
 /** Qué le falta al archivo de la nube ('' si ya tiene todo). Solo lee la parte de las etiquetas. */
 export async function cloudFileGap(t) {
   const f = desiredTags(t);
-  const gap = mismatch(f, (await fileTags(t, true)) || {});
+  if (!Object.keys(f).length) return '';
+  const read = t.hasBlob && !t.cloudName ? blobReader(await db.get('blobs', t.id)) : remoteReader(t, t.size);
+  if (!(await writableKind(read, t.fileName))) { const e = new Error('este archivo no admite escribir etiquetas (p. ej. un FLAC con una etiqueta ID3 delante)'); e.unsupported = true; throw e; }
+  const gap = mismatch(f, (await readFileTags(read, t.size, t.fileName)) || {});
   return gap || (fileOutdated(t) && 'coverId' in f ? 'la portada' : '');
 }
 

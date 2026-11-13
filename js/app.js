@@ -668,7 +668,7 @@ async function viewSettings() {
        ${onlyLocal ? `<button class="btn" data-act="cloud-upload-all">${icon('cloudUp')}Subir ${plural(onlyLocal, 'canción', 'canciones')}${bks.length > 1 ? ` a «${esc(target.name)}»` : ' a la nube'}</button>` : ''}</div>
        <div class="sub-panel"><b>Metadatos de los archivos</b>
          <small>Escribe dentro de cada archivo de la nube los géneros, lo que transmite y los cambios hechos en la app (también los de antes), para que estén en tus buckets. Primero revisa qué archivos lo necesitan; el sonido no cambia.</small>
-         <div class="actions">${bulk ? `<button class="btn danger" data-act="cloud-tags-stop">${icon('x')}Detener</button>` : `<button class="btn" data-act="cloud-tags">${icon('sync')}Actualizar archivos de la nube</button>`}</div></div>
+         <div class="actions">${bulk ? `<button class="btn danger" data-act="cloud-tags-stop">${icon('x')}Detener</button>` : `<button class="btn" data-act="cloud-tags">${icon('sync')}Actualizar archivos de la nube</button>`}${lastReport && !bulk ? '<button class="btn ghost" data-act="cloud-report">Ver el último informe</button>' : ''}</div></div>
        <label class="switch"><input type="checkbox" data-toggle="shrink" ${S.settings.shrink ? 'checked' : ''}><span><b>Reducir el tamaño al subir, sin perder calidad</b>
          <small>Los archivos WAV se convierten a FLAC: suenan exactamente igual y ocupan en torno a la mitad. MP3, M4A, OGG y FLAC ya están comprimidos y se suben tal cual.</small></span></label>
        <details class="more"><summary>Conectar otro bucket</summary><p>Puedes tener varios buckets conectados a la vez; su música aparece junta en tu biblioteca.</p>${steps}${bucketForm}</details>`
@@ -1056,32 +1056,51 @@ async function tagMany(tracks) {
 }
 
 // ----------------------------- actualizar los metadatos de todos los archivos de la nube
-let bulk = null;   // { stop } mientras se revisa o se actualiza
+let bulk = null;        // { stop } mientras se revisa o se actualiza
+let lastReport = null;  // resultado de la última vez, para poder consultarlo
+async function keepAwake() {
+  try { return await navigator.wakeLock?.request('screen'); } catch { return null; }
+}
 async function updateCloudFiles() {
   if (bulk) return;
   const inCloud = allTracks().filter(t => t.cloudName);
   const list = inCloud.filter(t => cloud.canWriteFile(t));
-  const other = inCloud.length - list.length;
+  const report = { at: Date.now(), updated: [], fine: [], failed: [], skipped: inCloud.filter(t => !cloud.canWriteFile(t)).map(t => [t.title, /\.(mp3|flac|m4a|m4b|mp4)$/i.test(t.fileName) ? 'su bucket no está conectado' : `formato ${(t.fileName.match(/\.(\w+)$/) || [, '?'])[1].toUpperCase()} sin etiquetas`]) };
   if (!list.length) return toast(inCloud.length ? 'Ninguna canción de la nube está en MP3, FLAC o M4A' : 'No hay canciones en la nube');
   bulk = { stop: false }; refresh();
-  const note = toast('Revisando los archivos de la nube…', 0);
-  const todo = [], errors = [];
+  const lock = await keepAwake();
+  const note = toast('Revisando los archivos de la nube… Deja la app abierta.', 0);
+  const todo = [];
   for (let i = 0; i < list.length && !bulk.stop; i++) {
     const t = list[i];
     note.set(`Revisando ${i + 1} de ${list.length}: ${t.title}${todo.length ? ` · ${todo.length} por actualizar` : ''}`);
-    try { if (await cloud.cloudFileGap(t)) todo.push(t); }
-    catch (e) { console.warn(e); errors.push(`«${t.title}»: ${e.message}`); }
+    try { const gap = await cloud.cloudFileGap(t); if (gap) todo.push(t); else report.fine.push([t.title, 'ya tenía todos los datos']); }
+    catch (e) { if (e.unsupported) report.skipped.push([t.title, e.message]); else { console.warn(e); report.failed.push([t.title, `no se pudo leer: ${e.message}`]); } }
   }
-  if (bulk.stop) { bulk = null; note.done('Revisión detenida'); return refresh(); }
-  const extra = `${other ? ` ${plural(other, 'canción está', 'canciones están')} en un formato que no guarda etiquetas (OGG, Opus, WAV…).` : ''}${errors.length ? ` No se pudo leer ${errors[0]}${errors.length > 1 ? ` y ${errors.length - 1} más` : ''}.` : ''}`;
-  if (!todo.length) { bulk = null; note.done(`Los ${plural(list.length, 'archivo', 'archivos')} de la nube ya tienen todos los datos.${extra}`, 8000); return refresh(); }
+  const finish = msg => { lock?.release?.().catch(() => {}); bulk = null; lastReport = report; note.done(msg, 6000); refresh(); if (report.updated.length + report.failed.length + report.skipped.length) showReport(); };
+  if (bulk.stop) return finish('Revisión detenida');
+  if (!todo.length) return finish(`Los ${plural(list.length, 'archivo', 'archivos')} de la nube ya tienen todos los datos de la app.`);
   note.done('', 0);
   const remote = todo.filter(t => !t.hasBlob), bytes = remote.reduce((n, t) => n + (t.size || 0), 0) * 2 + todo.filter(t => t.hasBlob).reduce((n, t) => n + (t.size || 0), 0);
   const ok = await confirmDlg(`¿Actualizar ${plural(todo.length, 'archivo', 'archivos')} de la nube?`,
-    `${plural(todo.length, 'archivo no tiene', 'archivos no tienen')} todavía los géneros, lo que transmite u otros datos de la app (de ${list.length} revisados). Se escribirán dentro de cada archivo y se subirán a tu nube, comprobando cada uno. Se moverán unos ${mb(bytes)}. El sonido no cambia y puedes detenerlo cuando quieras.${extra}`, 'Actualizar');
-  if (!ok) { bulk = null; return refresh(); }
-  await writeFiles(todo, { fields: t => cloud.desiredTags(t), stop: () => bulk?.stop });
-  bulk = null; refresh();
+    `${plural(todo.length, 'archivo no tiene', 'archivos no tienen')} todavía los géneros, lo que transmite u otros cambios hechos en la app (de ${list.length} revisados). Se escribirán dentro de cada archivo y se subirán a tu nube, comprobando cada uno. Se moverán unos ${mb(bytes)}. El sonido no cambia. Deja la app abierta mientras tanto; puedes detenerlo cuando quieras.`, 'Actualizar');
+  if (!ok) { lock?.release?.().catch(() => {}); bulk = null; return refresh(); }
+  const res = await writeFiles(todo, { fields: t => cloud.desiredTags(t), stop: () => bulk?.stop });
+  report.updated = res.done.map(t => [t.title, 'actualizado y comprobado']);
+  report.failed.push(...res.fails);
+  report.pending = todo.length - res.done.length - res.fails.length;
+  lock?.release?.().catch(() => {}); bulk = null; lastReport = report; refresh(); showReport();
+}
+/** Informe de la última actualización: qué se actualizó, qué falló y por qué. */
+function showReport() {
+  const r = lastReport;
+  if (!r) return;
+  const sec = (title, rows, cls = '') => (rows.length ? `<h4>${title} (${rows.length})</h4><ul class="report ${cls}">${rows.slice(0, 300).map(([n, why]) => `<li><b>${esc(n)}</b><small>${esc(why)}</small></li>`).join('')}</ul>` : '');
+  openSheet(`<div class="dlg filters"><h3>Informe de la actualización</h3>
+    <p>${new Date(r.at).toLocaleString('es')} · ${r.updated.length} actualizados · ${r.failed.length} con error · ${r.fine.length} ya estaban bien${r.pending ? ` · ${r.pending} sin hacer (detenido)` : ''}</p>
+    ${sec('Con error', r.failed, 'bad')}${sec('Actualizados', r.updated)}${sec('Sin etiquetas en el archivo', r.skipped)}${sec('Ya estaban bien', r.fine)}
+    <div class="actions"><button type="button" class="btn primary" data-x>Cerrar</button></div></div>`,
+  e => { if (e.target.closest('[data-x]')) sheet.close(); });
 }
 
 /** Pregunta antes de escribir en muchos archivos (los que solo están en la nube hay que bajarlos y volver a subirlos). */
@@ -1096,19 +1115,21 @@ async function offerWrite(files) {
 async function writeFiles(list, { fields = null, stop = () => false } = {}) {
   const note = toast('Guardando en el archivo…', 0);
   let done = 0, toCloud = 0, got = null, stopped = false;
-  const fails = [];
+  const fails = [], doneList = [], failList = [];
   for (let i = 0; i < list.length; i++) {
     if (stop()) { stopped = true; break; }
     const t = list[i];
     const label = stage => note.set(list.length > 1 ? `${stage} ${i + 1} de ${list.length}: ${t.title}` : `${stage}: ${t.title}`);
-    try { if ((got = await cloud.writeFile(t, label, fields ? fields(t) : null))) { done++; if (t.cloudName) toCloud++; } }
-    catch (e) { console.warn(e); fails.push(`«${t.title}»: ${e.message}`); }
+    try { if ((got = await cloud.writeFile(t, label, fields ? fields(t) : null))) { done++; doneList.push(t); if (t.cloudName) toCloud++; } }
+    catch (e) { console.warn(e); fails.push(`«${t.title}»: ${e.message}`); failList.push([t.title, e.message]); }
   }
   const msg = list.length === 1 && done ? `Guardado y comprobado en el archivo${toCloud ? ' de la nube' : ''}: géneros «${got.genre || '—'}» · lo que transmite «${got.mood || '—'}»`
     : `${plural(done, 'archivo actualizado y comprobado', 'archivos actualizados y comprobados')}${toCloud ? ` (${toCloud} en la nube)` : ''}`;
-  if (stopped) return note.done(`Detenido: ${msg}. Lo que falta se actualizará la próxima vez.`, 8000), refresh();
+  const result = { done: doneList, fails: failList };
+  if (stopped) { note.done(`Detenido: ${msg}. Lo que falta se actualizará la próxima vez.`, 8000); refresh(); return result; }
   note.done(fails.length ? `${done ? `${msg}. ` : ''}No se pudo guardar ${fails[0]}${fails.length > 1 ? ` y ${fails.length - 1} más` : ''}` : msg, fails.length ? 10000 : 7000);
   refresh();
+  return result;
 }
 
 // ------------------------------------------------- canciones repetidas (desarrollador)
@@ -1305,6 +1326,7 @@ const ACTIONS = {
   },
   'lib-filter'() { openFilters(); },
   'cloud-tags'() { updateCloudFiles(); },
+  'cloud-report'() { showReport(); },
   'cloud-tags-stop'() { if (bulk) { bulk.stop = true; toast('Deteniendo al terminar el archivo actual…'); } },
   'write-files'() { const l = allTracks().filter(t => fileOutdated(t) && cloud.canWriteFile(t)); if (l.length) offerWrite(l); },
   'lib-unfilter'(el) { clearFilter(el.dataset.k, el.dataset.v); paintLibrary(); },
