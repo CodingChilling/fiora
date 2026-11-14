@@ -87,6 +87,7 @@ http.createServer(async (req, res) => {
       const [arg, cast] = { fiora_save_playlist: [b.p, 'jsonb'], fiora_load_playlists: [b.since ?? 0, 'double precision'], fiora_count_plays: [b.items, 'jsonb'] }[rpc[1]] || [null, 'jsonb'];
       log.push(`rpc ${rpc[1]}`);
       const r = await asUser(uid, c => c.query(`select public.${rpc[1]}($1::${cast}) as r`, [cast === 'jsonb' ? JSON.stringify(arg) : arg]));
+      if (rpc[1] === 'fiora_save_playlist') log.push(`  ${b.p?.id} ${b.p?.updatedAt} → ${r.rows[0].r?.status}`);
       return send(res, 200, r.rows[0].r);
     }
     if (u.pathname === '/rest/v1/fiora_playlist_plays') {

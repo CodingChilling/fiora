@@ -2,7 +2,7 @@
 // destacadas, canciones con capítulos, estadísticas, «Descubre más», notas), editor por
 // categorías, visor de fotos y modos de reproducción. Los datos y la sincronización con Supabase
 // están en playlists-data.js; las imágenes, en images.js.
-import { S, on, savePlaylist, livePlaylists, isFav, artistsOf, collator, MOODS, dropFromPlaylist } from './store.js';
+import { S, on, savePlaylist, livePlaylists, isFav, toggleFav, artistsOf, collator, MOODS, dropFromPlaylist } from './store.js';
 import * as data from './playlists-data.js';
 import * as img from './images.js';
 import * as lib from './library.js';
@@ -31,7 +31,9 @@ export function initPlaylists(c) {
   /** Marcador de portada; se rellena después con hydrate(). */
   function coverHTML(p, cls = '', big = false) {
     const label = (p.emoji || p.name || '♪').trim();
-    return `<span class="cover pl-cover ${cls}" data-plcover="${esc(p.id)}" data-big="${big ? 1 : ''}" style="--hue:${[...p.name].reduce((h, ch) => (h * 31 + ch.codePointAt(0)) % 360, 7)}"><i>${esc([...label][0] || '♪')}</i></span>`;
+    const hue = data.isFavs(p) ? 340 : [...p.name].reduce((h, ch) => (h * 31 + ch.codePointAt(0)) % 360, 7);
+    const mark = data.isFavs(p) && !p.emoji ? icon('heart') : esc([...label][0] || '♪');
+    return `<span class="cover pl-cover ${cls}" data-plcover="${esc(p.id)}" data-big="${big ? 1 : ''}" style="--hue:${hue}"><i>${mark}</i></span>`;
   }
   const cropStyle = cr => (cr ? `object-position:${cr.x}% ${cr.y}%;transform:scale(${cr.z || 1});transform-origin:${cr.x}% ${cr.y}%` : '');
   async function paintCover(el) {
@@ -57,8 +59,8 @@ export function initPlaylists(c) {
         }
       }
     }
-    if (!url) { const t = tracksOf(p).find(x => x.coverId || x.coverUrl); url = t ? await lib.coverUrl(t) : null; }
-    if (!url) return;
+    if (!url && !data.isFavs(p)) { const t = tracksOf(p).find(x => x.coverId || x.coverUrl); url = t ? await lib.coverUrl(t) : null; }
+    if (!url) return;   // «Canciones que te gustan» sin foto: el corazón de siempre
     const im = new Image();
     im.alt = ''; im.decoding = 'async'; im.src = url;
     if (crop) im.style.cssText = cropStyle(crop);
@@ -209,12 +211,13 @@ export function initPlaylists(c) {
 
   // ================================================================ lista de playlists
   function viewList() {
-    const favs = c.allTracks().filter(t => isFav(t.id));
-    const pls = livePlaylists().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    if (data.reconcileFavs()) savePlaylist(byId(data.FAVS));
+    const fp = byId(data.FAVS);
+    const pls = livePlaylists().filter(p => !data.isFavs(p)).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
     show(`<div class="head"><h1>Playlists</h1><button class="btn primary" data-act="new-playlist">${icon('plus')}Nueva playlist</button></div>
       <p class="pl-list-sync">${syncChip()}</p>
       <div class="grid pl-grid">
-        <a class="card" href="#/favoritos"><span class="cover" style="--hue:340"><i>${icon('heart')}</i></span><span><b>Canciones que te gustan</b><small>${plural(favs.length, 'canción', 'canciones')}</small></span></a>
+        <a class="card pl-card" href="#/favoritos" style="${themeStyle(fp)}">${coverHTML(fp)}<span><b>${fp.emoji ? `${esc(fp.emoji)} ` : ''}${esc(fp.name)}</b><small>${plural(fp.trackIds.length, 'canción', 'canciones')} · tus «me gusta»</small></span></a>
         ${pls.map(p => `<a class="card pl-card" href="#/playlist/${enc(p.id)}" style="${themeStyle(p)}">${coverHTML(p)}
           <span><b>${p.emoji ? `${esc(p.emoji)} ` : ''}${esc(p.name)}</b><small>${plural(p.trackIds.length, 'canción', 'canciones')}${p.tags.length ? ` · ${esc(p.tags.slice(0, 2).join(' · '))}` : ''}</small></span></a>`).join('')}
       </div>
@@ -259,6 +262,7 @@ export function initPlaylists(c) {
 
   // ================================================================ vista de una playlist
   function viewPlaylist(id) {
+    if (id === data.FAVS && data.reconcileFavs()) savePlaylist(byId(data.FAVS));
     const p = byId(id);
     if (!p) return show(empty('list', 'Playlist no encontrada', 'Puede que se haya eliminado.'));
     const v = viewOf(p), tracks = tracksOf(p), s = p.settings;
@@ -281,7 +285,7 @@ export function initPlaylists(c) {
     return `<header class="pl-hero">
       ${on('cover') ? `<button class="pl-hero-cover" data-act="pl-edit" data-tab="look" aria-label="Cambiar la portada">${coverHTML(p, '', true)}</button>` : ''}
       <div class="pl-info">
-        <div class="kind">Playlist ${syncChip()}</div>
+        <div class="kind">${data.isFavs(p) ? 'Tus «me gusta»' : 'Playlist'} ${syncChip()}</div>
         <h1>${p.emoji ? `<span class="emoji">${esc(p.emoji)}</span> ` : ''}${esc(p.name)}</h1>
         ${on('description') && p.quote ? `<blockquote class="pl-quote">${esc(p.quote)}</blockquote>` : ''}
         ${on('description') && p.description ? `<p class="pl-desc">${esc(p.description)}</p>` : ''}
@@ -330,7 +334,8 @@ export function initPlaylists(c) {
     const chapters = data.moduleOn(p, 'chapters') && p.sections.length && custom;
     const o = { playlist: p.id, notes: p.notes, featured: p.featured, reorder: v.reorder && custom, playAll: list };
     let body;
-    if (!p.trackIds.length) body = empty('list', 'Playlist vacía', 'Añade canciones desde el menú ⋯ de cualquier canción, o mira «Descubre más».');
+    if (!p.trackIds.length) body = data.isFavs(p) ? empty('heart', 'Todavía no hay favoritas', 'Pulsa el corazón en cualquier canción para guardarla aquí.')
+      : empty('list', 'Playlist vacía', 'Añade canciones desde el menú ⋯ de cualquier canción, o mira «Descubre más».');
     else if (!tracksOf(p).length) body = empty('cloud', 'Las canciones no están en este dispositivo', `${plural(p.trackIds.length, 'canción', 'canciones')} de esta playlist no están en tu biblioteca de este dispositivo. Conecta tu nube en Ajustes o importa la música, y aparecerán aquí.`);
     else if (!list.length) body = empty('search', 'Sin resultados', 'Ninguna canción coincide con la búsqueda o los filtros.', '<button class="btn" data-act="pl-clear-view">Quitar filtros</button>');
     else if (chapters) {
@@ -363,6 +368,7 @@ export function initPlaylists(c) {
       </div>
       ${chips.length ? `<div class="chips pl-fchips">${chips.map(([l, k, x]) => `<button class="chip on" data-act="pl-unfilter" data-pid="${esc(p.id)}" data-k="${k}" data-v="${esc(x ?? '')}">${esc(l)} ✕</button>`).join('')}</div>` : ''}
       ${v.reorder && custom ? `<p class="muted reorder-hint">Arrastra ${icon('grip')} para cambiar el orden${chapters ? ' (también entre capítulos)' : ''}. Con el teclado: flechas arriba y abajo.</p>` : ''}
+      ${data.isFavs(p) && custom && p.trackIds.length ? `<p class="muted reorder-hint">${p.settings.favOrder === 'manual' ? `Orden manual: las nuevas favoritas entran arriba. <button class="chip" data-act="pl-fav-date" data-pid="${esc(p.id)}">Ordenar por fecha</button>` : 'De la más reciente a la más antigua. Usa «Reordenar» para ponerlas a tu gusto.'}</p>` : ''}
       ${!custom && p.trackIds.length ? `<p class="muted reorder-hint">Vista ${v.sort !== 'custom' ? `ordenada por ${SORTS[v.sort][0].toLowerCase()}` : 'filtrada'}: tu orden personalizado se conserva.</p>` : ''}
       <div class="pl-list" data-pid="${esc(p.id)}">${body}</div>
     </section>`;
@@ -631,6 +637,8 @@ export function initPlaylists(c) {
         <div class="block-head"><h4>Destacadas</h4><span class="muted">${feat.length} / ${MAX_FEATURED}</span></div>
         ${feat.length ? `<ol class="ed-secs">${feat.map((t, i) => `<li><span class="row-text"><b>${esc(t.title)}</b><small>${esc(t.artist || '')}</small></span><span class="ph-ops"><button class="icon-btn" data-ed="feat-up" data-id="${esc(t.id)}" aria-label="Subir" ${i ? '' : 'disabled'}>${icon('up')}</button><button class="icon-btn" data-ed="feat-del" data-id="${esc(t.id)}" aria-label="Quitar de destacadas">${icon('x')}</button></span></li>`).join('')}</ol>` : '<p class="muted">Fija hasta 3 canciones con «Destacar» en su menú ⋯.</p>'}
         <h4>Orden y filtros</h4>
+        ${data.isFavs(p) ? `<div class="seg">${[['date', 'Por fecha de «me gusta»'], ['manual', 'Manual']].map(([k, l]) => `<button class="chip ${(p.settings.favOrder || 'date') === k ? 'on' : ''}" data-ed="favorder" data-v="${k}">${l}</button>`).join('')}</div>
+          <p class="muted">Con el orden manual, las canciones que marques con el corazón entran arriba y puedes moverlas con «Reordenar».</p>` : ''}
         <p class="muted">Tu orden personalizado se guarda siempre; ordenar o filtrar la vista no lo cambia.</p>
         ${sw(!!p.settings.view, 'data-ed-sw="rememberView"', 'Recordar la vista de esta playlist', 'Guarda el orden y los filtros elegidos para la próxima vez y en tus otros dispositivos.')}`;
     } else if (tab === 'mods') {
@@ -654,9 +662,9 @@ export function initPlaylists(c) {
         <h4>Reproducción</h4>
         <label class="lbl">Modo sorpresa: dejar para el final lo escuchado en las últimas…<span class="field"><select data-ed-sel="surpriseHours">${[[6, '6 horas'], [24, '24 horas'], [72, '3 días'], [168, 'Una semana']].map(([h, l]) => `<option value="${h}" ${(p.settings.surpriseHours || 24) === h ? 'selected' : ''}>${l}</option>`).join('')}</select></span></label>
         <p class="muted">El modo ambiente ordena las canciones en cuatro fases (inicio tranquilo, más energía, momento intenso y final relajado) usando «lo que transmite» de cada una. ${ambientPlan(p).ok ? 'Esta playlist tiene datos suficientes.' : esc(ambientPlan(p).why)}</p>
-        <h4>Eliminar</h4>
+        ${data.isFavs(p) ? '<h4>Eliminar</h4><p class="muted">Esta playlist no se puede eliminar: se llena sola con las canciones a las que das «me gusta».</p>' : `<h4>Eliminar</h4>
         <p class="muted">Las canciones seguirán en tu biblioteca. Se borrarán la portada, las fotos, los capítulos, las notas y las estadísticas de esta playlist.</p>
-        <button class="btn danger" data-ed="delete">${icon('trash')}Eliminar la playlist</button>`;
+        <button class="btn danger" data-ed="delete">${icon('trash')}Eliminar la playlist</button>`}`;
     }
     // formulario de información
     const form = $('[data-ed-form="info"]', body);
@@ -742,6 +750,7 @@ export function initPlaylists(c) {
       case 'header': p.settings.header = b.dataset.v; return save();
       case 'density': p.settings.density = b.dataset.v; return save();
       case 'statsmode': p.settings.stats = b.dataset.v; return save();
+      case 'favorder': p.settings.favOrder = b.dataset.v; data.reconcileFavs(); return save();
       case 'photos-add': {
         const room = MAX_PHOTOS - data.orderPhotos(p).length;
         let files = await pickFiles(true);
@@ -795,6 +804,7 @@ export function initPlaylists(c) {
     });
   }
   async function deletePlaylist(p) {
+    if (data.isFavs(p)) return toast('«Canciones que te gustan» no se puede eliminar');
     const l = data.localOf(p.id);
     for (const x of [l.cover, ...l.photos].filter(Boolean)) await img.dropLocal(x);
     l.cover = null; l.photos = []; l.order = [];
@@ -951,6 +961,8 @@ export function initPlaylists(c) {
   }
 
   // ================================================================ reordenar canciones arrastrando
+  /** En «Canciones que te gustan», mover algo a mano deja de ordenarla por fecha. */
+  const markManual = p => { if (data.isFavs(p)) p.settings.favOrder = 'manual'; };
   let dragSong = null;
   function songOrder(p, tid, beforeId, sectionId) {
     const ids = p.trackIds.filter(x => x !== tid);
@@ -999,6 +1011,7 @@ export function initPlaylists(c) {
       songOrder(p, tid, target.after ? ids[idx + 1] || null : other, chap ? chap.dataset.chapter : undefined);
       if (target.after && !ids[idx + 1]) { p.trackIds = p.trackIds.filter(x => x !== tid); p.trackIds.splice(p.trackIds.indexOf(other) + 1, 0, tid); }
     } else songOrder(p, tid, null, target.chapter);
+    markManual(p);
     await savePlaylist(p);
     paintSongs(p);
     const moved = $(`.pl-list .row[data-id="${CSS.escape(tid)}"]`);
@@ -1013,6 +1026,7 @@ export function initPlaylists(c) {
     const p = byId(h.closest('.pl-list').dataset.pid), tid = h.closest('.row').dataset.id, i = p.trackIds.indexOf(tid), j = i + (e.key === 'ArrowUp' ? -1 : 1);
     if (j < 0 || j >= p.trackIds.length) return;
     [p.trackIds[i], p.trackIds[j]] = [p.trackIds[j], p.trackIds[i]];
+    markManual(p);
     if (p.trackSection[p.trackIds[i]] !== p.trackSection[tid]) { if (p.trackSection[p.trackIds[i]]) p.trackSection[tid] = p.trackSection[p.trackIds[i]]; else delete p.trackSection[tid]; }
     await savePlaylist(p); paintSongs(p);
     $(`.pl-list .row[data-id="${CSS.escape(tid)}"] [data-drag]`)?.focus();
@@ -1085,7 +1099,7 @@ export function initPlaylists(c) {
         { icon: 'image', label: 'Fotos del carrusel', fn: () => openEditor(p, 'photos') },
         { icon: 'list', label: 'Capítulos y destacadas', fn: () => openEditor(p, 'org') },
         { icon: 'settings', label: 'Personalizar la vista', fn: () => openEditor(p, 'mods') },
-        { icon: 'trash', label: 'Eliminar playlist', danger: true, fn: async () => { if (await confirmDlg('¿Eliminar playlist?', `«${p.name}» se eliminará en todos tus dispositivos. Las canciones seguirán en tu biblioteca.`)) deletePlaylist(p); } },
+        !data.isFavs(p) && { icon: 'trash', label: 'Eliminar playlist', danger: true, fn: async () => { if (await confirmDlg('¿Eliminar playlist?', `«${p.name}» se eliminará en todos tus dispositivos. Las canciones seguirán en tu biblioteca.`)) deletePlaylist(p); } },
       ]);
     },
     'pl-retry'() { data.pull(); },
@@ -1105,12 +1119,14 @@ export function initPlaylists(c) {
     async 'pl-disc-add'(el) {
       const p = P_(el), t = S.tracks.get(el.dataset.tid);
       if (!t) return;
-      data.addTracks(p, [t.id]); await savePlaylist(p);
+      if (data.isFavs(p)) { if (!isFav(t.id)) toggleFav(t.id); await data.syncFavs(); }
+      else { data.addTracks(p, [t.id]); await savePlaylist(p); }
       toast(`«${t.title}» añadida a «${p.name}»`);
       refresh();
       setTimeout(() => $(`.pl-list .row[data-id="${CSS.escape(t.id)}"]`)?.classList.add('moved'), 200);
     },
     'pl-note'(el) { editNote(P_(el), el.dataset.tid); },
+    async 'pl-fav-date'(el) { const p = P_(el); p.settings.favOrder = 'date'; data.reconcileFavs(); await savePlaylist(p); refresh(); },
   });
 
   /** Opciones del menú ⋯ de una canción dentro de una playlist. */
@@ -1128,9 +1144,11 @@ export function initPlaylists(c) {
       p.sections.length && { icon: 'list', label: 'Mover a capítulo…', fn: () => menu(`<div class="sheet-head"><div><b>¿A qué capítulo?</b></div></div>`,
         [...p.sections.map(sc => ({ icon: p.trackSection[t.id] === sc.id ? 'heart' : 'list', label: sc.name || 'Capítulo', fn: async () => { songOrder(p, t.id, null, sc.id); await savePlaylist(p); refresh(); } })),
           { icon: 'x', label: 'Sin capítulo', fn: async () => { songOrder(p, t.id, null, ''); await savePlaylist(p); refresh(); } }]) },
-      isCustom(v) && i > 0 && { icon: 'up', label: 'Subir en la lista', fn: async () => { [p.trackIds[i - 1], p.trackIds[i]] = [p.trackIds[i], p.trackIds[i - 1]]; await savePlaylist(p); refresh(); } },
-      isCustom(v) && i < p.trackIds.length - 1 && { icon: 'chevD', label: 'Bajar en la lista', fn: async () => { [p.trackIds[i + 1], p.trackIds[i]] = [p.trackIds[i], p.trackIds[i + 1]]; await savePlaylist(p); refresh(); } },
-      { icon: 'x', label: 'Quitar de esta playlist', fn: async () => { dropFromPlaylist(p, t.id); await savePlaylist(p); refresh(); } },
+      isCustom(v) && i > 0 && { icon: 'up', label: 'Subir en la lista', fn: async () => { [p.trackIds[i - 1], p.trackIds[i]] = [p.trackIds[i], p.trackIds[i - 1]]; markManual(p); await savePlaylist(p); refresh(); } },
+      isCustom(v) && i < p.trackIds.length - 1 && { icon: 'chevD', label: 'Bajar en la lista', fn: async () => { [p.trackIds[i + 1], p.trackIds[i]] = [p.trackIds[i], p.trackIds[i + 1]]; markManual(p); await savePlaylist(p); refresh(); } },
+      data.isFavs(p)
+        ? { icon: 'heart', label: 'Quitar de «me gusta»', fn: () => toggleFav(t.id) }
+        : { icon: 'x', label: 'Quitar de esta playlist', fn: async () => { dropFromPlaylist(p, t.id); await savePlaylist(p); refresh(); } },
     ];
   }
 
@@ -1145,9 +1163,10 @@ export function initPlaylists(c) {
     return p;
   }
   function addToPlaylist(tracks) {
-    const pls = livePlaylists().sort((a, b) => collator.compare(a.name, b.name));
+    const pls = livePlaylists().filter(p => !data.isFavs(p)).sort((a, b) => collator.compare(a.name, b.name));
     menu(`<div class="sheet-head"><div><b>Añadir a playlist</b></div></div>`, [
       { icon: 'plus', label: 'Nueva playlist…', fn: async () => { if (await newPlaylist(tracks)) refresh(); } },
+      { icon: 'heart', label: 'Canciones que te gustan', fn: () => { const fresh = tracks.filter(t => !isFav(t.id)); fresh.forEach(t => toggleFav(t.id)); toast(fresh.length ? 'Añadida a tus «me gusta»' : 'Ya estaba en tus «me gusta»'); } },
       ...pls.map(p => ({
         icon: 'list', label: `${p.emoji ? `${p.emoji} ` : ''}${p.name}`, fn: async () => {
           const n = data.addTracks(p, tracks.map(t => t.id));
