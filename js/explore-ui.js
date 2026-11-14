@@ -685,24 +685,34 @@ export function initExplore(c) {
       </div>`);
   }
   let rRot = 0;
+  const SEGS = 12;
+  /** Ángulo final para que el sector `k` quede justo bajo el indicador de arriba (al menos dos vueltas más). */
+  function rotationFor(k) {
+    const base = rRot + 720;
+    const want = -(k + 0.5) * (360 / SEGS);   // el centro del sector k, ya girado, debe acabar en 0°
+    return base + ((((want - base) % 360) + 360) % 360);
+  }
   async function spin() {
     if (rState.spinning) return;
     rState.spinning = true;
     const btn = $('.dial-btn'); btn?.setAttribute('disabled', '');
     const res = $('#r-result'); if (res) res.innerHTML = '<div class="x-loading"><span class="spin"></span>Sintonizando…</div>';
-    const rot = $('.dial-rot');
-    const turn = 720 + Math.floor(Math.random() * 360);
-    rRot += turn;
-    if (rot) { rot.style.transition = reduced() ? 'none' : 'transform 2.2s cubic-bezier(.15,.75,.2,1)'; rot.style.transform = `rotate(${rRot}deg)`; }
     try {
-      const [list] = await Promise.all([
-        dsc.pickStations({ mode: rState.mode, tag: rState.tag, cc: rState.cc, recent: data.recentPicks(), profile: data.profile(), signal: ctrl.signal }),
-        new Promise(r => setTimeout(r, reduced() ? 0 : 2200)),
-      ]);
+      // 1) se elige la emisora real; 2) su bandera va a un sector; 3) el dial gira hasta dejar ese sector bajo el indicador.
+      const list = await dsc.pickStations({ mode: rState.mode, tag: rState.tag, cc: rState.cc, recent: data.recentPicks(), profile: data.profile(), signal: ctrl.signal });
       if (!list.length) { res && (res.innerHTML = '<p class="muted">No hay emisoras que cumplan este modo ahora mismo. Prueba con otro.</p>'); return; }
-      // Etiquetas de los segmentos: banderas de las candidatas reales
-      $$('.seg-l').forEach((t, i) => { t.textContent = radio.flag(list[i % list.length].cc) || '♪'; });
-      const pick = list[0];
+      const pick = list[0], others = list.slice(1);
+      const k = Math.floor(Math.random() * SEGS);
+      rState.k = k;
+      $$('.seg-l').forEach((t, i) => {
+        const st = i === k ? pick : others[(i - k - 1 + SEGS) % SEGS] || null;
+        t.textContent = st ? radio.flag(st.cc) || '♪' : '♪';
+      });
+      const rot = $('.dial-rot');
+      rRot = rotationFor(k);
+      if (rot) { rot.style.transition = reduced() ? 'none' : 'transform 2.2s cubic-bezier(.15,.75,.2,1)'; rot.style.transform = `rotate(${rRot}deg)`; }
+      await new Promise(r => setTimeout(r, reduced() ? 0 : 2250));
+      if (!$('.dial')) return;   // se salió de la ruleta mientras giraba
       rouletteActive = { queue: list.slice(1, 8), cur: pick };
       showRouletteResult(pick);
       data.markPicked(pick.uuid);
@@ -711,6 +721,9 @@ export function initExplore(c) {
   }
   function showRouletteResult(st, playing = false) {
     if (rouletteActive) rouletteActive.cur = st;
+    // si la elegida no respondía y suena otra, el sector bajo el indicador muestra la que suena
+    const under = $$('.seg-l')[rState.k];
+    if (under) under.textContent = radio.flag(st.cc) || '♪';
     const res = $('#r-result'); if (!res) return;
     setHTML(res, `<div class="r-card pop-in">${logo(st, 'xl')}<div><h3>${esc(st.title)}</h3><p>${esc(where(st))}</p>
       ${st.tags.length ? `<div class="chips">${st.tags.slice(0, 4).map(t => `<span class="chip">${esc(t)}</span>`).join('')}</div>` : ''}
@@ -857,18 +870,20 @@ export function initExplore(c) {
   }
   function atlasSelect(group) {
     const panel = $('#atlas-panel'); if (!panel) return;
-    const sts = group.stations.map(s => regSt(radio.fromRef(s)));
+    const sts = group.stations.map(s => regSt(radio.fromRef(s))).sort((a, b) => (b.clicks || 0) - (a.clicks || 0));
     const cty = dsc.nearestCity({ lat: group.lat, lon: group.lon }, 50);
     const ccs = [...new Set(sts.map(s => s.cc).filter(Boolean))];
     const tags = new Map(); for (const s of sts) for (const t of s.tags) tags.set(t, (tags.get(t) || 0) + 1);
     const m = cty && dsc.localMoment(cty);
-    setHTML(panel, `${cty ? `<small class="kicker">${esc(m.phrase)}</small><h2>${esc(cty.name)}</h2><p>${radio.flag(cty.cc)} ${esc(radio.countryName(cty.cc))} · hora local <time>${m.time}</time></p><a class="chip" href="#/explorar/ciudad/${cty.id}">Abrir la ciudad</a>`
+    const html = `${cty ? `<small class="kicker">${esc(m.phrase)}</small><h2>${esc(cty.name)}</h2><p>${radio.flag(cty.cc)} ${esc(radio.countryName(cty.cc))} · hora local <time>${m.time}</time></p><a class="chip" href="#/explorar/ciudad/${cty.id}">Abrir la ciudad</a>`
       : `<small class="kicker">Zona</small><h2>${ccs.map(cc => `${radio.flag(cc)} ${esc(radio.countryName(cc))}`).join(', ') || 'Zona'}</h2><p class="muted small">Cerca de ${group.lat.toFixed(1)}°, ${group.lon.toFixed(1)}° · sin hora local (no es una de las ciudades con zona horaria conocida)</p>`}
       <p>${plural(sts.length, 'emisora', 'emisoras')}</p>
       ${tags.size ? `<div class="chips">${[...tags].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([t, n]) => `<span class="chip">${esc(t)} <small class="muted">${n}</small></span>`).join('')}</div>` : ''}
       <div class="actions"><button class="btn primary sm" data-act="x-play-first" data-uuid="${esc(sts[0].uuid)}">${icon('play')}Escuchar</button></div>
-      ${stList(sts.slice(0, 40))}`);
-    panel.scrollTop = 0;
+      ${stList(sts.slice(0, 40))}`;
+    // En pantallas estrechas el panel queda debajo del mapa, fuera de la vista: se abre en la hoja inferior.
+    if (matchMedia('(max-width: 899px)').matches) openSheet(`<div class="dlg atlas-sheet">${html}</div>`);
+    else { setHTML(panel, html); panel.scrollTop = 0; }
   }
 
   // ========================================================== Pasaporte
@@ -927,13 +942,16 @@ export function initExplore(c) {
   }
   async function stationsForStop(s, tag) {
     const music = l => { const m = l.filter(dsc.isMusic); return m.length ? m : l; };
+    const mixUp = l => l.sort(() => Math.random() - 0.5);
     const params = tag ? { tag } : {};
     if (s.kind === 'city') {
+      // Primero las emisoras de la ciudad (por coordenadas); las del resto del país, solo de reserva y detrás.
       const cty = dsc.city(s.id);
-      let l = await radio.near(cty.lat, cty.lon, 50, { params: { limit: 40, ...params } });
-      if (l.length < 3) l = [...l, ...(await radio.byCountry(cty.cc, { params: { limit: 40, ...params } }))];
-      if (!l.length && tag) l = await radio.near(cty.lat, cty.lon, 50, { params: { limit: 40 } });
-      return music(l).sort(() => Math.random() - 0.5);
+      let near = await radio.near(cty.lat, cty.lon, 50, { params: { limit: 40, ...params } });
+      if (!near.length && tag) near = await radio.near(cty.lat, cty.lon, 50, { params: { limit: 40 } });
+      const seen = new Set(near.map(x => x.uuid));
+      const country = near.length >= 3 ? [] : (await radio.byCountry(cty.cc, { params: { limit: 40, ...params } })).filter(x => !seen.has(x.uuid));
+      return [...mixUp(music(near)), ...mixUp(music(country))];
     }
     let l = await radio.byCountry(s.id, { params: { limit: 40, ...params } });
     if (!l.length && tag) l = await radio.byCountry(s.id, { params: { limit: 40 } });

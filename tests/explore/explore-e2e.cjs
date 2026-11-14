@@ -138,13 +138,24 @@ const check = (c, m) => { if (c) { ok++; console.log('ok  ', m); } else { fails+
 
   // --- Radio Roulette: emisoras reales y sin repetir
   await A.goto(APP + '#/explorar/ruleta'); await A.waitForSelector('.dial');
-  const picks = [];
+  const picks = [], matches = [];
+  // Bandera del sector que ha quedado bajo el indicador (el más cercano a la punta) y la del resultado.
+  const dialAgrees = () => A.evaluate(() => {
+    const tip = document.querySelector('.dial-pointer').getBoundingClientRect();
+    const tx = tip.left + tip.width / 2, ty = tip.bottom;
+    const segs = [...document.querySelectorAll('.seg-l')].map(t => { const r = t.getBoundingClientRect(); return [Math.hypot(r.left + r.width / 2 - tx, r.top + r.height / 2 - ty), t.textContent]; });
+    const under = segs.sort((a, b) => a[0] - b[0])[0][1];
+    const shown = [...document.querySelector('#r-result p').textContent][0] + [...document.querySelector('#r-result p').textContent][1];
+    return { under, shown };
+  });
   for (let i = 0; i < 3; i++) {
     await A.click('.dial-btn'); await until(A, () => !!document.querySelector('#r-result .r-card'), null, 10000);
     picks.push(await A.$eval('#r-result h3', h => h.textContent));
+    matches.push(await dialAgrees());
     await A.waitForTimeout(300);
   }
   check(picks.every(p => byName(p)) && new Set(picks).size === 3, '10. La ruleta elige emisoras reales del directorio y no repite: ' + picks.join(' · '));
+  check(matches.every(m => m.under === m.shown), '10. El dial se para en la bandera del país de la emisora que sale: ' + matches.map(m => `${m.under}=${m.shown}`).join(' '));
   // modo país con emisoras rotas: salta sola a otra
   await A.goto(APP + '#/explorar/ruleta?cc=BR'); await A.waitForSelector('.dial');
   await A.click('.dial-btn'); await until(A, () => !!document.querySelector('#r-result .r-card'), null, 10000);
@@ -152,6 +163,9 @@ const check = (c, m) => { if (c) { ok++; console.log('ok  ', m); } else { fails+
   await A.click('#r-result [data-act="x-play"]');
   const recovered = await until(A, async () => { const { P } = await import('./js/player.js'); return P.current?.title === 'Brasil Tropical' && P.playing; }, null, 20000);
   check(['Rio Bossa', 'São Paulo Samba'].includes(firstBr) && recovered, '11. Si la emisora no responde, la ruleta pasa sola a otra que funcione (' + firstBr + ' → Brasil Tropical)');
+  await until(A, () => /Brasil Tropical/.test(document.querySelector('#r-result h3')?.textContent || ''));
+  const after = await dialAgrees();
+  check(after.under === after.shown, '11. …y el dial sigue mostrando el país de la que suena: ' + after.under);
 
   // --- Atlas: solo coordenadas válidas y alternativa accesible
   await A.goto(APP + '#/explorar/atlas'); await A.waitForSelector('.atlas-canvas', { timeout: 15000 });
@@ -163,6 +177,41 @@ const check = (c, m) => { if (c) { ok++; console.log('ok  ', m); } else { fails+
   const panel = await A.innerText('#atlas-panel');
   check(/Madrid/.test(panel) && /hora local \d\d:\d\d/.test(panel) && /Madrid Jazz Club|Radio Gran Vía/.test(panel), '12. Panel de ciudad con hora local real y sus emisoras');
   check(!!(await A.$('.atlas-alt summary')) && !!(await A.$('.atlas-canvas[aria-label]')), '13. El mapa tiene alternativa accesible (lista) y descripción');
+  // Clic directo sobre un punto del mapa (globo y plano): salen sus emisoras en el panel
+  const madrid = byName('Madrid Jazz Club');
+  const tapPoint = async (page, { touch = false, jitter = 0 } = {}) => {
+    const p = await page.evaluate(async ([la, lo]) => (await import('./js/atlas.js')).pointFor(la, lo), [madrid.geo_lat, madrid.geo_long]);
+    const bb = await (await page.$('.atlas-canvas')).boundingBox();
+    if (!p) return false;
+    const x = bb.x + p.x, y = bb.y + p.y;
+    if (touch) {
+      // toque con un pequeño temblor del dedo, como en un móvil de verdad
+      const cdp = await page.context().newCDPSession(page);
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x + jitter, y: y + jitter / 2 }] });
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    } else { await page.mouse.move(x, y); await page.mouse.down(); await page.mouse.move(x + jitter, y + 1); await page.mouse.up(); }
+    return true;
+  };
+  for (const mode of ['3d', '2d']) {
+    await A.click(`[data-act="x-atlas-mode"][data-m="${mode}"]`); await A.waitForTimeout(400);
+    await A.evaluate(async ([la, lo]) => (await import('./js/atlas.js')).focus(la, lo), [madrid.geo_lat, madrid.geo_long]);
+    await A.waitForTimeout(1200);
+    await A.evaluate(() => { document.querySelector('#atlas-panel').innerHTML = '<p>vacío</p>'; });
+    const tapped = await tapPoint(A, { jitter: 4 });
+    await A.waitForTimeout(500);
+    const txt = await A.innerText('#atlas-panel');
+    check(tapped && /Madrid Jazz Club/.test(txt) && (await A.$$('#atlas-panel .st-row')).length > 0, `12. ${mode === '3d' ? 'Globo' : 'Mapa plano'}: al hacer clic en un punto se muestran sus emisoras`);
+  }
+  // un arrastre largo mueve el mapa y no abre nada
+  await A.evaluate(() => { document.querySelector('#atlas-panel').innerHTML = '<p>vacío</p>'; });
+  { const bb = await (await A.$('.atlas-canvas')).boundingBox(); await A.mouse.move(bb.x + 200, bb.y + 200); await A.mouse.down(); await A.mouse.move(bb.x + 320, bb.y + 230, { steps: 10 }); await A.mouse.up(); }
+  await A.waitForTimeout(400);
+  check(/vacío/.test(await A.innerText('#atlas-panel')), '12. Arrastrar el mapa lo mueve sin abrir ningún punto');
+  // escuchar desde la lista del punto
+  await A.evaluate(async ([la, lo]) => (await import('./js/atlas.js')).focus(la, lo), [madrid.geo_lat, madrid.geo_long]); await A.waitForTimeout(1200);
+  await A.click('#atlas-panel .st-row:has-text("Madrid Jazz Club") [data-act="x-play"]');
+  check(await until(A, async () => { const { P } = await import('./js/player.js'); return P.current?.title === 'Madrid Jazz Club' && P.playing; }), '12. Desde la lista del punto se escucha la emisora');
 
   // --- cuenta: favoritas y colecciones en Supabase
   check(await login(A, 'explora@example.com'), 'A inicia sesión');
@@ -268,6 +317,25 @@ const check = (c, m) => { if (c) { ok++; console.log('ok  ', m); } else { fails+
   await A.evaluate(async () => (await import('./js/account.js')).sync()); await A.waitForTimeout(800);
   const aFavs = await A.evaluate(async () => (await import('./js/radio-data.js')).favs().map(s => s.title));
   check(!aFavs.includes('Radio Gran Vía') && aFavs.includes('Madrid Jazz Club'), '15. Una favorita quitada en otro dispositivo no reaparece (antes volvía con la copia de la cuenta)');
+  // Atlas en el móvil: un toque (con temblor del dedo) abre las emisoras del punto en la hoja inferior
+  await B.goto(APP + '#/explorar/atlas'); await B.waitForSelector('.atlas-canvas', { timeout: 15000 }); await B.waitForTimeout(800);
+  for (const mode of ['3d', '2d']) {
+    await B.click(`[data-act="x-atlas-mode"][data-m="${mode}"]`); await B.waitForTimeout(400);
+    await B.evaluate(async ([la, lo]) => (await import('./js/atlas.js')).focus(la, lo), [madrid.geo_lat, madrid.geo_long]);
+    await B.waitForTimeout(1200);
+    await B.evaluate(() => document.querySelector('#sheet')?.open && document.querySelector('#sheet').close());   // la hoja que abre focus()
+    await B.waitForTimeout(300);
+    await tapPoint(B, { touch: true, jitter: 8 });
+    const opened = await until(B, () => !!document.querySelector('#sheet[open] .atlas-sheet .st-row'), null, 4000);
+    const inSheet = opened ? await B.innerText('#sheet .atlas-sheet') : '';
+    const visible = opened && await B.$eval('#sheet', d => { const r = d.getBoundingClientRect(); return r.top < innerHeight && r.bottom > 0; });
+    check(opened && visible && /Madrid Jazz Club/.test(inSheet), `12. Móvil (${mode === '3d' ? 'globo' : 'plano'}): tocar un punto abre sus emisoras a la vista`);
+    if (mode === '2d' && opened) {
+      await B.click('#sheet .atlas-sheet .st-row:has-text("Madrid Jazz Club") [data-act="x-play"]');
+      check(await until(B, async () => { const { P } = await import('./js/player.js'); return P.current?.title === 'Madrid Jazz Club' && P.playing; }), '12. Móvil: se escucha directamente desde la lista del punto');
+    }
+    await B.evaluate(() => document.querySelector('#sheet')?.open && document.querySelector('#sheet').close());
+  }
   // diseño móvil: nada se sale de la pantalla
   for (const h of ['explorar', 'explorar/libre', 'explorar/radios', 'explorar/ruleta', 'explorar/viaje']) {
     await B.goto(APP + '#/' + h); await B.waitForTimeout(1200); await settled(B);
