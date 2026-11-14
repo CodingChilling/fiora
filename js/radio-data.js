@@ -191,10 +191,13 @@ export async function push() {
   if (st.busy) { if (ops.length) schedule(800); return; }
   if (st.mode !== 'ready' || !ops.length) return;
   st.busy = true;
-  let failed = false;
+  let failed = false, o = null;
+  // Se quita de la cola la operación enviada (no «la primera»): si mientras se enviaba se cambió lo
+  // mismo, esa operación ya se sustituyó por otra nueva al final de la cola y se enviará después.
+  const done = x => { ops = ops.filter(y => y !== x); };
   try {
     while (ops.length) {
-      const o = ops[0];
+      o = ops[0];
       if (o.t === 'fav') await rpc('fiora_radio_fav', { station: o.s, fav: o.on, at: o.at });
       else if (o.t === 'stamp') await rpc('fiora_passport_stamp', { cc: o.cc, station_uuid: o.uuid, station_name: o.name, at: o.at });
       else if (o.t === 'passport-reset') {
@@ -202,16 +205,16 @@ export async function push() {
         if (!r.ok) throw Object.assign(new Error(`Supabase respondió ${r.status}`), { status: r.status });
       } else if (o.t === 'prefs') {
         const res = await rpc('fiora_save_explore_prefs', { prefs: D.prefs, at: D.prefsAt || Date.now() });
-        if (res?.status === 'stale') { ops.shift(); st.busy = false; st.pulled = true; await save(); return pull(); }
+        if (res?.status === 'stale') { done(o); st.busy = false; st.pulled = true; await save(); return pull(); }
       } else if (o.t === 'coll') {
         const c = D.colls.find(x => x.id === o.id);
         if (c) {
           const res = await rpc('fiora_save_radio_collection', { c: toRemote(c) });
-          if (res?.status === 'stale') { ops.shift(); st.busy = false; await save(); return pull(); }
+          if (res?.status === 'stale') { done(o); st.busy = false; await save(); return pull(); }
           if (res?.removed?.length) img.remove(res.removed).catch(err => console.warn('No se pudieron borrar portadas viejas', err));
         }
       }
-      ops.shift();
+      done(o);
       await save();
     }
     st.error = ''; backoff = 2000;
@@ -220,8 +223,8 @@ export async function push() {
     if (e.network) st.mode = 'offline';
     else if (isMissing(e)) { st.mode = 'missing'; st.error = 'Falta aplicar en Supabase la migración de Explorar'; }
     else if (e.status >= 400 && e.status < 500 && e.status !== 401 && e.status !== 408 && e.status !== 429) {
-      console.warn('Explorar: operación rechazada, se descarta', ops[0], e);
-      ops.shift(); await save(); failed = false;   // datos que Supabase no acepta: no se reintenta para siempre
+      console.warn('Explorar: operación rechazada, se descarta', o, e);
+      done(o); await save(); failed = false;   // datos que Supabase no acepta: no se reintenta para siempre
     } else st.error = `No se pudo guardar: ${e.message}`;
   } finally { st.busy = false; emit('explore-sync', status()); }
   if (failed && st.mode !== 'missing') { backoff = Math.min(backoff * 2, 120000); schedule(backoff); }

@@ -340,14 +340,15 @@ export function initPlaylists(c) {
     else if (!list.length) body = empty('search', 'Sin resultados', 'Ninguna canción coincide con la búsqueda o los filtros.', '<button class="btn" data-act="pl-clear-view">Quitar filtros</button>');
     else if (chapters) {
       const groups = [...p.sections.map(sc => ({ sc, list: list.filter(t => p.trackSection[t.id] === sc.id) })), { sc: null, list: list.filter(t => !p.trackSection[t.id]) }];
-      body = groups.filter(g => g.sc || g.list.length).map(({ sc, list: gl }) => `<div class="chapter ${sc?.collapsed ? 'collapsed' : ''}" data-chapter="${esc(sc?.id || '')}">
+      // «Sin capítulo» vacío solo se ve mientras se arrastra (para poder sacar canciones de los capítulos)
+      body = groups.map(({ sc, list: gl }) => `<div class="chapter ${sc?.collapsed ? 'collapsed' : ''} ${!sc && !gl.length ? 'free-empty' : ''}" data-chapter="${esc(sc?.id || '')}">
         <div class="chap-head" data-drop-chapter="${esc(sc?.id || '')}">
           <button class="chap-toggle" data-act="pl-chapter-toggle" data-pid="${esc(p.id)}" data-sid="${esc(sc?.id || '')}" aria-expanded="${!sc?.collapsed}">${icon('chevD')}
             <span><b>${esc(sc ? sc.name || 'Capítulo' : 'Sin capítulo')}</b><small>${plural(gl.length, 'canción', 'canciones')} · ${totalTime(gl)}</small></span></button>
           ${gl.length ? `<button class="icon-btn" data-act="pl-play-chapter" data-pid="${esc(p.id)}" data-sid="${esc(sc?.id || '')}" aria-label="Reproducir el capítulo">${icon('play')}</button>` : ''}
         </div>
         ${sc?.description ? `<p class="chap-desc">${esc(sc.description)}</p>` : ''}
-        <div class="chap-body"><div>${gl.length ? rows(gl, o) : '<p class="muted chap-empty">Sin canciones. Usa «Mover a capítulo…» en el menú ⋯ de una canción.</p>'}</div></div>
+        <div class="chap-body"><div>${gl.length ? rows(gl, o) : `<p class="muted chap-empty">${sc ? 'Sin canciones. Arrastra aquí una canción o usa «Mover a capítulo…» en su menú ⋯.' : 'Suelta aquí para sacarla de los capítulos.'}</p>`}</div></div>
       </div>`).join('');
     } else body = rows(list, o);
     const chips = [];
@@ -367,7 +368,8 @@ export function initPlaylists(c) {
         ${!custom ? `<button class="btn ghost" data-act="pl-clear-view" data-pid="${esc(p.id)}">Volver a mi orden</button>` : ''}
       </div>
       ${chips.length ? `<div class="chips pl-fchips">${chips.map(([l, k, x]) => `<button class="chip on" data-act="pl-unfilter" data-pid="${esc(p.id)}" data-k="${k}" data-v="${esc(x ?? '')}">${esc(l)} ✕</button>`).join('')}</div>` : ''}
-      ${v.reorder && custom ? `<p class="muted reorder-hint">Arrastra ${icon('grip')} para cambiar el orden${chapters ? ' (también entre capítulos)' : ''}. Con el teclado: flechas arriba y abajo.</p>` : ''}
+      ${v.reorder && custom ? `<p class="muted reorder-hint">Arrastra ${icon('grip')} para cambiar el orden${chapters ? ' (también entre capítulos)' : ''}. Con el teclado: flechas arriba y abajo.</p>`
+        : custom && p.trackIds.length > 1 ? `<p class="muted reorder-hint dnd-hint">${matchMedia('(hover: hover)').matches ? 'Arrastra' : 'Mantén pulsada'} una canción para moverla${chapters ? ' o llevarla a otro capítulo' : ''}.</p>` : ''}
       ${data.isFavs(p) && custom && p.trackIds.length ? `<p class="muted reorder-hint">${p.settings.favOrder === 'manual' ? `Orden manual: las nuevas favoritas entran arriba. <button class="chip" data-act="pl-fav-date" data-pid="${esc(p.id)}">Ordenar por fecha</button>` : 'De la más reciente a la más antigua. Usa «Reordenar» para ponerlas a tu gusto.'}</p>` : ''}
       ${!custom && p.trackIds.length ? `<p class="muted reorder-hint">Vista ${v.sort !== 'custom' ? `ordenada por ${SORTS[v.sort][0].toLowerCase()}` : 'filtrada'}: tu orden personalizado se conserva.</p>` : ''}
       <div class="pl-list" data-pid="${esc(p.id)}">${body}</div>
@@ -460,7 +462,8 @@ export function initPlaylists(c) {
     return `<section class="pl-block pl-discover"><div class="block-head"><h2>${icon('compass')}Descubre más</h2><span class="grow"></span>
         <div class="seg" role="group" aria-label="Tipo de recomendaciones"><button class="chip ${v.discover === 'similar' ? 'on' : ''}" data-act="pl-disc-mode" data-pid="${esc(p.id)}" data-m="similar">Más parecido</button><button class="chip ${v.discover === 'surprise' ? 'on' : ''}" data-act="pl-disc-mode" data-pid="${esc(p.id)}" data-m="surprise">Sorpréndeme</button></div>
         ${list.length > 6 ? `<button class="icon-btn" data-act="pl-disc-more" data-pid="${esc(p.id)}" aria-label="Otras recomendaciones">${icon('sync')}</button>` : ''}</div>
-      ${page.length ? `<div class="disc-grid">${page.map(t => `<div class="disc">${c.cover(t)}<span class="row-text"><b>${esc(t.title)}</b><small>${esc(t.artist || '')}</small></span>
+      ${page.length && isCustom(v) && data.moduleOn(p, 'songs') ? `<p class="muted disc-hint">${matchMedia('(hover: hover)').matches ? 'Arrastra' : 'Mantén pulsada'} una canción hasta la lista${p.sections.length && data.moduleOn(p, 'chapters') ? ' o un capítulo' : ''} para añadirla justo ahí.</p>` : ''}
+      ${page.length ? `<div class="disc-grid">${page.map(t => `<div class="disc" data-dnd data-tid="${esc(t.id)}">${c.cover(t)}<span class="row-text"><b>${esc(t.title)}</b><small>${esc(t.artist || '')}</small></span>
           <button class="icon-btn" data-act="pl-disc-play" data-tid="${esc(t.id)}" aria-label="Escuchar ${esc(t.title)}">${icon('play')}</button>
           <button class="icon-btn" data-act="pl-disc-add" data-pid="${esc(p.id)}" data-tid="${esc(t.id)}" aria-label="Añadir ${esc(t.title)} a la playlist">${icon('plus')}</button></div>`).join('')}</div>`
         : `<p class="muted">${esc(why)}</p>`}</section>`;
@@ -976,49 +979,133 @@ export function initPlaylists(c) {
     p.trackIds = ids;
     if (sectionId !== undefined) { if (sectionId) p.trackSection[tid] = sectionId; else delete p.trackSection[tid]; }
   }
-  document.addEventListener('pointerdown', e => {
-    const h = e.target.closest('.pl-list [data-drag]');
-    if (!h) return;
-    e.preventDefault();
-    const row = h.closest('.row'), list = h.closest('.pl-list');
-    dragSong = { row, list, pid: list.dataset.pid, tid: row.dataset.id, y: e.clientY, target: null };
-    row.classList.add('lifted');
-    h.setPointerCapture(e.pointerId);
-  });
-  document.addEventListener('pointermove', e => {
-    if (!dragSong) return;
-    dragSong.row.style.transform = `translateY(${e.clientY - dragSong.y}px)`;
-    $$('.drop-before,.drop-after,.drop-into', dragSong.list).forEach(x => x.classList.remove('drop-before', 'drop-after', 'drop-into'));
-    const el = document.elementsFromPoint(e.clientX, e.clientY).find(x => x !== dragSong.row && (x.matches('.row') || x.matches('[data-drop-chapter]')) && dragSong.list.contains(x));
-    dragSong.target = null;
-    if (el?.matches('.row')) { const r = el.getBoundingClientRect(), after = e.clientY > r.top + r.height / 2; el.classList.add(after ? 'drop-after' : 'drop-before'); dragSong.target = { row: el, after }; }
-    else if (el) { el.classList.add('drop-into'); dragSong.target = { chapter: el.dataset.dropChapter }; }
-    // desplazamiento automático cerca de los bordes
-    const view = document.getElementById('view'), vr = view.getBoundingClientRect();
-    if (e.clientY < vr.top + 60) view.scrollTop -= 12; else if (e.clientY > vr.bottom - 60) view.scrollTop += 12;
-  });
-  const endDrag = async () => {
-    if (!dragSong) return;
-    const { row, list, pid, tid, target } = dragSong;
-    dragSong = null;
-    row.classList.remove('lifted'); row.style.transform = '';
+  // Se arrastran canciones de la lista (para moverlas o llevarlas a otro capítulo) y de «Descubre más»
+  // (para añadirlas justo donde se sueltan). Ratón: pulsar y mover. Táctil: mantener pulsado y mover
+  // (si el dedo se mueve antes, se desplaza la página como siempre). El asa de «Reordenar» arrastra al instante.
+  const HOLD_MS = 350;
+  let pend = null, swallowDnd = false;
+  const sourceOf = el => el.closest('.pl-list .row[data-id]') || el.closest('.disc[data-dnd]');
+  function dndPlaylist(src) {
+    const art = src.closest('.pl[data-pl]'), p = art && byId(art.dataset.pl);
+    if (!p || !$('.pl-list', art) || !isCustom(viewOf(p))) return null;   // solo en tu orden (sin filtros ni otra ordenación)
+    return p;
+  }
+  const clearMarks = list => {
     $$('.drop-before,.drop-after,.drop-into', list).forEach(x => x.classList.remove('drop-before', 'drop-after', 'drop-into'));
-    const p = byId(pid);
-    if (!p || !target) return;
-    if (target.row) {
-      const other = target.row.dataset.id, chap = target.row.closest('[data-chapter]');
-      const ids = p.trackIds.filter(x => x !== tid), idx = ids.indexOf(other);
-      songOrder(p, tid, target.after ? ids[idx + 1] || null : other, chap ? chap.dataset.chapter : undefined);
-      if (target.after && !ids[idx + 1]) { p.trackIds = p.trackIds.filter(x => x !== tid); p.trackIds.splice(p.trackIds.indexOf(other) + 1, 0, tid); }
-    } else songOrder(p, tid, null, target.chapter);
+    list.classList.remove('drop-end');
+  };
+  function startDrag(x, y) {
+    const d = pend; pend = null; clearTimeout(d.timer);
+    const r = d.src.getBoundingClientRect();
+    const ghost = d.src.cloneNode(true);
+    ghost.classList.add('dnd-ghost'); ghost.removeAttribute('data-id'); ghost.removeAttribute('data-tid');
+    Object.assign(ghost.style, { width: `${r.width}px`, left: `${r.left}px`, top: `${r.top}px` });
+    document.body.append(ghost);
+    dragSong = { ...d, ghost, ox: x - r.left, oy: y - r.top, list: $('.pl-list', d.src.closest('.pl')), target: null, x, y };
+    d.src.classList.add('dnd-src');
+    dragSong.list.classList.add('dragging');
+    document.body.classList.add('dnd');
+    navigator.vibrate?.(12);
+    moveDrag(x, y);
+    autoScroll();
+  }
+  function moveDrag(x, y) {
+    const d = dragSong;
+    d.x = x; d.y = y;
+    d.ghost.style.left = `${x - d.ox}px`; d.ghost.style.top = `${y - d.oy}px`;
+    clearMarks(d.list);
+    const els = document.elementsFromPoint(x, y);
+    const row = els.find(el => el.matches?.('.row[data-id]') && el !== d.src && d.list.contains(el));
+    d.target = null;
+    if (row) {
+      const r = row.getBoundingClientRect(), after = y > r.top + r.height / 2;
+      row.classList.add(after ? 'drop-after' : 'drop-before');
+      d.target = { row: row.dataset.id, after, chapter: row.closest('[data-chapter]')?.dataset.chapter };
+      return;
+    }
+    const chap = els.find(el => el.matches?.('[data-chapter]') && d.list.contains(el));
+    if (chap) { chap.classList.add('drop-into'); d.target = { chapter: chap.dataset.chapter }; return; }
+    if (els.includes(d.list)) { d.list.classList.add('drop-end'); d.target = { end: true }; }
+  }
+  // Desplazamiento automático mientras se arrastra cerca del borde superior o inferior
+  function autoScroll() {
+    if (!dragSong) return;
+    const view = document.getElementById('view'), vr = view.getBoundingClientRect(), { y } = dragSong;
+    const step = y < vr.top + 70 ? -Math.ceil((vr.top + 70 - y) / 5) : y > vr.bottom - 70 ? Math.ceil((y - vr.bottom + 70) / 5) : 0;
+    if (step) { view.scrollTop += step; moveDrag(dragSong.x, dragSong.y); }
+    requestAnimationFrame(autoScroll);
+  }
+  function endDragUI(d) {
+    d.ghost.remove(); d.src.classList.remove('dnd-src'); d.list.classList.remove('dragging'); clearMarks(d.list);
+    document.body.classList.remove('dnd');
+    swallowDnd = true; setTimeout(() => { swallowDnd = false; }, 400);   // que soltar no cuente como clic (no reproduce)
+  }
+  async function dropDrag() {
+    const d = dragSong; dragSong = null;
+    endDragUI(d);
+    let p = byId(d.p.id);
+    if (!p || !d.target) return;
+    const t = d.target, secName = id => (id ? p.sections.find(s => s.id === id)?.name || 'Capítulo' : '');
+    const before = p.trackSection[d.tid] || '';
+    if (d.kind === 'disc') {
+      const track = S.tracks.get(d.tid);
+      if (!track) return;
+      if (data.isFavs(p)) { if (!isFav(track.id)) toggleFav(track.id); await data.syncFavs(); p = byId(d.p.id); }
+      else data.addTracks(p, [d.tid]);
+      if (!p.trackIds.includes(d.tid)) return;
+    }
+    if (t.row) {
+      // antes o después de esa fila; si queda la última del capítulo, va al final del capítulo
+      const ids = p.trackIds.filter(x => x !== d.tid);
+      const inChap = x => t.chapter === undefined || (p.trackSection[x] || '') === t.chapter;
+      const next = t.after ? ids.slice(ids.indexOf(t.row) + 1).find(inChap) : t.row;   // la siguiente del mismo capítulo
+      songOrder(p, d.tid, next || null, t.chapter);
+    } else if (t.chapter !== undefined) songOrder(p, d.tid, null, t.chapter);
+    else p.trackIds = [...p.trackIds.filter(x => x !== d.tid), d.tid];
     markManual(p);
     await savePlaylist(p);
-    paintSongs(p);
-    const moved = $(`.pl-list .row[data-id="${CSS.escape(tid)}"]`);
-    moved?.classList.add('moved');
-  };
-  document.addEventListener('pointerup', endDrag);
-  document.addEventListener('pointercancel', endDrag);
+    const now = p.trackSection[d.tid] || '';
+    const track = S.tracks.get(d.tid);
+    if (d.kind === 'disc') toast(`«${track?.title || 'Canción'}» añadida${now ? ` a «${secName(now)}»` : ''}`);
+    else if (now !== before) toast(now ? `Movida a «${secName(now)}»` : 'Sacada de los capítulos');
+    if (d.kind === 'disc') refresh(); else paintSongs(p);   // la recomendación desaparece de «Descubre más»
+    setTimeout(() => $(`.pl-list .row[data-id="${CSS.escape(d.tid)}"]`)?.classList.add('moved'), d.kind === 'disc' ? 250 : 0);
+  }
+  function cancelDrag() { const d = dragSong; dragSong = null; if (d) endDragUI(d); }
+  document.addEventListener('pointerdown', e => {
+    if (dragSong || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    const handle = e.target.closest('.pl-list [data-drag]');
+    const src = handle ? handle.closest('.row') : sourceOf(e.target);
+    if (!src) return;
+    // los botones (corazón, ⋯, nota, ▶ y «+» de las recomendaciones…) siguen siendo botones
+    if (!handle && e.target.closest('button:not(.row-main), a, input, select, textarea')) return;
+    const p = dndPlaylist(src);
+    if (!p) return;
+    const kind = src.matches('.disc') ? 'disc' : 'row';
+    pend = { src, kind, p, tid: kind === 'disc' ? src.dataset.tid : src.dataset.id, x: e.clientX, y: e.clientY, touch: e.pointerType !== 'mouse' };
+    if (handle) { e.preventDefault(); startDrag(e.clientX, e.clientY); return; }
+    if (pend.touch) pend.timer = setTimeout(() => { if (pend) startDrag(pend.lx ?? pend.x, pend.ly ?? pend.y); }, HOLD_MS);
+  });
+  document.addEventListener('pointermove', e => {
+    if (pend) {
+      const dist = Math.hypot(e.clientX - pend.x, e.clientY - pend.y);
+      pend.lx = e.clientX; pend.ly = e.clientY;
+      if (pend.touch) { if (dist > 10) { clearTimeout(pend.timer); pend = null; } }   // se mueve antes de tiempo: es desplazar la página
+      else if (dist > 6) startDrag(e.clientX, e.clientY);
+      return;
+    }
+    if (dragSong) moveDrag(e.clientX, e.clientY);
+  });
+  document.addEventListener('pointerup', () => {
+    if (pend) { clearTimeout(pend.timer); pend = null; return; }   // un toque o clic normal
+    if (dragSong) dropDrag();
+  });
+  document.addEventListener('pointercancel', () => { if (pend) { clearTimeout(pend.timer); pend = null; } if (dragSong) cancelDrag(); });
+  // Mientras se arrastra con el dedo, la página no se desplaza ni sale el menú de mantener pulsado.
+  document.addEventListener('touchmove', e => { if (dragSong) e.preventDefault(); }, { passive: false });
+  document.addEventListener('contextmenu', e => { if (pend || dragSong) e.preventDefault(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && dragSong) { e.preventDefault(); e.stopPropagation(); cancelDrag(); } }, true);
+  document.addEventListener('click', e => { if (swallowDnd) { e.stopPropagation(); e.preventDefault(); swallowDnd = false; } }, true);
   document.addEventListener('keydown', async e => {
     const h = e.target.closest?.('.pl-list [data-drag]');
     if (!h || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
