@@ -1628,6 +1628,7 @@ view.addEventListener('pointerdown', e => {
 });
 view.addEventListener('pointermove', e => {
   if (!swipe) return;
+  if (document.body.classList.contains('dnd')) { endSwipe(false); return; }   // se está arrastrando la canción a otro sitio
   const dx = e.clientX - swipe.x, dy = e.clientY - swipe.y;
   if (!swipe.active) {
     if (dx > 14 && dx > Math.abs(dy) * 1.5) { swipe.active = true; swipe.row.classList.add('swiping'); }

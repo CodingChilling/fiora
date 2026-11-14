@@ -206,9 +206,11 @@ export async function push() {
     for (const id of [...st.pending]) {
       const p = S.playlists.find(x => x.id === id);
       if (!p) { st.pending.delete(id); continue; }
-      const res = await rpc('fiora_save_playlist', { p: toRemote(p) });
+      const sent = toRemote(p);
+      const res = await rpc('fiora_save_playlist', { p: sent });
       if (res?.status === 'stale') { st.busy = false; st.fullPulled = false; await pull(); return; }   // otro dispositivo guardó algo más nuevo
-      st.pending.delete(id);
+      // si se cambió mientras se guardaba, sigue pendiente (se sube la versión nueva en la siguiente vuelta)
+      if ((p.updatedAt || 0) <= sent.updatedAt) st.pending.delete(id);
       await persist();
       if (res?.removed?.length) img.remove(res.removed).catch(e => console.warn('No se pudieron borrar imágenes viejas', e));
     }

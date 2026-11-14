@@ -162,7 +162,7 @@ export function countNext(a, b) {
 
 export const livePlaylists = () => S.playlists.filter(p => !p.deleted);
 export async function savePlaylist(p) {
-  p.updatedAt = Date.now();
+  p.updatedAt = Math.max(Date.now(), (p.updatedAt || 0) + 1);   // siempre crece (dos cambios en el mismo milisegundo se distinguen)
   if (!S.playlists.includes(p)) S.playlists.push(p);
   await db.put('playlists', p.id, p);
   emit('playlist-saved', p);   // playlists-data.js lo sube a Supabase

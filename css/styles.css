@@ -406,13 +406,13 @@ table.data td:last-child { text-align: right; color: var(--muted); white-space: 
 @media (hover: none) { .lib-search kbd { display: none; } }
 
 /* Pestañas como control segmentado */
-.seg { display: flex; gap: 2px; padding: 4px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; flex: none; }
-.seg a { flex: 1; text-align: center; padding: 7px 10px; border-radius: 999px; font-weight: 650; font-size: 14px; color: var(--muted); white-space: nowrap; transition: background-color .2s, color .2s; }
-@media (hover: hover) { .seg a:hover { color: var(--text); } }
-.seg a.on { background: var(--text); color: var(--bg); }
-.seg a small { font-size: 12px; font-weight: 600; opacity: .6; margin-left: 6px; font-variant-numeric: tabular-nums; }
-@media (max-width: 599px) { .seg a small { display: none; } .seg a { padding: 7px 4px; } }
-@media (min-width: 900px) { .seg a { flex: none; padding: 7px 16px; } }
+.lib-bar .seg { display: flex; gap: 2px; padding: 4px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; flex: none; }
+.lib-bar .seg a { flex: 1; text-align: center; padding: 7px 10px; border-radius: 999px; font-weight: 650; font-size: 14px; color: var(--muted); white-space: nowrap; transition: background-color .2s, color .2s; }
+@media (hover: hover) { .lib-bar .seg a:hover { color: var(--text); } }
+.lib-bar .seg a.on { background: var(--text); color: var(--bg); }
+.lib-bar .seg a small { font-size: 12px; font-weight: 600; opacity: .6; margin-left: 6px; font-variant-numeric: tabular-nums; }
+@media (max-width: 599px) { .lib-bar .seg a small { display: none; } .lib-bar .seg a { padding: 7px 4px; } }
+@media (min-width: 900px) { .lib-bar .seg a { flex: none; padding: 7px 16px; } }
 
 /* Herramientas: reproducir, recuento, orden y filtros */
 .lib-tools { display: flex; align-items: center; gap: 10px; margin: 10px 0 2px; min-width: 0; }
@@ -1167,3 +1167,22 @@ body.live #mini .seek .js-cur, body.live #mini .seek .js-seek { display: none; }
 .atlas-sheet { max-height: 78vh; overflow-y: auto; }
 .atlas-sheet h2 { margin: 2px 0 4px; }
 .atlas-sheet p { margin: 4px 0; }
+
+/* Cabeceras de bloque de las playlists: el título nunca se parte; los controles bajan de línea si no caben */
+.block-head { flex-wrap: wrap; row-gap: 8px; }
+.block-head h2 { flex: none; white-space: nowrap; }
+
+/* Arrastrar y soltar canciones en las playlists (lista y «Descubre más») */
+.pl-list .row, .disc { -webkit-touch-callout: none; }
+.pl-list .row .row-main, .disc { -webkit-user-select: none; user-select: none; }
+@media (hover: hover) { .disc[data-dnd] { cursor: grab; } }
+.dnd-ghost { position: fixed; z-index: 100; pointer-events: none; margin: 0; list-style: none; background: var(--surface-2); border-radius: 12px;
+  box-shadow: 0 18px 40px -10px rgb(0 0 0 / .55); opacity: .96; transform: rotate(-1.2deg) scale(1.02); }
+.dnd-src { opacity: .35; }
+body.dnd, body.dnd * { cursor: grabbing !important; }
+.chapter.free-empty { display: none; }
+.pl-list.dragging .chapter.free-empty { display: block; }
+.chapter.drop-into { outline: 2px dashed var(--accent); outline-offset: -2px; background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+.pl-list.drop-end { box-shadow: inset 0 -3px 0 var(--accent); border-radius: 12px; }
+.disc-hint { font-size: 13px; margin: -2px 0 10px; }
+@media (prefers-reduced-motion: reduce) { .dnd-ghost { transform: none; } }
