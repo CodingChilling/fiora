@@ -65,6 +65,44 @@ export function removeTracks(p, ids) {
   p.featured = p.featured.filter(id => !out.has(id));
 }
 
+// ------------------------------------------------------------ «Canciones que te gustan»
+// Es una playlist más (mismo diseño, se sincroniza como las demás), pero sus canciones las decide el
+// corazón: las que tienen «me gusta». Por defecto van de la más reciente a la más antigua; si se
+// reordena a mano, ese orden se respeta (las nuevas entran arriba y las que dejan de gustar salen).
+export const FAVS = 'favoritos';
+export const isFavs = p => p?.id === FAVS;
+/** Pone al día la lista con los corazones. Devuelve true si ha cambiado (sin guardar). */
+export function reconcileFavs() {
+  let p = S.playlists.find(x => x.id === FAVS), created = false;
+  if (!p) {
+    // `autoOnly`: creada aquí y sin cambios del usuario en este dispositivo. Si en la cuenta ya existe,
+    // gana la de la cuenta (con su orden y su personalización). Solo vive en este dispositivo.
+    p = normalize({ id: FAVS, name: 'Canciones que te gustan', emoji: '', trackIds: [], createdAt: Date.now(), autoOnly: true });
+    S.playlists.push(p); created = true;
+  }
+  if (p.deleted) { p.deleted = false; created = true; }   // no se puede eliminar
+  const liked = Object.entries(S.favs).filter(([, f]) => f?.on).sort((a, b) => (b[1].at || 0) - (a[1].at || 0)).map(([id]) => id);
+  const likedSet = new Set(liked);
+  // Canciones de la lista cuyo «me gusta» aún no ha llegado a este dispositivo: se dejan donde están.
+  const unknown = id => S.favs[id] === undefined;
+  let next;
+  if (p.settings.favOrder === 'manual') {
+    const kept = p.trackIds.filter(id => likedSet.has(id) || unknown(id));
+    next = [...liked.filter(id => !p.trackIds.includes(id)), ...kept];
+  } else next = [...liked, ...p.trackIds.filter(id => unknown(id) && !likedSet.has(id))];
+  const added = {};
+  for (const id of next) added[id] = S.favs[id]?.at || p.added[id] || Date.now();
+  const changed = created || next.join('\n') !== p.trackIds.join('\n') || next.some(id => added[id] !== p.added[id]);
+  if (changed) { p.trackIds = next; p.added = added; normalize(p); }
+  return changed;
+}
+let savingFavs = false;
+export async function syncFavs() {
+  if (!reconcileFavs()) return;
+  savingFavs = true;
+  try { await savePlaylist(S.playlists.find(x => x.id === FAVS)); } finally { savingFavs = false; }
+}
+
 // Lo que solo vive en este dispositivo: {[playlistId]: {cover: idLocal|null, photos: [idLocal], order: [ids]}}
 let local = {};
 export const localOf = pid => (local[pid] ||= { cover: null, photos: [], order: [] });
@@ -110,8 +148,8 @@ async function mergeRemote(r) {
     S.playlists.push(p); await db.put('playlists', p.id, p);
     return true;
   }
-  if ((r.updatedAt || 0) > (l.updatedAt || 0)) {
-    // gana la versión de Supabase (más reciente)
+  if ((r.updatedAt || 0) > (l.updatedAt || 0) || (l.autoOnly && !r.deleted)) {
+    // gana la versión de Supabase (más reciente, o la de la cuenta frente a una copia creada aquí sin tocar)
     for (const k of Object.keys(l)) if (!(k in r)) delete l[k];
     Object.assign(l, normalize(r));
     st.pending.delete(l.id);
@@ -142,6 +180,7 @@ export async function pull() {
     }
     st.lastPull = Date.now();
     await persist();
+    await syncFavs();
     if (changed) emit('playlists');
   } catch (e) {
     if (isMissing(e)) { st.mode = 'missing'; st.error = 'Falta aplicar en Supabase la migración de las playlists'; }
@@ -159,7 +198,8 @@ export function schedulePush(ms = 1200) {
   timer = setTimeout(() => (st.mode === 'ready' ? push() : pull()), ms);
 }
 export async function push() {
-  if (st.mode !== 'ready' || st.busy || !st.pending.size) return;
+  if (st.busy) { if (st.pending.size) schedulePush(800); return; }   // hay otra operación en curso: se reintenta al acabar
+  if (st.mode !== 'ready' || !st.pending.size) return;
   st.busy = true; announce();
   let failed = false;
   try {
@@ -180,6 +220,7 @@ export async function push() {
     else st.error = `No se pudo guardar: ${e.message}`;
   } finally { st.busy = false; announce(); }
   if (failed && st.mode !== 'missing') { backoff = Math.min(backoff * 2, 120000); schedulePush(backoff); }
+  else if (!failed && st.pending.size) schedulePush(300);   // cambios hechos mientras se guardaba
 }
 
 // ------------------------------------------------------------ imágenes pendientes de subir
@@ -276,10 +317,15 @@ export async function init() {
   plays = { queue: [], agg: {}, ...((await db.get('kv', 'plPlays').catch(() => null)) || {}) };
   for (const p of S.playlists) normalize(p);
   on('playlist-saved', p => {
+    if (p.autoOnly && !savingFavs) delete p.autoOnly;   // el usuario la ha cambiado: ya es «suya» en este dispositivo
     normalize(p);
     if (account.user()) { st.pending.add(p.id); persist(); schedulePush(); }
     announce();
   });
+  // «Canciones que te gustan» sigue a los corazones (también cuando llegan de otro dispositivo)
+  let favTimer = null;
+  on('favs', () => { clearTimeout(favTimer); favTimer = setTimeout(syncFavs, 250); });
+  on('personal-cleared', () => setTimeout(syncFavs, 0));
   on('played', ({ id, ctx, secs }) => {
     const p = ctx?.playlist && S.playlists.find(x => x.id === ctx.playlist);
     if (p && !p.deleted && p.trackIds.includes(id)) recordPlay(p.id, id, secs);
@@ -293,5 +339,6 @@ export async function init() {
     await Promise.all([persist(), saveLocalState(), savePlays()]);
   });
   addEventListener('online', () => { if (account.user()) pull(); });
+  await syncFavs();
   if (account.user()) pull(); else announce();
 }

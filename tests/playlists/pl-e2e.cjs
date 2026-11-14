@@ -332,7 +332,8 @@ const check = (c, m) => { if (c) { ok++; console.log('ok  ', m); } else { fails+
   // ================================================================ 19. otra cuenta (RLS)
   const { page: C } = await device('C', true);
   check(await login(C, 'otra@example.com'), 'C inicia sesión con otra cuenta');
-  check(!(await ev(C, async () => (await import('./js/store.js')).S.playlists.filter(p => !p.deleted).length)), '19. Otra cuenta no ve ninguna playlist de A');
+  const cSees = await ev(C, async () => (await import('./js/store.js')).S.playlists.filter(p => !p.deleted).map(p => [p.id, p.name, p.trackIds.length]));
+  check(cSees.every(([id, , n]) => id === 'favoritos' && n === 0), '19. Otra cuenta no ve ninguna playlist de A (solo su propia «Canciones que te gustan», vacía) ' + JSON.stringify(cSees));
   const steal = await ev(C, async p => { const acc = await import('./js/account.js'); const r = await acc.authFetch(`/storage/v1/object/authenticated/fiora-playlists/${p}`); return r.status; }, coverPath);
   check(steal >= 400, `19. Otra cuenta no puede descargar la portada de A (respuesta ${steal})`);
   const put = await ev(C, async p => { const acc = await import('./js/account.js'); const r = await acc.authFetch(`/storage/v1/object/fiora-playlists/${p}`, { method: 'POST', body: new Blob(['x']), headers: { 'Content-Type': 'image/jpeg', 'x-upsert': 'true' } }); return r.status; }, coverPath);

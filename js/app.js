@@ -481,12 +481,6 @@ function viewArtist(name) {
 }
 
 // ----------------------------------------------------------------- playlists
-function viewFavs() {
-  const tracks = allTracks().filter(t => isFav(t.id)).sort((a, b) => S.favs[b.id].at - S.favs[a.id].at);
-  show(`<div class="hero"><span class="cover" style="--hue:340"><i>${icon('heart')}</i></span>
-      <div class="info"><div class="kind">Playlist</div><h1>Canciones que te gustan</h1><p>${plural(tracks.length, 'canción', 'canciones')}</p>${playButtons(tracks)}</div></div>
-    ${tracks.length ? rows(tracks) : empty('heart', 'Todavía no hay favoritas', 'Pulsa el corazón en cualquier canción para guardarla aquí.')}`);
-}
 const newPlaylist = t => PL.newPlaylist(t);
 const addToPlaylist = t => PL.addToPlaylist(t);
 
@@ -1153,7 +1147,7 @@ function confirmDelete(t) {
   return confirmDlg('¿Borrar la canción para siempre?', `«${t.title}» se borrará de tu biblioteca, de este dispositivo${b ? ` y del bucket «${b.name}» (en todos tus dispositivos)${oci.configured() ? '' : '. Sin clave de API de Oracle, el archivo queda vacío en el bucket, sin ocupar espacio'}` : ''}. No se puede deshacer.`, 'Borrar');
 }
 
-const ROUTES = { inicio: viewHome, biblioteca: viewLibrary, album: viewAlbum, artista: viewArtist, playlists: () => PL.viewList(), playlist: id => PL.viewPlaylist(id), favoritos: viewFavs, mix: viewMix, estadisticas: viewStats, genero: n => viewTag('genero', n), ambiente: n => viewTag('ambiente', n), explorar: viewExplore, archivo: viewArchive, ajustes: viewSettings, repetidas: viewDuplicates };
+const ROUTES = { inicio: viewHome, biblioteca: viewLibrary, album: viewAlbum, artista: viewArtist, playlists: () => PL.viewList(), playlist: id => PL.viewPlaylist(id), favoritos: () => PL.viewPlaylist('favoritos'), mix: viewMix, estadisticas: viewStats, genero: n => viewTag('genero', n), ambiente: n => viewTag('ambiente', n), explorar: viewExplore, archivo: viewArchive, ajustes: viewSettings, repetidas: viewDuplicates };
 
 // ------------------------------------------------------- menú de una canción
 function trackMenu(t, o = {}, i = -1) {
@@ -1730,10 +1724,10 @@ on('track', () => { if (!now.hidden && nowMode === 'queue') renderNowPane(); });
 on('favs', id => {
   syncState();
   if (id) $$('.row').forEach(r => { if (r.dataset.id === id) $('.fav', r)?.classList.toggle('on', isFav(id)); });
-  if (!id || location.hash.startsWith('#/favoritos')) refresh();
+  if (!id) refresh();   // «Canciones que te gustan» se actualiza sola (playlists-data.js) y avisa con 'playlists'
 });
 on('library', refresh);
-on('playlists', () => { if (/^#\/playlists?/.test(location.hash)) refresh(); });
+on('playlists', () => { if (/^#\/(playlists?|favoritos)/.test(location.hash) && !document.querySelector('#sheet[open] .pl-editor')) refresh(); });
 
 // -------------------------------------------------------------------- arranque
 async function accountSync() {
