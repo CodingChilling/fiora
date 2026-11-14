@@ -3,6 +3,7 @@
 Tu música, sin suscripciones. Una app web instalable (PWA) para escuchar tu propia biblioteca, guardarla en tu nube personal y descubrir música libre y radios.
 
 - **Tu biblioteca**: importa archivos o carpetas enteras (MP3, FLAC, M4A, OGG, WAV…). Lee título, artista, álbum, carátula y letra de las etiquetas.
+- **Biblioteca cómoda**: búsqueda y pestañas siempre a mano al desplazarte (pulsa `/` para buscar, `Esc` para borrar); la búsqueda también muestra los artistas y álbumes que coinciden; canciones agrupadas por letra (con índice lateral para saltar) o por fecha; filtros rápidos de un toque; orden para canciones, álbumes y artistas; botón de reproducir en cada álbum y artista; géneros y ambientes como tarjetas con sus carátulas; y al volver de un álbum o artista sigues donde estabas.
 - **Filtros**: en Biblioteca → Canciones, filtra por dónde están (sin conexión, nube, solo en el dispositivo, música libre), me gusta, géneros, lo que transmite, época, escuchas y fecha en que se añadieron, y ordena por título, artista, álbum, escuchas, año o duración. La búsqueda no distingue tildes.
 - **Sin conexión**: la música importada o descargada se guarda en el dispositivo y la app se abre sin internet.
 - **Descargas**: baja una canción, un álbum o una playlist entera dentro de la app, o guarda el archivo en la carpeta de descargas del móvil u ordenador.

@@ -32,7 +32,8 @@ const fmt = s => {
 const hue = str => { let h = 0; for (const c of String(str)) h = (h * 31 + c.codePointAt(0)) % 360; return h; };
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 const totalTime = tracks => {
-  const min = Math.round(tracks.reduce((a, t) => a + (t.duration || 0), 0) / 60);
+  const secs = tracks.reduce((a, t) => a + (t.duration || 0), 0), min = Math.round(secs / 60);
+  if (!min && secs > 0) return 'menos de 1 min';
   return min >= 60 ? `${Math.floor(min / 60)} h ${min % 60} min` : `${min} min`;
 };
 const inLibrary = t => S.tracks.has(t.id);
@@ -156,7 +157,12 @@ function rowsChunk(k, from) {
   const { tracks, opts } = getList(k);
   const to = Math.min(tracks.length, from + CHUNK);
   let out = '';
-  for (let i = from; i < to; i++) out += rowHTML(tracks[i], i, opts);
+  for (let i = from; i < to; i++) {
+    // Cabeceras de sección (letra, fecha o década) cuando cambia el grupo.
+    const g = opts.group?.(tracks[i]);
+    if (g && (i === 0 || g !== opts.group(tracks[i - 1]))) out += `<li class="group-head" data-g="${esc(g)}">${esc(g)}</li>`;
+    out += rowHTML(tracks[i], i, opts);
+  }
   if (to < tracks.length) out += `<li class="sentinel" data-from="${to}"></li>`;
   return out;
 }
@@ -164,17 +170,30 @@ function rows(tracks, opts = {}) {
   const k = lists.push({ tracks, opts }) - 1;
   return `<ol class="rows" data-list="${k}">${rowsChunk(k, 0)}</ol>`;
 }
+/** Pinta el siguiente bloque de filas de una lista; false si ya estaba entera. */
+function renderNext(ol) {
+  const s = $(':scope > .sentinel', ol);
+  if (!s) return false;
+  more.unobserve(s);
+  s.remove();
+  setHTML(ol, rowsChunk(ol.dataset.list, +s.dataset.from), 'beforeend');
+  return true;
+}
 const more = new IntersectionObserver(entries => {
   for (const e of entries) {
-    if (!e.isIntersecting) continue;
-    const s = e.target, ol = s.parentNode;
-    more.unobserve(s);
-    if (!ol) continue;
-    s.remove();
-    setHTML(ol, rowsChunk(ol.dataset.list, +s.dataset.from), 'beforeend');
+    if (!e.isIntersecting || !e.target.parentNode) continue;
+    const ol = e.target.parentNode;
+    renderNext(ol);
     watchSentinels(ol);
   }
 }, { rootMargin: '600px' });
+/** Pinta filas hasta que la vista sea lo bastante alta para volver a una posición guardada. */
+function fillTo(px) {
+  for (const ol of $$('ol.rows[data-list]', view)) {
+    while (view.scrollHeight - view.clientHeight < px && renderNext(ol));
+    watchSentinels(ol);
+  }
+}
 const watchSentinels = root => $$('.sentinel', root).forEach(s => more.observe(s));
 
 // ---------------------------------------------------------------- navegación
@@ -188,6 +207,7 @@ function show(html) {
   watchSentinels(view);
 }
 let lastHash = null;
+const scrollMem = new Map();   // posición de cada pestaña de la biblioteca al salir de ella
 async function route() {
   const hash = location.hash.replace(/^#\/?/, '');
   const [name = '', ...args] = hash.split('/').map(decodeURIComponent);
@@ -195,10 +215,17 @@ async function route() {
   const section = SECTION[name] || (ROUTES[name] ? name : 'inicio');
   $$('#nav-links a').forEach(a => a.classList.toggle('on', a.dataset.nav === section));
   lists = [];
-  const keep = hash === lastHash ? view.scrollTop : 0;
+  const same = hash === lastHash;
+  if (lastHash?.startsWith('biblioteca')) scrollMem.set(lastHash, view.scrollTop);
+  const keep = same ? view.scrollTop : 0;
   lastHash = hash;
   await fn(...args);
-  view.scrollTop = keep;
+  // La biblioteca vuelve a donde estabas (al volver de un álbum, de un artista o de otra pestaña).
+  const now = location.hash.replace(/^#\/?/, '');
+  lastHash = now;
+  const target = same ? keep : now.startsWith('biblioteca') ? scrollMem.get(now) || 0 : 0;
+  if (target) fillTo(target);
+  view.scrollTop = target;
 }
 let refreshTimer = null;
 const refresh = () => { clearTimeout(refreshTimer); refreshTimer = setTimeout(route, 120); };
@@ -276,14 +303,19 @@ function albums(tracks = allTracks()) {
   }
   return [...m.values()];
 }
-const albumCard = a => `<a class="card" href="#/album/${enc(a.key)}">${cover({ album: a.title, coverId: a.coverId, coverUrl: a.coverUrl })}<span><b>${esc(a.title)}</b><small>${esc(a.artist)}</small></span></a>`;
+// Botón de reproducir que aparece sobre la portada de una tarjeta (con ratón o teclado).
+const cardPlay = (act, key, name) => `<span class="card-over"><button class="card-play" data-act="${act}" data-key="${esc(key)}" aria-label="Reproducir «${esc(name)}»" title="Reproducir">${icon('play')}</button></span>`;
+const albumCard = a => `<div class="card-wrap"><a class="card" href="#/album/${enc(a.key)}">${cover({ album: a.title, coverId: a.coverId, coverUrl: a.coverUrl })}<span><b>${esc(a.title)}</b><small>${esc(a.artist)}${a.year ? ` · ${esc(a.year)}` : ''}</small></span></a>${cardPlay('play-album', a.key, a.title)}</div>`;
+const artistCard = a => `<div class="card-wrap"><a class="card artist" href="#/artista/${enc(a.name)}">${cover({ album: a.name, coverId: a.coverId, coverUrl: a.coverUrl }, 'round')}<span><b>${esc(a.name)}</b><small>${[a.albums.size ? plural(a.albums.size, 'álbum', 'álbumes') : '', plural(a.tracks.length, 'canción', 'canciones')].filter(Boolean).join(' · ')}</small></span></a>${cardPlay('play-artist', a.name, a.name)}</div>`;
+const byTrackNo = (x, y) => collator.compare(x.album || '', y.album || '') || (x.trackNo || 999) - (y.trackNo || 999) || collator.compare(x.title, y.title);
 function artists() {
   const m = new Map();
   for (const t of allTracks()) {
     for (const name of artistsOf(t)) {
       let a = m.get(name);
-      if (!a) m.set(name, a = { name, tracks: [], coverId: '', coverUrl: '' });
+      if (!a) m.set(name, a = { name, tracks: [], albums: new Set(), coverId: '', coverUrl: '' });
       a.tracks.push(t);
+      if (t.album) a.albums.add(t.album);
       a.coverId ||= t.coverId || ''; a.coverUrl ||= t.coverUrl || '';
     }
   }
@@ -411,54 +443,221 @@ function paintLibrary() {
   watchSentinels(box);
 }
 
+// ------------------------------------------------------ vista de la biblioteca
+const LIB_TABS = [['canciones', 'Canciones'], ['albumes', 'Álbumes'], ['artistas', 'Artistas'], ['generos', 'Géneros']];
+const artistPlays = a => a.tracks.reduce((n, t) => n + stat(t, 'plays'), 0);
+const ALBUM_SORT = {
+  title: ['Título', (a, b) => collator.compare(a.title, b.title)],
+  artist: ['Artista', (a, b) => collator.compare(a.artist, b.artist) || (a.year || 0) - (b.year || 0) || collator.compare(a.title, b.title)],
+  year: ['Año (más nuevos)', (a, b) => (b.year || 0) - (a.year || 0) || collator.compare(a.title, b.title)],
+  added: ['Añadidos recientemente', (a, b) => b.addedAt - a.addedAt],
+};
+const ARTIST_SORT = {
+  name: ['Nombre', (a, b) => collator.compare(a.name, b.name)],
+  songs: ['Más canciones', (a, b) => b.tracks.length - a.tracks.length || collator.compare(a.name, b.name)],
+  plays: ['Más escuchados', (a, b) => artistPlays(b) - artistPlays(a) || collator.compare(a.name, b.name)],
+};
+// Pestaña → [ajuste donde se guarda, opciones, orden por defecto, qué se ordena]
+const SORTS = {
+  canciones: ['libSort', F_SORT, 'title', 'canciones'],
+  albumes: ['libAlbumSort', ALBUM_SORT, 'title', 'álbumes'],
+  artistas: ['libArtistSort', ARTIST_SORT, 'name', 'artistas'],
+};
+const sortOf = tab => { const [k, m, d] = SORTS[tab]; return m[S.settings[k]] ? S.settings[k] : d; };
+
+// Secciones de la lista de canciones según el orden elegido.
+const initial = s => { const c = fold(s).trim()[0] || ''; return /[a-z]/.test(c) ? c.toUpperCase() : '#'; };
+const SONG_GROUPS = {
+  title: t => initial(t.title),
+  artist: t => initial(t.artist),
+  album: t => (t.album ? initial(t.album) : 'Sin álbum'),
+  added: t => {
+    const d = (Date.now() - (t.addedAt || 0)) / DAY;
+    return !t.addedAt ? 'Sin fecha' : d < 1 ? 'Hoy' : d < 7 ? 'Esta semana' : d < 31 ? 'Este mes' : d < 365 ? 'Este año' : 'Hace más de un año';
+  },
+  year: t => (decadeOf(t) ? `Años ${decadeName(decadeOf(t))}` : 'Sin año'),
+};
+// Filtros a un toque: [clave, valor, etiqueta, ¿activo?]
+const QUICK = [
+  ['fav', '1', 'Me gusta', () => libF.fav],
+  ['plays', 'never', 'Sin escuchar', () => libF.plays === 'never'],
+  ['avail', 'offline', 'Sin conexión', () => libF.avail === 'offline'],
+];
+
+function libSummary() {
+  const t = allTracks();
+  return [plural(t.length, 'canción', 'canciones'), plural(albums(t).length, 'álbum', 'álbumes'), plural(artists().length, 'artista', 'artistas'), totalTime(t)].join(' · ');
+}
+const sortBtn = tab => `<button class="btn sm" data-act="lib-sort" data-tab="${tab}" aria-label="Ordenar ${SORTS[tab][3]}: ${esc(SORTS[tab][1][sortOf(tab)][0])}">${icon('sort')}<span>${esc(SORTS[tab][1][sortOf(tab)][0])}</span></button>`;
+const countLine = (what, extra = '') => `<span class="lib-count"><b>${what}</b>${extra ? `<small>${extra}</small>` : ''}</span>`;
+
+function songTools(list, active) {
+  const quick = QUICK.filter(([k]) => k !== 'avail' || libF.avail === 'offline' || allTracks().some(t => !t.hasBlob));
+  const isQuick = (k, v) => quick.some(([qk, qv]) => qk === k && (k === 'fav' || libF[k] === qv));
+  const rest = active.filter(([, k]) => !isQuick(k));
+  return `<div class="lib-tools">
+      <div class="lib-play">${list.length ? `<button class="play-fab" data-act="play-all" aria-label="Reproducir" title="Reproducir">${icon('play')}</button>
+        <button class="icon-btn shuf" data-act="shuffle-all" aria-label="Reproducir en aleatorio" title="Aleatorio">${icon('shuffle')}</button>` : ''}
+        ${countLine(plural(list.length, 'canción', 'canciones'), list.length ? totalTime(list) : '')}</div>
+      <div class="lib-sort">${sortBtn('canciones')}
+        <button class="btn sm ${active.length ? 'on' : ''}" data-act="lib-filter" aria-label="Filtrar${active.length ? ` (${active.length} activos)` : ''}">${icon('filter')}<span class="lbl">Filtrar</span>${active.length ? `<span class="count">${active.length}</span>` : ''}</button></div>
+    </div>
+    <div class="chips lib-chips">${quick.map(([k, v, l, on]) => `<button class="chip ${on() ? 'on' : ''}" data-act="lib-quick" data-k="${k}" data-v="${v}" aria-pressed="${on()}">${esc(l)}</button>`).join('')}
+      ${rest.map(([l, k, v]) => `<button class="chip on removable" data-act="lib-unfilter" data-k="${k}" data-v="${esc(v ?? '')}" aria-label="Quitar filtro ${esc(l)}">${esc(l)}${icon('x')}</button>`).join('')}</div>`;
+}
+
+// Al buscar en Canciones también aparecen los artistas y álbumes que coinciden.
+function searchExtras(q) {
+  const hit = x => fold(x).includes(q);
+  const ar = artists().filter(a => hit(a.name)).sort((a, b) => b.tracks.length - a.tracks.length).slice(0, 12);
+  const al = albums().filter(a => hit(a.title) || hit(a.artist)).sort(ALBUM_SORT.title[1]).slice(0, 12);
+  if (!ar.length && !al.length) return '';
+  return `${ar.length ? `<h3 class="lib-sub">Artistas</h3><div class="strip people">${ar.map(artistCard).join('')}</div>` : ''}
+    ${al.length ? `<h3 class="lib-sub">Álbumes</h3><div class="strip">${al.map(albumCard).join('')}</div>` : ''}<h3 class="lib-sub">Canciones</h3>`;
+}
+
+// Índice de letras a un lado para saltar por la lista.
+const azIndex = groups => `<nav class="az" aria-label="Ir a la letra">${groups.map(g => `<button type="button" data-az="${esc(g)}" tabindex="-1">${esc(g)}</button>`).join('')}</nav>`;
+
+function tagTiles(list, kind, cap = Infinity) {
+  // Hasta dos portadas distintas por etiqueta, en una sola pasada.
+  const art = new Map(list.slice(0, cap).map(([n]) => [kind === 'genero' ? n.toLowerCase() : n, []]));
+  for (const t of allTracks()) {
+    const key = t.coverId || t.coverUrl;
+    if (!key) continue;
+    for (const x of kind === 'genero' ? (t.genres || []).map(g => g.toLowerCase()) : t.moods || []) {
+      const a = art.get(x);
+      if (a && a.length < 2 && !a.some(o => (o.coverId || o.coverUrl) === key)) a.push(t);
+    }
+  }
+  const mood = kind === 'ambiente';
+  return `<div class="tiles">${list.slice(0, cap).map(([n, c]) => `<a class="tile" href="#/${kind}/${enc(n)}" style="--hue:${mood ? MOOD_HUE(n) : hue(n)}">
+      <span class="tile-text"><b class="${mood ? 'cap' : ''}">${esc(n)}</b><small>${plural(c, 'canción', 'canciones')}</small></span>
+      <span class="tile-art">${(art.get(mood ? n : n.toLowerCase()) || []).map(t => cover(t)).join('') || icon(mood ? 'spark' : 'disc')}</span></a>`).join('')}</div>`;
+}
+
 function libraryList(tab) {
   const q = fold(libQuery.trim());
   const hit = (...f) => !q || f.some(x => fold(x).includes(q));
+  const noHits = what => empty('search', 'Sin resultados', `No hay ${what} que coincidan con «${esc(libQuery.trim())}».`, '<button class="btn" data-act="lib-q-clear">Borrar búsqueda</button>');
   if (tab === 'albumes') {
-    const list = albums().filter(a => hit(a.title, a.artist)).sort((a, b) => collator.compare(a.title, b.title));
-    return list.length ? `<div class="grid">${list.map(albumCard).join('')}</div>` : empty('disc', 'Sin álbumes', 'No hay álbumes que coincidan.');
-  }
-  if (tab === 'generos') {
-    const { moods, genres } = recs.tagCounts();
-    const chips = (list, route) => `<div class="chips">${list.filter(([n]) => hit(n)).map(([n, c]) => `<a class="chip" href="#/${route}/${enc(n)}">${esc(n)} <small class="muted">${c}</small></a>`).join('')}</div>`;
-    if (!moods.length && !genres.length) return empty('disc', 'Aún no hay etiquetas', 'Los géneros salen de las etiquetas de tus archivos. Para añadir géneros y ambientes a mano o con IA, activa el modo desarrollador en Ajustes.');
-    return `${moods.length ? `<h2 style="margin-top:6px">Lo que transmite</h2>${chips(moods, 'ambiente')}` : ''}${genres.length ? `<h2>Géneros</h2>${chips(genres, 'genero')}` : ''}`;
+    const list = albums().filter(a => hit(a.title, a.artist)).sort(ALBUM_SORT[sortOf(tab)][1]);
+    if (!list.length) return q ? noHits('álbumes') : empty('disc', 'Sin álbumes', 'Las canciones con el nombre del álbum en sus etiquetas aparecen aquí agrupadas.');
+    return `<div class="lib-tools">${countLine(plural(list.length, 'álbum', 'álbumes'))}<div class="lib-sort">${sortBtn(tab)}</div></div>
+      <div class="grid lib-grid">${list.map(albumCard).join('')}</div>`;
   }
   if (tab === 'artistas') {
-    const list = artists().filter(a => hit(a.name)).sort((a, b) => collator.compare(a.name, b.name));
-    return list.length ? `<div class="grid">${list.map(a =>
-      `<a class="card" href="#/artista/${enc(a.name)}">${cover({ album: a.name, coverId: a.coverId, coverUrl: a.coverUrl }, 'round')}<span><b>${esc(a.name)}</b><small>${plural(a.tracks.length, 'canción', 'canciones')}</small></span></a>`).join('')}</div>`
-      : empty('user', 'Sin artistas', 'No hay artistas que coincidan.');
+    const list = artists().filter(a => hit(a.name)).sort(ARTIST_SORT[sortOf(tab)][1]);
+    if (!list.length) return q ? noHits('artistas') : empty('user', 'Sin artistas', 'Aún no hay artistas en tu biblioteca.');
+    return `<div class="lib-tools">${countLine(plural(list.length, 'artista', 'artistas'))}<div class="lib-sort">${sortBtn(tab)}</div></div>
+      <div class="grid lib-grid">${list.map(artistCard).join('')}</div>`;
   }
-  const list = applySearch(filteredTracks()).sort(F_SORT[sortKey()][1]);
+  if (tab === 'generos') {
+    const { moods: allMoods, genres: rawGenres } = recs.tagCounts();
+    // Géneros que solo cambian en mayúsculas cuentan como uno (se muestra la forma más usada).
+    const merged = new Map();
+    for (const [x, c] of rawGenres) { const k = x.toLowerCase(), m = merged.get(k); if (m) m[1] += c; else merged.set(k, [x, c]); }
+    const moods = allMoods.filter(([n]) => hit(n)), genres = [...merged.values()].sort((a, b) => b[1] - a[1]).filter(([n]) => hit(n));
+    if (!allMoods.length && !rawGenres.length) return empty('disc', 'Aún no hay etiquetas', 'Los géneros salen de las etiquetas de tus archivos. Para añadir géneros y ambientes a mano o con IA, activa el modo desarrollador en Ajustes.');
+    if (!moods.length && !genres.length) return noHits('géneros ni ambientes');
+    const TOP = q ? Infinity : 12;
+    return `${moods.length ? `<h2 class="lib-h">Lo que transmite</h2>${tagTiles(moods, 'ambiente')}` : ''}
+      ${genres.length ? `<h2 class="lib-h">Géneros</h2>${tagTiles(genres, 'genero', TOP)}` : ''}
+      ${genres.length > TOP ? `<h3 class="lib-sub">Más géneros</h3><div class="chips">${genres.slice(TOP).map(([n, c]) => `<a class="chip" href="#/genero/${enc(n)}">${esc(n)} <small class="muted">${c}</small></a>`).join('')}</div>` : ''}`;
+  }
+  const sort = sortKey();
+  const list = applySearch(filteredTracks()).sort(F_SORT[sort][1]);
   const active = activeFilters();
-  const tools = `<div class="lib-tools">
-      <button class="btn ${active.length ? 'on' : ''}" data-act="lib-filter">${icon('filter')}Filtrar${active.length ? ` <span class="count">${active.length}</span>` : ''}</button>
-      <button class="chip" data-act="lib-filter" aria-label="Ordenar">${esc(F_SORT[sortKey()][0])}</button>
-      ${active.map(([l, k, v]) => `<button class="chip on" data-act="lib-unfilter" data-k="${k}" data-v="${esc(v ?? '')}" aria-label="Quitar filtro ${esc(l)}">${esc(l)} ✕</button>`).join('')}
-    </div>`;
-  const narrowed = active.length || q;
-  return `${tools}${list.length
-    ? `${narrowed ? `<p class="muted lib-count">${plural(list.length, 'canción', 'canciones')} · ${totalTime(list)}</p>${playButtons(list)}` : ''}${rows(list)}`
-    : empty('search', 'Sin resultados', active.length ? 'Ninguna canción cumple los filtros.' : 'Ninguna canción coincide con la búsqueda.',
-      active.length ? '<button class="btn" data-act="lib-clear">Quitar filtros</button>' : '')}`;
+  const group = !q ? SONG_GROUPS[sort] : null;
+  const groups = group && LETTERS.has(sort) ? [...new Set(list.map(group))].filter(g => g.length === 1) : [];
+  const az = list.length >= 30 && groups.length >= 4;
+  return `${songTools(list, active)}${q ? searchExtras(q) : ''}${list.length
+    ? `<div class="${az ? 'has-az' : ''}">${rows(list, { group })}${az ? azIndex(groups) : ''}</div>`
+    : empty('search', 'Sin resultados', active.length ? 'Ninguna canción cumple los filtros.' : `Ninguna canción coincide con «${esc(libQuery.trim())}».`,
+      active.length ? '<button class="btn" data-act="lib-clear">Quitar filtros</button>' : '<button class="btn" data-act="lib-q-clear">Borrar búsqueda</button>')}`;
 }
-function viewLibrary(tab = 'canciones') {
+const LETTERS = new Set(['title', 'artist', 'album']);
+
+const LIB_ADD = `<button class="btn primary add" data-act="add-music" aria-label="Añadir música">${icon('plus')}<span>Añadir música</span></button>`;
+function viewLibrary(tab) {
   if (!S.tracks.size) {
     return show(`<div class="head"><h1>Biblioteca</h1></div>${empty('library', 'Aquí aparecerá tu música',
       'Elige archivos o una carpeta entera (MP3, FLAC, M4A, OGG…). Se guardan en este dispositivo para escucharlos sin conexión.',
       `${ADD_BTN}`)}`);
   }
-  const tabs = [['canciones', 'Canciones'], ['albumes', 'Álbumes'], ['artistas', 'Artistas'], ['generos', 'Géneros']];
-  show(`<div class="head"><h1>Biblioteca</h1>${ADD_BTN}</div>
-    <label class="field" style="margin-bottom:14px">${icon('search')}<input id="lib-q" type="search" placeholder="Buscar en tu biblioteca" value="${esc(libQuery)}" autocomplete="off"></label>
-    <div class="tabs">${tabs.map(([id, l]) => `<a href="#/biblioteca/${id}" class="${id === tab ? 'on' : ''}">${l}</a>`).join('')}</div>
+  // Sin pestaña en la dirección, vuelve a la última que usaste.
+  if (!LIB_TABS.some(([id]) => id === tab)) {
+    tab = LIB_TABS.some(([id]) => id === S.settings.libTab) ? S.settings.libTab : 'canciones';
+    history.replaceState(null, '', `#/biblioteca/${tab}`);
+  } else if (S.settings.libTab !== tab) { S.settings.libTab = tab; saveKV('settings', false); }
+  const n = { canciones: S.tracks.size, albumes: albums().length, artistas: artists().length };
+  show(`<div class="head lib-head"><div><h1>Biblioteca</h1><p class="muted lib-sum">${libSummary()}</p></div>${LIB_ADD}</div>
+    <div class="bar-mark"></div>
+    <div class="lib-bar">
+      <label class="field lib-search">${icon('search')}<input id="lib-q" type="search" placeholder="Buscar canciones, artistas, álbumes…" aria-label="Buscar en tu biblioteca" value="${esc(libQuery)}" autocomplete="off" enterkeyhint="search">
+        <button type="button" class="icon-btn clear" data-act="lib-q-clear" aria-label="Borrar búsqueda" ${libQuery ? '' : 'hidden'}>${icon('x')}</button><kbd title="Pulsa / para buscar">/</kbd></label>
+      <nav class="seg" aria-label="Secciones de la biblioteca">${LIB_TABS.map(([id, l]) => `<a href="#/biblioteca/${id}" class="${id === tab ? 'on' : ''}" ${id === tab ? 'aria-current="page"' : ''}>${l}${n[id] ? `<small>${num(n[id])}</small>` : ''}</a>`).join('')}</nav>
+    </div>
     <div id="lib-list" data-tab="${tab}">${libraryList(tab)}</div>`);
+  watchBar();
 }
+// La barra de búsqueda y pestañas se queda arriba al desplazarse; con sombra cuando está «pegada».
+// La barra se pega bajo el margen superior de la vista (no en el borde), así que se mide desde ahí.
+const viewPad = () => parseFloat(getComputedStyle(view).paddingTop) || 0;
+let barObs = null;
+function watchBar() {
+  barObs?.disconnect();
+  const m = $('.bar-mark');
+  if (!m) return;
+  barObs = new IntersectionObserver(([e]) => $('.lib-bar')?.classList.toggle('stuck', !e.isIntersecting && e.boundingClientRect.top < (e.rootBounds?.top ?? 0) + 1),
+    { root: view, rootMargin: `-${Math.ceil(viewPad())}px 0px 0px 0px` });
+  barObs.observe(m);
+}
+
 view.addEventListener('input', e => {
   if (e.target.id !== 'lib-q') return;
   libQuery = e.target.value;
+  $('.lib-search .clear')?.toggleAttribute('hidden', !libQuery);
   paintLibrary();
+  // Si estabas más abajo, los resultados empiezan justo debajo de la barra.
+  const m = $('.bar-mark');
+  const d = m ? m.getBoundingClientRect().top - view.getBoundingClientRect().top - viewPad() : 0;
+  if (d < 0) view.scrollTop += d;
+});
+view.addEventListener('keydown', e => {
+  if (e.target.id !== 'lib-q' || e.key !== 'Escape') return;
+  e.stopPropagation();
+  if (e.target.value) { e.target.value = ''; e.target.dispatchEvent(new Event('input', { bubbles: true })); } else e.target.blur();
+});
+
+// Índice de letras: tocar o arrastrar por él salta a esa letra.
+let azBubble = null, azTimer = null;
+function azJump(g) {
+  const ol = $('#lib-list ol.rows');
+  if (!ol) return;
+  let h;
+  while (!(h = $(`.group-head[data-g="${CSS.escape(g)}"]`, ol)) && renderNext(ol));
+  watchSentinels(ol);
+  if (!h) return;
+  // La barra acaba pegada arriba, así que la sección queda justo debajo de su altura.
+  view.scrollTop += h.getBoundingClientRect().top - view.getBoundingClientRect().top - viewPad() - ($('.lib-bar')?.offsetHeight || 0) - 4;
+  azBubble ||= document.body.appendChild(Object.assign(document.createElement('div'), { className: 'az-bubble' }));
+  azBubble.textContent = g; azBubble.hidden = false;
+  clearTimeout(azTimer); azTimer = setTimeout(() => { azBubble.hidden = true; }, 700);
+}
+view.addEventListener('pointerdown', e => {
+  const nav = e.target.closest('.az');
+  if (!nav) return;
+  e.preventDefault();
+  nav.setPointerCapture(e.pointerId);
+  let last = '';
+  const at = ev => {
+    const b = document.elementFromPoint(nav.getBoundingClientRect().left + nav.offsetWidth / 2, ev.clientY)?.closest('[data-az]');
+    if (b && b.dataset.az !== last) { last = b.dataset.az; azJump(last); }
+  };
+  at(e);
+  nav.onpointermove = at;
+  nav.onpointerup = nav.onpointercancel = () => { nav.onpointermove = nav.onpointerup = nav.onpointercancel = null; };
 });
 
 function viewAlbum(key) {
@@ -1206,6 +1405,12 @@ const rowInfo = el => {
   return l && { ...l, i: +li.dataset.i, track: l.tracks[+li.dataset.i], key: ol.dataset.list };
 };
 const firstList = () => lists[0]?.tracks || [];
+function playInOrder(tracks) {
+  const l = tracks.filter(playable);
+  if (!l.length) return toast('Estas canciones no están descargadas y no hay nube conectada');
+  if (P.shuffle) player.toggleShuffle();
+  player.playQueue(l);
+}
 
 const ACTIONS = {
   play(el) {
@@ -1289,6 +1494,21 @@ const ACTIONS = {
   'write-files'() { const l = allTracks().filter(t => fileOutdated(t) && cloud.canWriteFile(t)); if (l.length) offerWrite(l); },
   'lib-unfilter'(el) { clearFilter(el.dataset.k, el.dataset.v); paintLibrary(); },
   'lib-clear'() { resetFilters(); paintLibrary(); },
+  'lib-quick'(el) { toggleFilter(el.dataset.k, el.dataset.v); paintLibrary(); },
+  'lib-q-clear'() {
+    const q = $('#lib-q');
+    if (!q) return;
+    q.value = ''; q.dispatchEvent(new Event('input', { bubbles: true })); q.focus();
+  },
+  'lib-sort'(el) {
+    const tab = el.dataset.tab, [key, map, , what] = SORTS[tab], cur = sortOf(tab);
+    menu(`<div class="sheet-head"><div><b>Ordenar ${what}</b></div></div>`, Object.entries(map).map(([k, [l]]) => ({
+      icon: k === cur ? 'check' : 'blank', label: l,
+      fn: async () => { S.settings[key] = k; await saveKV('settings', false); paintLibrary(); },
+    })));
+  },
+  'play-album'(el) { const a = albums().find(x => x.key === el.dataset.key); if (a) playInOrder(a.tracks.sort(byTrackNo)); },
+  'play-artist'(el) { const a = artists().find(x => x.name === el.dataset.key); if (a) playInOrder(a.tracks.sort(byTrackNo)); },
   'dup-keep'(el) {
     const r = rowInfo(el);
     if (!r?.track || !r.opts.dup) return;
@@ -1657,6 +1877,7 @@ function syncState() {
   $$('.js-shuffle').forEach(b => b.classList.toggle('on', P.shuffle));
   $$('.js-repeat').forEach(b => { b.innerHTML = icon(P.repeat === 'one' ? 'repeat1' : 'repeat'); b.classList.toggle('on', P.repeat !== 'off'); b.setAttribute('aria-label', REPEAT_LABEL[P.repeat]); });
   $$('.js-fav').forEach(b => b.classList.toggle('on', !!t && isFav(t.id)));
+  document.body.classList.toggle('audio-on', !!P.playing);   // anima el indicador de la fila que suena
   document.title = t && P.playing ? `${t.title} · ${t.artist || 'Fiora'}` : 'Fiora';
 }
 function syncTime() {
@@ -1703,6 +1924,7 @@ document.addEventListener('change', async e => {
 });
 addEventListener('keydown', e => {
   if (e.target.closest('input, textarea, dialog') || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.key === '/' && $('#lib-q')) { e.preventDefault(); $('#lib-q').focus(); return; }
   if (e.code === 'Space' && !e.target.closest('button, a')) { e.preventDefault(); player.toggle(); }
   else if (e.key === 'Escape') closeNow();
 });
