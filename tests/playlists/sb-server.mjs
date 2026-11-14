@@ -83,12 +83,36 @@ http.createServer(async (req, res) => {
     }
     const rpc = u.pathname.match(/^\/rest\/v1\/rpc\/(\w+)$/);
     if (rpc) {
+      // Como PostgREST: los argumentos llegan por nombre en el cuerpo JSON; sus tipos salen del catálogo.
       const b = JSON.parse((await readBody(req)).toString() || '{}');
-      const [arg, cast] = { fiora_save_playlist: [b.p, 'jsonb'], fiora_load_playlists: [b.since ?? 0, 'double precision'], fiora_count_plays: [b.items, 'jsonb'] }[rpc[1]] || [null, 'jsonb'];
+      const sig = await pool().query(`select p.proargnames as names, array(select format_type(t, null) from unnest(p.proargtypes) t) as types
+        from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = $1`, [rpc[1]]);
+      if (!sig.rows.length) return send(res, 404, { code: 'PGRST202', message: `Could not find the function public.${rpc[1]}` });
+      const { names = [], types = [] } = sig.rows[0];
+      const args = [], vals = [];
+      (names || []).forEach((n, i) => {
+        if (!(n in b)) return;   // sin valor: se usa el predeterminado de la función
+        vals.push(types[i] === 'jsonb' ? JSON.stringify(b[n]) : b[n]);
+        args.push(`${n} => $${vals.length}::${types[i]}`);
+      });
       log.push(`rpc ${rpc[1]}`);
-      const r = await asUser(uid, c => c.query(`select public.${rpc[1]}($1::${cast}) as r`, [cast === 'jsonb' ? JSON.stringify(arg) : arg]));
+      const r = await asUser(uid, c => c.query(`select public.${rpc[1]}(${args.join(', ')}) as r`, vals));
       if (rpc[1] === 'fiora_save_playlist') log.push(`  ${b.p?.id} ${b.p?.updatedAt} → ${r.rows[0].r?.status}`);
       return send(res, 200, r.rows[0].r);
+    }
+    // DELETE sobre una tabla con filtros sencillos (col=eq.x / col=neq.x), como hace PostgREST; RLS decide qué filas.
+    const tbl = u.pathname.match(/^\/rest\/v1\/(fiora_[a-z_]+)$/);
+    if (tbl && req.method === 'DELETE') {
+      const where = [], vals = [];
+      for (const [k, v] of u.searchParams) {
+        const m = /^(eq|neq)\.(.*)$/.exec(v);
+        if (!/^[a-z_]+$/.test(k) || !m) return send(res, 400, { message: 'filtro no admitido en el emulador' });
+        vals.push(m[2]); where.push(`${k} ${m[1] === 'eq' ? '=' : '<>'} $${vals.length}`);
+      }
+      if (!where.length) return send(res, 400, { code: '21000', message: 'DELETE requires a WHERE clause' });
+      await asUser(uid, c => c.query(`delete from public.${tbl[1]} where ${where.join(' and ')}`, vals));
+      log.push(`delete ${tbl[1]}`);
+      return send(res, 204);
     }
     if (u.pathname === '/rest/v1/fiora_playlist_plays') {
       const pid = (u.searchParams.get('playlist_id') || '').replace(/^eq\./, '');
