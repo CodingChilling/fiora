@@ -202,12 +202,21 @@ class WorldMap {
       ctx.beginPath(); ctx.arc(g.x, g.y, r, 0, 2 * Math.PI); ctx.fillStyle = sel ? c.text : c.accent; ctx.fill();
       if (g.n > 1 && r >= 7) { ctx.fillStyle = sel ? c.bg : '#1d1108'; ctx.font = `700 ${r >= 11 ? 11 : 9}px system-ui, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(g.n > 99 ? '99+' : String(g.n), g.x, g.y + 0.5); }
     }
-    if (this.hint) this.hint.textContent = `${this.stations.length.toLocaleString('es')} emisoras con coordenadas · ${this.flat ? 'mapa plano' : 'globo'}`;
+    if (this.hint) this.hint.textContent = `${this.stations.length.toLocaleString('es')} emisoras con coordenadas · ${this.flat ? 'mapa plano' : 'globo'} · toca un punto para ver sus emisoras`;
   }
-  hit(x, y) {
-    let best = null, bd = 24 * 24;
-    for (const g of this.clusters) { const d = (g.x - x) ** 2 + (g.y - y) ** 2; if (d < bd) { bd = d; best = g; } }
+  /** Grupo en (x, y): el más cercano cuyo círculo, con un margen para el dedo o el ratón, contiene el punto. */
+  hit(x, y, slack = 12) {
+    let best = null, bd = Infinity;
+    for (const g of this.clusters) {
+      const d = Math.hypot(g.x - x, g.y - y), r = Math.min(16, 3.5 + Math.sqrt(g.n) * 1.6) + slack;
+      if (d <= r && d < bd) { bd = d; best = g; }
+    }
     return best;
+  }
+  /** Posición en pantalla (relativa al mapa) del grupo que contiene ese punto, o null si no se ve. */
+  pointFor(lat, lon) {
+    const g = this.clusters.find(c => c.stations.some(s => Math.abs(s.lat - lat) < 1e-6 && Math.abs(s.lon - lon) < 1e-6));
+    return g ? { x: g.x, y: g.y, n: g.n } : null;
   }
   select(g) { this.sel = g; this.render(); this.onSelect?.(g); }
   zoomBy(f) { this.zoom = Math.max(1, Math.min(this.flat ? 12 : 10, this.zoom * f)); this.clampFlat(); this.render(); }
@@ -221,26 +230,34 @@ class WorldMap {
       this.lat = from.lat + (to.lat - from.lat) * e; this.lon = from.lon + dl * e; this.zoom = from.zoom + (to.zoom - from.zoom) * e;
       this.clampFlat(); this.draw();
       if (k < 1) requestAnimationFrame(step);
-      else { const g = this.hit(...this.proj(lon, lat)); if (g) this.select(g); }
+      else { const [x, y] = this.proj(lon, lat); const g = this.hit(x, y, 30); if (g) this.select(g); }
     };
     requestAnimationFrame(step);
   }
   bind() {
+    // Un gesto es un toque mientras el dedo o el ratón no se alejen del punto inicial más que el umbral
+    // (y sea breve); hasta entonces el mapa no se mueve, para que el punto no huya del dedo.
     const cv = this.canvas, pts = new Map();
-    let moved = 0, last = null, pinch = null;
+    let start = null, dragging = false, last = null, pinch = null;
     cv.addEventListener('pointerdown', e => {
-      cv.setPointerCapture(e.pointerId); pts.set(e.pointerId, [e.offsetX, e.offsetY]);
-      this.vel = [0, 0]; cancelAnimationFrame(this.inertia); moved = 0; last = { x: e.offsetX, y: e.offsetY, t: performance.now() };
-      if (pts.size === 2) { const [a, b] = [...pts.values()]; pinch = { d: Math.hypot(a[0] - b[0], a[1] - b[1]), z: this.zoom }; }
+      cv.setPointerCapture?.(e.pointerId); pts.set(e.pointerId, [e.offsetX, e.offsetY]);
+      this.vel = [0, 0]; cancelAnimationFrame(this.inertia);
+      const touch = e.pointerType !== 'mouse';
+      start = { x: e.offsetX, y: e.offsetY, t: performance.now(), tol: touch ? 14 : 8, slack: touch ? 18 : 10 };
+      dragging = false; last = { x: e.offsetX, y: e.offsetY, t: start.t };
+      if (pts.size === 2) { const [a, b] = [...pts.values()]; pinch = { d: Math.hypot(a[0] - b[0], a[1] - b[1]), z: this.zoom }; dragging = true; }
     });
     cv.addEventListener('pointermove', e => {
       if (!pts.has(e.pointerId)) {
         const g = this.hit(e.offsetX, e.offsetY); cv.style.cursor = g ? 'pointer' : 'grab'; return;
       }
       pts.set(e.pointerId, [e.offsetX, e.offsetY]);
-      if (pts.size === 2 && pinch) { const [a, b] = [...pts.values()]; this.zoom = Math.max(1, Math.min(10, pinch.z * Math.hypot(a[0] - b[0], a[1] - b[1]) / pinch.d)); this.clampFlat(); this.render(); moved = 99; return; }
+      if (pts.size === 2 && pinch) { const [a, b] = [...pts.values()]; this.zoom = Math.max(1, Math.min(10, pinch.z * Math.hypot(a[0] - b[0], a[1] - b[1]) / pinch.d)); this.clampFlat(); this.render(); return; }
+      if (!dragging) {
+        if (Math.hypot(e.offsetX - start.x, e.offsetY - start.y) < start.tol) return;   // aún puede ser un toque
+        dragging = true; last = { x: start.x, y: start.y, t: performance.now() };
+      }
       const dx = e.offsetX - last.x, dy = e.offsetY - last.y, now = performance.now();
-      moved += Math.abs(dx) + Math.abs(dy);
       this.pan(dx, dy);
       const dt = Math.max(1, now - last.t);
       this.vel = [dx / dt * 16, dy / dt * 16];
@@ -249,8 +266,11 @@ class WorldMap {
     const up = e => {
       if (!pts.has(e.pointerId)) return;
       pts.delete(e.pointerId); if (pts.size < 2) pinch = null;
-      if (moved < 6 && e.type === 'pointerup') { const g = this.hit(e.offsetX, e.offsetY); if (g) this.select(g); return; }
-      if (!reduced() && !this.flat && Math.hypot(...this.vel) > 0.5) this.spin();
+      if (!dragging && e.type === 'pointerup' && performance.now() - start.t < 600) {
+        // toque: se mira dónde apuntó al empezar (el mapa no se ha movido)
+        const g = this.hit(start.x, start.y, start.slack); if (g) this.select(g); return;
+      }
+      if (dragging && !reduced() && !this.flat && Math.hypot(...this.vel) > 0.5) this.spin();
     };
     cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
     cv.addEventListener('wheel', e => { e.preventDefault(); this.zoomBy(e.deltaY < 0 ? 1.15 : 1 / 1.15); }, { passive: false });
@@ -295,6 +315,7 @@ export async function mount(box, opts) {
 export const unmount = () => { current?.destroy(); current = null; };
 export const setMode = m => current?.setMode(m);
 export const focus = (lat, lon) => current?.focus(lat, lon);
+export const pointFor = (lat, lon) => current?.pointFor(lat, lon) || null;
 /** Mapa del pasaporte: países descubiertos resaltados. */
 export async function mountPassport(box, { visited }) {
   unmount();

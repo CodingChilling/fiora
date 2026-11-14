@@ -1162,3 +1162,8 @@ body:not(.audio-on) .live-stage .aura span { animation-play-state: paused; }
 body.live #mini .seek { justify-content: center; }
 body.live #mini .seek .js-cur, body.live #mini .seek .js-seek { display: none; }
 .genre-hero, .amb-hero, .city-hero, .coll-hero { margin-bottom: 14px; }
+
+/* Atlas en móvil: emisoras del punto tocado en la hoja inferior */
+.atlas-sheet { max-height: 78vh; overflow-y: auto; }
+.atlas-sheet h2 { margin: 2px 0 4px; }
+.atlas-sheet p { margin: 4px 0; }
