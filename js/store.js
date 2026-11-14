@@ -165,8 +165,28 @@ export async function savePlaylist(p) {
   p.updatedAt = Date.now();
   if (!S.playlists.includes(p)) S.playlists.push(p);
   await db.put('playlists', p.id, p);
+  emit('playlist-saved', p);   // playlists-data.js lo sube a Supabase
   emit('dirty');
   emit('playlists');
+}
+
+/** Una canción cambia de id (archivo reescrito, copia repetida…): lo suyo en la playlist la sigue. */
+export function renameInPlaylist(p, old, nu) {
+  if (!p.trackIds.includes(old)) return false;
+  p.trackIds = p.trackIds.includes(nu) ? p.trackIds.filter(x => x !== old) : p.trackIds.map(x => (x === old ? nu : x));
+  for (const k of ['added', 'trackSection', 'notes']) {
+    if (p[k] && old in p[k]) { if (!(nu in p[k])) p[k][nu] = p[k][old]; delete p[k][old]; }
+  }
+  if (p.featured) p.featured = [...new Set(p.featured.map(x => (x === old ? nu : x)))];
+  return true;
+}
+/** Quita una canción de una playlist con todo lo que dependía de ella (capítulo, nota, destacada). */
+export function dropFromPlaylist(p, id) {
+  if (!p.trackIds.includes(id)) return false;
+  p.trackIds = p.trackIds.filter(x => x !== id);
+  for (const k of ['added', 'trackSection', 'notes']) if (p[k]) delete p[k][id];
+  if (p.featured) p.featured = p.featured.filter(x => x !== id);
+  return true;
 }
 
 /** Artistas de una pista, como lista. */

@@ -9,6 +9,8 @@ import { P } from './player.js';
 import * as cloud from './cloud.js';
 import * as oci from './oci.js';
 import * as vault from './vault.js';
+import * as pldata from './playlists-data.js';
+import { initPlaylists } from './playlist-ui.js';
 import * as account from './account.js';
 import * as src from './sources.js';
 import { getLyrics } from './lyrics.js';
@@ -131,8 +133,11 @@ function rowHTML(t, i, o) {
   const sub = t.radio ? esc(t.artist) : o.dup ? copyInfo(t)
     : [artistLinks(t), o.hideAlbum ? '' : albumLink(t), o.remote ? esc(t.license || '') : ''].filter(Boolean).join(' · ');
   return `<li class="row${cur}${playable(t) ? '' : ' unavailable'}" data-i="${i}" data-id="${esc(t.id)}">
+    ${o.reorder ? `<button class="icon-btn drag" data-drag aria-label="Mover «${esc(t.title)}» (arrastra o usa las flechas)">${icon('grip')}</button>` : ''}
     ${o.numbered ? `<span class="num">${t.trackNo || i + 1}</span>` : ''}
     <button class="row-main" data-act="play">${o.numbered ? '' : cover(t)}<span class="row-text"><b>${esc(t.title)}</b><small>${sub}</small></span></button>
+    ${o.featured?.includes(t.id) ? `<span class="where feat-mark" title="Destacada">${icon('star')}</span>` : ''}
+    ${o.notes?.[t.id]?.text ? `<button class="icon-btn note-mark" data-act="pl-note" data-pid="${esc(o.playlist)}" data-tid="${esc(t.id)}" title="${esc(o.notes[t.id].text.slice(0, 120))}" aria-label="Ver la nota">${icon('note')}</button>` : ''}
     ${where}
     ${o.dup ? (i === 0 ? '<span class="keep-tag">Se conserva</span>' : '<button class="chip" data-act="dup-keep">Conservar</button>') : ''}
     ${!o.dup && !t.radio && inLibrary(t) ? `<button class="icon-btn fav ${isFav(t.id) ? 'on' : ''}" data-act="fav" aria-label="Me gusta">${icon('heart')}</button>` : ''}
@@ -476,56 +481,14 @@ function viewArtist(name) {
 }
 
 // ----------------------------------------------------------------- playlists
-const playlistTracks = p => p.trackIds.map(id => S.tracks.get(id)).filter(Boolean);
-function viewPlaylists() {
-  const favs = allTracks().filter(t => isFav(t.id));
-  const pls = livePlaylists().sort((a, b) => collator.compare(a.name, b.name));
-  show(`<div class="head"><h1>Playlists</h1><button class="btn primary" data-act="new-playlist">${icon('plus')}Nueva playlist</button></div>
-    <div class="grid">
-      <a class="card" href="#/favoritos"><span class="cover" style="--hue:340"><i>${icon('heart')}</i></span><span><b>Canciones que te gustan</b><small>${plural(favs.length, 'canción', 'canciones')}</small></span></a>
-      ${pls.map(p => { const ts = playlistTracks(p); return `<a class="card" href="#/playlist/${enc(p.id)}">${cover({ album: p.name, coverId: ts.find(t => t.coverId)?.coverId, coverUrl: ts.find(t => t.coverUrl)?.coverUrl })}<span><b>${esc(p.name)}</b><small>${plural(ts.length, 'canción', 'canciones')}</small></span></a>`; }).join('')}
-    </div>
-    ${pls.length ? '' : '<p class="muted" style="margin-top:18px">Crea una playlist o usa el menú ⋯ de cualquier canción para añadirla a una.</p>'}`);
-}
-function viewPlaylist(id) {
-  const p = livePlaylists().find(x => x.id === id);
-  if (!p) return show(empty('list', 'Playlist no encontrada', 'Puede que se haya eliminado.'));
-  const tracks = playlistTracks(p);
-  show(`<div class="hero">${cover({ album: p.name, coverId: tracks.find(t => t.coverId)?.coverId, coverUrl: tracks.find(t => t.coverUrl)?.coverUrl })}
-      <div class="info"><div class="kind">Playlist</div><h1>${esc(p.name)}</h1><p>${plural(tracks.length, 'canción', 'canciones')} · ${totalTime(tracks)}</p>
-      <div class="actions">${tracks.length ? `<button class="btn primary" data-act="play-all">${icon('play')}Reproducir</button><button class="btn" data-act="shuffle-all">${icon('shuffle')}Aleatorio</button>${downloadAllBtn(tracks)}` : ''}
-        <button class="icon-btn" data-act="rename-playlist" data-pid="${esc(p.id)}" aria-label="Cambiar nombre">${icon('edit')}</button>
-        <button class="icon-btn" data-act="delete-playlist" data-pid="${esc(p.id)}" aria-label="Eliminar playlist">${icon('trash')}</button></div></div></div>
-    ${tracks.length ? rows(tracks, { playlist: p.id }) : empty('list', 'Playlist vacía', 'Añade canciones desde el menú ⋯ de cualquier canción.')}`);
-}
 function viewFavs() {
   const tracks = allTracks().filter(t => isFav(t.id)).sort((a, b) => S.favs[b.id].at - S.favs[a.id].at);
   show(`<div class="hero"><span class="cover" style="--hue:340"><i>${icon('heart')}</i></span>
       <div class="info"><div class="kind">Playlist</div><h1>Canciones que te gustan</h1><p>${plural(tracks.length, 'canción', 'canciones')}</p>${playButtons(tracks)}</div></div>
     ${tracks.length ? rows(tracks) : empty('heart', 'Todavía no hay favoritas', 'Pulsa el corazón en cualquier canción para guardarla aquí.')}`);
 }
-async function newPlaylist(firstTracks = []) {
-  const name = await ask({ title: 'Nueva playlist', placeholder: 'Nombre de la playlist', ok: 'Crear' });
-  if (!name) return null;
-  const p = { id: 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, trackIds: firstTracks.map(t => t.id), deleted: false };
-  await savePlaylist(p);
-  toast(`Playlist «${name}» creada`);
-  return p;
-}
-function addToPlaylist(tracks) {
-  const pls = livePlaylists().sort((a, b) => collator.compare(a.name, b.name));
-  menu(`<div class="sheet-head"><div><b>Añadir a playlist</b></div></div>`, [
-    { icon: 'plus', label: 'Nueva playlist…', fn: async () => { if (await newPlaylist(tracks)) refresh(); } },
-    ...pls.map(p => ({
-      icon: 'list', label: p.name, fn: async () => {
-        const fresh = tracks.filter(t => !p.trackIds.includes(t.id));
-        p.trackIds.push(...fresh.map(t => t.id));
-        await savePlaylist(p);
-        toast(fresh.length ? `Añadida a «${p.name}»` : `Ya estaba en «${p.name}»`);
-      },
-    })),
-  ]);
-}
+const newPlaylist = t => PL.newPlaylist(t);
+const addToPlaylist = t => PL.addToPlaylist(t);
 
 // ------------------------------------------------------------------ explorar
 const explore = { src: 'archive', q: '', results: {}, more: {}, page: {}, loading: false, error: '', radioQ: '', stations: null };
@@ -678,6 +641,10 @@ async function viewSettings() {
   const u = account.user();
   const accountPanel = u
     ? `<p>Has iniciado sesión como <b>${esc(u.email)}</b>. Tus playlists, favoritos, estadísticas, emisoras, ajustes y la conexión a la nube se guardan en tu cuenta${S.settings.accountSync ? ` · último guardado: ${new Date(S.settings.accountSync).toLocaleString('es')}` : ''}.</p>
+       <p class="pl-account">Playlists: ${PL.syncChip()}</p>
+       ${pldata.status().mode === 'missing' ? `<div class="sub-panel"><b>Falta preparar Supabase para las playlists</b>
+         <small>Las playlists se siguen guardando como hasta ahora. Para guardarlas en tablas propias (con portadas, fotos, capítulos, notas y estadísticas en tu cuenta), ejecuta una vez el archivo <code>supabase/migrations/20261114120000_playlists.sql</code> del repositorio en Supabase → SQL Editor. No borra nada.</small>
+         <div class="actions"><button class="btn" data-act="pl-retry">${icon('sync')}Volver a comprobar</button></div></div>` : ''}
        <div class="actions"><button class="btn primary" data-act="account-sync">${icon('sync')}Guardar y sincronizar</button><button class="btn ghost" data-act="sign-out">Cerrar sesión</button></div>`
     : account.available()
       ? `<p>Inicia sesión para guardar tus playlists, favoritos, estadísticas, emisoras, ajustes y la conexión a tu nube, y recuperarlos en cualquier dispositivo.</p>
@@ -1186,7 +1153,7 @@ function confirmDelete(t) {
   return confirmDlg('¿Borrar la canción para siempre?', `«${t.title}» se borrará de tu biblioteca, de este dispositivo${b ? ` y del bucket «${b.name}» (en todos tus dispositivos)${oci.configured() ? '' : '. Sin clave de API de Oracle, el archivo queda vacío en el bucket, sin ocupar espacio'}` : ''}. No se puede deshacer.`, 'Borrar');
 }
 
-const ROUTES = { inicio: viewHome, biblioteca: viewLibrary, album: viewAlbum, artista: viewArtist, playlists: viewPlaylists, playlist: viewPlaylist, favoritos: viewFavs, mix: viewMix, estadisticas: viewStats, genero: n => viewTag('genero', n), ambiente: n => viewTag('ambiente', n), explorar: viewExplore, archivo: viewArchive, ajustes: viewSettings, repetidas: viewDuplicates };
+const ROUTES = { inicio: viewHome, biblioteca: viewLibrary, album: viewAlbum, artista: viewArtist, playlists: () => PL.viewList(), playlist: id => PL.viewPlaylist(id), favoritos: viewFavs, mix: viewMix, estadisticas: viewStats, genero: n => viewTag('genero', n), ambiente: n => viewTag('ambiente', n), explorar: viewExplore, archivo: viewArchive, ajustes: viewSettings, repetidas: viewDuplicates };
 
 // ------------------------------------------------------- menú de una canción
 function trackMenu(t, o = {}, i = -1) {
@@ -1224,7 +1191,7 @@ function trackMenu(t, o = {}, i = -1) {
     lib_ && remote && t.hasBlob && { icon: 'x', label: 'Quitar la descarga de este dispositivo', fn: async () => { await lib.dropBlob(t.id); toast('Descarga eliminada'); } },
     lib_ && t.hasBlob && !t.cloudName && cloud.configured() && { icon: 'cloudUp', label: 'Subir a la nube', fn: () => uploadTo([t]) },
     t.link && /^https:\/\//.test(t.link) && { icon: 'compass', label: `Ver origen y licencia${t.license ? ` (${t.license})` : ''}`, fn: () => window.open(t.link, '_blank', 'noopener') },
-    o.playlist && { icon: 'x', label: 'Quitar de esta playlist', fn: async () => { const p = S.playlists.find(x => x.id === o.playlist); p.trackIds = p.trackIds.filter(x => x !== t.id); await savePlaylist(p); refresh(); } },
+    ...(o.playlist && lib_ ? PL.menuItems(t, o.playlist) : []),
     lib_ && S.settings.dev && t.cloudName && cloud.configured() && {
       icon: 'trash', label: 'Borrar también de la nube', danger: true, fn: async () => { if (await confirmDelete(t)) deleteForever([t]); },
     },
@@ -1254,7 +1221,10 @@ const ACTIONS = {
     if (r.key === 'q') player.jump(r.i);
     else if (r.key === 'u') player.jumpUser(r.i);
     else if (r.track.radio) player.playQueue([r.track]);
-    else player.playQueue(r.tracks.filter(playable), r.tracks.filter(playable).indexOf(r.track));
+    else {
+      const list = (r.opts.playAll || r.tracks).filter(playable);
+      player.playQueue(list, Math.max(0, list.indexOf(r.track)), r.opts.playlist ? { playlist: r.opts.playlist } : null);
+    }
   },
   fav(el) { const r = rowInfo(el); if (r?.track) toggleFav(r.track.id); },
   more(el) { const r = rowInfo(el); if (r?.track) trackMenu(r.track, r.opts, r.i); },
@@ -1269,18 +1239,6 @@ const ACTIONS = {
     ]);
   },
   async 'new-playlist'() { const p = await newPlaylist(); if (p) location.hash = `#/playlist/${enc(p.id)}`; },
-  async 'rename-playlist'(el) {
-    const p = S.playlists.find(x => x.id === el.dataset.pid);
-    const name = await ask({ title: 'Cambiar nombre', value: p.name });
-    if (name) { p.name = name; await savePlaylist(p); refresh(); }
-  },
-  async 'delete-playlist'(el) {
-    const p = S.playlists.find(x => x.id === el.dataset.pid);
-    if (!(await confirmDlg('¿Eliminar playlist?', `«${p.name}» se eliminará. Las canciones seguirán en tu biblioteca.`))) return;
-    p.deleted = true; p.trackIds = [];
-    await savePlaylist(p);
-    location.hash = '#/playlists';
-  },
   suggest(el) { searchMusic(el.dataset.q); },
   source(el) {
     explore.src = el.dataset.src; explore.error = ''; explore.loading = false;
@@ -1416,6 +1374,12 @@ const ACTIONS = {
   'now-more'() { if (P.current) trackMenu(P.current, {}, -1); },
   'now-mode'(el) { nowMode = el.dataset.mode; renderNowPane(); },
 };
+// Playlists (vista, editor, fotos, capítulos…): playlist-ui.js, con los datos de playlists-data.js
+const PL = initPlaylists({
+  esc, enc, plural, totalTime, toast, openSheet, sheet, confirmDlg, menu, ask, show, rows, cover, empty, refresh, playable, num,
+  columns, bars, allTracks, needsDownload, downloadMany, setHTML, watch: watchSentinels, saveKV, ACTIONS,
+});
+
 document.addEventListener('click', e => {
   const el = e.target.closest('[data-act]');
   if (el && ACTIONS[el.dataset.act]) ACTIONS[el.dataset.act](el, e);
@@ -1506,7 +1470,7 @@ const endSwipe = add => {
   if (add) { player.enqueue([track]); toast(`«${track.title}» añadida a tu cola`); }
 };
 view.addEventListener('pointerdown', e => {
-  if (e.pointerType !== 'touch') return;
+  if (e.pointerType !== 'touch' || e.target.closest('[data-drag]')) return;
   const row = e.target.closest('.row');
   const info = row && rowInfo(row);
   if (!info?.track || info.track.radio || !playable(info.track)) return;
@@ -1795,6 +1759,7 @@ async function start() {
     if (pending) setTimeout(() => toast(`${plural(pending, 'canción tiene', 'canciones tienen')} géneros u otros cambios que aún no están en su archivo. Guárdalos en Ajustes → Modo desarrollador.`, 9000), 1500);
   }
   const linked = await account.init();   // puede venir de un enlace de correo de Supabase
+  await pldata.init();                   // playlists: datos nuevos, cola pendiente y sincronización con Supabase
   addEventListener('hashchange', route);
   await route();
   if (linked === 'confirmed') toast('Correo confirmado. Sesión iniciada');

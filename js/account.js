@@ -76,6 +76,23 @@ async function token() {
   return session.access_token;
 }
 
+/**
+ * Petición autenticada a Supabase (playlists y Storage). Devuelve la Response tal cual; si no hay
+ * red lanza un error con `network: true` para que quien llama lo deje pendiente.
+ */
+export async function authFetch(path, { method = 'GET', body, json, headers = {}, signal } = {}) {
+  const t = await token();
+  const { url, key } = cfg();
+  const h = { apikey: key, Authorization: `Bearer ${t}`, ...headers };
+  if (json !== undefined) { h['Content-Type'] = 'application/json'; body = JSON.stringify(json); }
+  try { return await fetch(url + path, { method, headers: h, body, signal, cache: 'no-store' }); }
+  catch (err) {
+    const e = new Error(err?.name === 'AbortError' ? 'Se canceló' : navigator.onLine ? 'No se pudo contactar con Supabase' : 'No hay conexión a internet');
+    e.network = err?.name !== 'AbortError'; e.aborted = err?.name === 'AbortError';
+    throw e;
+  }
+}
+
 /** Tras entrar: si es otra persona distinta de la última, sus datos no se mezclan con los anteriores. */
 async function afterLogin() {
   const id = session.user.id;
