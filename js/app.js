@@ -39,6 +39,10 @@ const totalTime = tracks => {
 };
 const inLibrary = t => S.tracks.has(t.id);
 const playable = t => !!(t.radio || t.hasBlob || t.url || (t.cloudName && cloud.configured()));
+// El modo desarrollador cambia la música del bucket: solo funciona con la clave de API de Oracle
+// guardada en este dispositivo y con permiso sobre algún bucket conectado.
+const devReady = () => cloud.ownedBuckets().length > 0;
+const devOn = () => !!S.settings.dev && devReady();
 
 // Carátulas: se pinta un marcador y se rellena la imagen después de insertar el HTML.
 let pending = [];
@@ -718,7 +722,7 @@ async function viewSettings() {
   const onlyLocal = tracks.filter(t => t.hasBlob && !t.cloudName && !t.url).length;
   const inCloud = tracks.filter(t => t.cloudName).length;
   const sum = recs.summary();
-  const dev = !!S.settings.dev;
+  const dev = devOn();
   const A = aiConf(), prov = ai.PROVIDERS[A.provider], savedKey = A.keys[A.provider], aiKey = savedKey ? (savedKey.hint || String(savedKey).slice(-4) || '····') : '', aiModel = A.models[A.provider] || '';
   const aiReady = aiIsReady();
   const presets = S.settings.genrePresets || [];
@@ -728,45 +732,56 @@ async function viewSettings() {
   const dups = dev ? lib.findDuplicates(dupKeep) : [], extra = dups.reduce((n, g) => n + g.tracks.length - 1, 0);
   const gb = n => (n / 1073741824).toFixed(n > 1073741824 * 10 ? 0 : 2);
   const bks = cloud.buckets(), target = cloud.uploadTarget();
-  const O = S.settings.oci;
-  const ociPanel = !bks.length ? '' : `<h2 style="margin-top:22px">Borrar de verdad en Oracle</h2>
-    ${O ? `<p>Clave de API de Oracle conectada (huella …${esc(O.fingerprint.slice(-5))}). Las canciones que borres de la nube se eliminan de Oracle.</p>
-      <div class="actions"><button class="btn" data-act="oci-purge">${icon('trash')}Borrar los archivos que quedaron vacíos</button><button class="btn ghost danger" data-act="oci-forget">Quitar clave</button></div>`
-    : `<p>Oracle no permite borrar archivos con la URL del bucket (PAR). Sin más, Fiora deja el archivo vacío: no ocupa espacio y desaparece de la app, pero su nombre sigue en el bucket. Para borrarlo del todo, añade una clave de API de tu usuario de Oracle. Se guarda solo en este dispositivo y tiene los mismos permisos que tu usuario: añádela solo en dispositivos tuyos.</p>
-      <ol class="steps"><li>En la consola de Oracle Cloud: icono de tu perfil (arriba a la derecha) → <b>Mi perfil</b> → <b>Claves API</b> (<i>API keys</i>) → <b>Agregar clave API</b>.</li>
+  const O = S.settings.oci, own = cloud.ownedBuckets();
+  const keySteps = `<ol class="steps"><li>En la consola de Oracle Cloud: icono de tu perfil (arriba a la derecha) → <b>Mi perfil</b> → <b>Claves API</b> (<i>API keys</i>) → <b>Agregar clave API</b>.</li>
         <li>Elige <b>Generar par de claves API</b>, pulsa <b>Descargar clave privada</b> y después <b>Agregar</b>.</li>
         <li>Copia el texto de la <b>vista previa del archivo de configuración</b> y pégalo aquí. Luego elige el archivo .pem que has descargado.</li></ol>
       <form class="stack" data-form="oci">
         <label class="field area">${icon('lock')}<textarea name="config" rows="5" spellcheck="false" autocomplete="off" placeholder="[DEFAULT]&#10;user=ocid1.user.oc1..…&#10;fingerprint=…&#10;tenancy=ocid1.tenancy.oc1..…&#10;region=…" required></textarea></label>
         <label class="field">${icon('folder')}<input name="pem" type="file" accept=".pem,.key,text/plain" aria-label="Archivo de la clave privada (.pem)" required></label>
-        <div class="actions"><button class="btn primary">Guardar y comprobar</button></div></form>`}`;
+        <div class="actions"><button class="btn primary">Guardar y comprobar</button></div></form>`;
+  const keyPanel = O
+    ? `<p>Clave de API de Oracle guardada en este dispositivo (huella …${esc(O.fingerprint.slice(-5))}). ${own.length ? `Tiene permiso sobre ${own.map(b => `«${esc(b.name)}»`).join(', ')}: aquí puedes cambiar su música y compartirla.` : 'No tiene permiso sobre ninguno de los buckets conectados, así que el modo desarrollador sigue desactivado.'}</p>
+      <div class="actions">${own.length ? `<button class="btn" data-act="oci-purge">${icon('trash')}Borrar los archivos que quedaron vacíos</button>` : `<button class="btn" data-act="oci-recheck">${icon('sync')}Volver a comprobar</button>`}<button class="btn ghost danger" data-act="oci-forget">Quitar clave</button></div>`
+    : `<p>El modo desarrollador cambia la música del bucket (metadatos dentro de los archivos, borrar canciones, etiquetar con IA…), así que solo se activa con la <b>clave de API de Oracle de quien creó el bucket</b>. ${bks.length ? 'Se guarda solo en este dispositivo, nunca en tu cuenta ni en el bucket, y tiene los mismos permisos que tu usuario de Oracle: añádela solo en dispositivos tuyos.' : 'Primero conecta tu bucket en <b>Nube</b>.'}</p>
+      ${bks.length ? `<details class="more key-steps"><summary>Añadir la clave de API de Oracle (si el bucket es tuyo)</summary>${keySteps}</details>` : ''}`;
   const steps = `<ol class="steps"><li>En la consola de Oracle Cloud: <b>Storage → Buckets → Create Bucket</b> (privado).</li>
        <li>Dentro del bucket: <b>Pre-Authenticated Requests → Create</b>. Destino: <b>Bucket</b>; acceso: <b>Permit object reads and writes</b>; marca <b>Enable Object Listing</b>; pon una caducidad lejana.</li>
-       <li>Copia la URL que aparece (solo se muestra una vez) y pégala aquí.</li></ol>`;
+       <li>Copia la URL que aparece (solo se muestra una vez) y pégala aquí. Es solo para tus dispositivos: <b>no la compartas</b>.</li></ol>`;
+  const guestNote = `<p><b>¿Alguien ha compartido su música contigo?</b> Pega aquí el enlace que te haya dado. Podrás escuchar y descargar sus canciones, pero no cambiarlas. Tus playlists, favoritos y escuchas se guardan en tu cuenta, nunca en su bucket, y nadie más los ve.</p>`;
   const bucketForm = `<form class="stack" data-form="par">
-       <label class="field">${icon('edit')}<input name="name" placeholder="Nombre (p. ej. Rock, Clásica, Bucket 2)" autocomplete="off" maxlength="40"></label>
+       <label class="field">${icon('edit')}<input name="name" placeholder="Nombre (p. ej. Rock, Clásica, Música de Ana)" autocomplete="off" maxlength="40"></label>
        <label class="field">${icon('cloud')}<input name="url" type="url" placeholder="https://objectstorage.….oraclecloud.com/p/…/n/…/b/…/o/" autocomplete="off" required></label>
        <div class="actions"><button class="btn ${bks.length ? '' : 'primary'}">${icon('plus')}Conectar bucket</button></div></form>`;
+  const shareBox = b => `<div class="sub-panel share-box"><b>Compartir «${esc(b.name)}»</b>
+       <small>Crea un enlace de <b>solo lectura</b> para cada persona (como mucho ${oci.MAX_SHARES} a la vez). Con él puede escuchar y descargar las canciones de este bucket, pero Oracle le impide subir, cambiar o borrar nada. Sus playlists, favoritos y escuchas van a su propia cuenta, nunca al bucket, y no ve los tuyos. Puedes revocar un enlace cuando quieras.</small>
+       <ul class="buckets shares" data-shares="${esc(b.id)}"><li class="muted">Cargando enlaces…</li></ul>
+       <form class="stack" data-form="share" data-bid="${esc(b.id)}">
+         <label class="field">${icon('user')}<input name="who" placeholder="Para quién (p. ej. Ana)" autocomplete="off" maxlength="40" required></label>
+         <label class="field">${icon('lock')}<select name="days" aria-label="Caducidad del enlace"><option value="30">Caduca en 1 mes</option><option value="90">Caduca en 3 meses</option><option value="180" selected>Caduca en 6 meses</option><option value="365">Caduca en 1 año</option></select></label>
+         <div class="actions"><button class="btn">${icon('plus')}Crear enlace de solo lectura</button></div></form></div>`;
   const cloudPanel = bks.length
     ? `<p>${plural(inCloud, 'canción', 'canciones')} en la nube${S.settings.lastSync ? ` · última sincronización: ${new Date(S.settings.lastSync).toLocaleString('es')}` : ''}.</p>
        <ul class="buckets">${bks.map(b => {
          const n = tracks.filter(t => t.cloudName && (t.bucketId || bks[0].id) === b.id).length;
-         const isTarget = b.id === target.id;
-         return `<li><span class="badge-ic">${icon('cloud')}</span><span class="row-text"><b>${esc(b.name)}</b><small>${plural(n, 'canción', 'canciones')}${isTarget && bks.length > 1 ? ' · las subidas van aquí' : ''}</small></span>
-           ${!isTarget ? `<button class="chip" data-act="bucket-default" data-bid="${esc(b.id)}">Subir aquí</button>` : ''}
+         const mine = cloud.owns(b), isTarget = !!target && b.id === target.id;
+         return `<li><span class="badge-ic">${icon(mine ? 'cloud' : 'lock')}</span><span class="row-text"><b>${esc(b.name)}</b><small>${plural(n, 'canción', 'canciones')} · ${mine ? 'tuyo' : 'solo lectura'}${isTarget && own.length > 1 ? ' · las subidas van aquí' : ''}</small></span>
+           ${mine && !isTarget ? `<button class="chip" data-act="bucket-default" data-bid="${esc(b.id)}">Subir aquí</button>` : ''}
            <button class="icon-btn" data-act="bucket-remove" data-bid="${esc(b.id)}" aria-label="Desconectar ${esc(b.name)}">${icon('x')}</button></li>`;
        }).join('')}</ul>
+       ${own.length < bks.length ? `<p class="muted">${own.length ? 'En los buckets de solo lectura (de otra persona, o sobre los que tu clave no tiene permiso) no se sube, cambia ni borra nada.' : 'En este dispositivo la nube es de solo lectura: escuchas y descargas, pero no se sube, cambia ni borra nada. Si el bucket es tuyo, añade su clave de API de Oracle en Modo desarrollador.'}</p>` : ''}
        <div class="actions"><button class="btn primary" data-act="cloud-sync">${icon('sync')}Sincronizar ahora</button>
-       ${onlyLocal ? `<button class="btn" data-act="cloud-upload-all">${icon('cloudUp')}Subir ${plural(onlyLocal, 'canción', 'canciones')}${bks.length > 1 ? ` a «${esc(target.name)}»` : ' a la nube'}</button>` : ''}</div>
-       <div class="sub-panel"><b>Metadatos de los archivos</b>
-         <small>Escribe dentro de cada archivo de la nube los géneros, lo que transmite y los cambios hechos en la app (también los de antes), para que estén en tus buckets. Primero revisa qué archivos lo necesitan; el sonido no cambia.</small>
-         <div class="actions">${bulk ? `<button class="btn danger" data-act="cloud-tags-stop">${icon('x')}Detener</button>` : `<button class="btn" data-act="cloud-tags">${icon('sync')}Actualizar archivos de la nube</button>`}${lastReport && !bulk ? '<button class="btn ghost" data-act="cloud-report">Ver el último informe</button>' : ''}</div></div>
-       <label class="switch"><input type="checkbox" data-toggle="shrink" ${S.settings.shrink ? 'checked' : ''}><span><b>Reducir el tamaño al subir, sin perder calidad</b>
-         <small>Los archivos WAV se convierten a FLAC: suenan exactamente igual y ocupan en torno a la mitad. MP3, M4A, OGG y FLAC ya están comprimidos y se suben tal cual.</small></span></label>
-       <details class="more"><summary>Conectar otro bucket</summary><p>Puedes tener varios buckets conectados a la vez; su música aparece junta en tu biblioteca.</p>${steps}${bucketForm}</details>`
+       ${onlyLocal && target ? `<button class="btn" data-act="cloud-upload-all">${icon('cloudUp')}Subir ${plural(onlyLocal, 'canción', 'canciones')}${own.length > 1 ? ` a «${esc(target.name)}»` : ' a la nube'}</button>` : ''}</div>
+       ${dev ? `<div class="sub-panel"><b>Metadatos de los archivos</b>
+         <small>Escribe dentro de cada archivo de tus buckets los géneros, lo que transmite y los cambios hechos en la app (también los de antes). Primero revisa qué archivos lo necesitan; el sonido no cambia.</small>
+         <div class="actions">${bulk ? `<button class="btn danger" data-act="cloud-tags-stop">${icon('x')}Detener</button>` : `<button class="btn" data-act="cloud-tags">${icon('sync')}Actualizar archivos de la nube</button>`}${lastReport && !bulk ? '<button class="btn ghost" data-act="cloud-report">Ver el último informe</button>' : ''}</div></div>` : ''}
+       ${own.map(shareBox).join('')}
+       ${own.length ? `<label class="switch"><input type="checkbox" data-toggle="shrink" ${S.settings.shrink ? 'checked' : ''}><span><b>Reducir el tamaño al subir, sin perder calidad</b>
+         <small>Los archivos WAV se convierten a FLAC: suenan exactamente igual y ocupan en torno a la mitad. MP3, M4A, OGG y FLAC ya están comprimidos y se suben tal cual.</small></span></label>` : ''}
+       <details class="more"><summary>Conectar otro bucket</summary><p>Puedes tener varios buckets conectados a la vez; su música aparece junta en tu biblioteca.</p>${steps}${guestNote}${bucketForm}</details>`
     : `<p>Guarda tu música en Oracle Cloud Object Storage y escúchala desde cualquier dispositivo. Puedes conectar uno o varios buckets.</p>
-       ${steps}${bucketForm}
-       <p style="margin:12px 0 0">Esa URL funciona como una contraseña: quien la tenga puede leer y escribir en el bucket. ${account.user() ? 'Se guarda en este dispositivo y en tu cuenta.' : 'Fiora la guarda solo en este dispositivo.'}</p>`;
+       ${steps}${guestNote}${bucketForm}
+       <p style="margin:12px 0 0">La URL de tu bucket funciona como una contraseña: quien la tenga puede leer y escribir en él. ${account.user() ? 'Se guarda en este dispositivo y en tu cuenta.' : 'Fiora la guarda solo en este dispositivo.'} Para compartir tu música no la des: crea un enlace de solo lectura para cada persona en <b>Compartir</b>, que aparece aquí al añadir tu clave de API de Oracle.</p>`;
   const u = account.user();
   const accountPanel = u
     ? `<p>Has iniciado sesión como <b>${esc(u.email)}</b>. Tus playlists, favoritos, estadísticas, emisoras, ajustes y la conexión a la nube se guardan en tu cuenta${S.settings.accountSync ? ` · último guardado: ${new Date(S.settings.accountSync).toLocaleString('es')}` : ''}.</p>
@@ -802,13 +817,13 @@ async function viewSettings() {
         <small>Cuando se acaba lo que estás escuchando, sigue con canciones parecidas de tu biblioteca.</small></span></label>
       <div class="actions" style="margin-top:14px">${ADD_BTN}${installEvent ? `<button class="btn" data-act="install">${icon('download')}Instalar como app</button>` : ''}</div></div>
     <div class="panel"><h2>Modo desarrollador</h2>
-      <label class="switch" style="margin-top:4px"><input type="checkbox" data-toggle="dev" ${dev ? 'checked' : ''}><span><b>Editar metadatos de las canciones</b>
-        <small>Añade «Editar metadatos» al menú ⋯ de cada canción: portada, título, artistas, álbum, géneros y lo que transmite. Los cambios se guardan en tu cuenta y tu nube, y se ven en todos tus dispositivos.</small></span></label>
+      ${keyPanel}
+      <label class="switch${devReady() ? '' : ' disabled'}" style="margin-top:12px"><input type="checkbox" data-toggle="dev" ${dev ? 'checked' : ''} ${devReady() ? '' : 'disabled'}><span><b>Editar metadatos de las canciones</b>
+        <small>${devReady() ? 'Añade «Editar metadatos» al menú ⋯ de cada canción: portada, título, artistas, álbum, géneros y lo que transmite. Los cambios se guardan en tu cuenta y en los archivos de tus buckets.' : 'Necesita la clave de API de Oracle con permiso sobre un bucket conectado.'}</small></span></label>
       ${dev ? `<h2 style="margin-top:22px">Canciones repetidas</h2>
         <p>${dups.length ? `${plural(dups.length, 'canción tiene', 'canciones tienen')} más de una copia (mismo título y mismos artistas): ${plural(extra, 'copia sobra', 'copias sobran')}.` : 'No hay canciones repetidas en tu biblioteca.'}
           En modo desarrollador, borrar una canción la elimina también de su bucket.</p>
         ${dups.length ? `<div class="actions"><a class="btn" href="#/repetidas">${icon('list')}Ver canciones repetidas</a></div>` : ''}
-        ${ociPanel}
         <h2 style="margin-top:22px">Metadatos en los archivos</h2>
         <p>Al guardar en el editor, los cambios se escriben dentro del archivo (MP3, FLAC y M4A) y, si la canción está en la nube, se sube el archivo actualizado. El sonido no cambia.
           ${writable.length ? `Hay ${plural(writable.length, 'canción', 'canciones')} con cambios que aún no están en su archivo.` : 'Todos los cambios están ya en los archivos.'}
@@ -838,6 +853,46 @@ async function viewSettings() {
       <div class="actions" style="margin-top:14px"><a class="btn primary" href="#/estadisticas">${icon('chart')}Ver todas tus estadísticas</a></div>
       <p style="margin:14px 0 0">Las recomendaciones aprenden de lo que terminas, a qué hora escuchas cada cosa y qué canciones pones seguidas.</p></div>
     <p class="muted" style="text-align:center">Fiora · Letras de LRCLIB · Música libre de Internet Archive, Openverse, Wikimedia Commons y Jamendo · Radios de Radio Browser</p>`);
+  loadShares();
+}
+// Enlaces de solo lectura de cada bucket propio (se piden a Oracle después de pintar Ajustes).
+const fmtDay = ms => new Date(ms).toLocaleDateString('es', { day: 'numeric', month: 'long', year: 'numeric' });
+async function loadShares() {
+  for (const ul of $$('[data-shares]')) {
+    const b = cloud.buckets().find(x => x.id === ul.dataset.shares);
+    if (!b) continue;
+    const form = $(`[data-form="share"][data-bid="${CSS.escape(b.id)}"]`);
+    try {
+      const list = await oci.listShares(b.url);
+      if (!ul.isConnected) return;
+      const active = oci.activeShares(list).length;
+      setHTML(ul, list.length ? list.map(p => {
+        const live = p.expires > Date.now();
+        return `<li><span class="badge-ic">${icon('user')}</span><span class="row-text"><b>${esc(p.who)}</b><small>${live ? `Solo lectura · caduca el ${fmtDay(p.expires)}` : 'Caducado'}${p.readOnly ? '' : ' · ¡no es de solo lectura!'}</small></span>
+          <button class="chip" data-act="share-revoke" data-bid="${esc(b.id)}" data-pid="${esc(p.id)}" data-who="${esc(p.who)}">${live ? 'Revocar' : 'Quitar'}</button></li>`;
+      }).join('') : '<li class="muted">Aún no lo has compartido con nadie.</li>');
+      if (form) {
+        $('button', form).disabled = active >= oci.MAX_SHARES;
+        $('button', form).title = active >= oci.MAX_SHARES ? `Ya hay ${oci.MAX_SHARES} enlaces vigentes` : '';
+      }
+    } catch (e) {
+      if (ul.isConnected) setHTML(ul, `<li class="muted">No se pudieron leer los enlaces: ${esc(e.message)}</li>`);
+    }
+  }
+}
+function showShareLink(who, url) {
+  openSheet(`<div class="dlg"><h3>Enlace para ${esc(who)}</h3>
+    <p>Envíaselo por un canal privado. Solo se muestra ahora: Fiora no lo guarda. Si se pierde, revócalo y crea otro.</p>
+    <label class="field">${icon('lock')}<input readonly value="${esc(url)}" data-share-url aria-label="Enlace de solo lectura"></label>
+    <p class="muted">En Fiora: Ajustes → Nube → pegar el enlace → Conectar bucket.</p>
+    <div class="actions"><button class="btn ghost" data-x>Cerrar</button><button class="btn primary" data-copy>Copiar</button></div></div>`,
+  e => {
+    if (e.target.closest('[data-x]')) return sheet.close();
+    if (!e.target.closest('[data-copy]')) return;
+    const field = $('[data-share-url]', sheet);
+    field.select();
+    (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject()).then(() => toast('Enlace copiado'), () => { try { document.execCommand('copy'); toast('Enlace copiado'); } catch { toast('Cópialo a mano'); } });
+  });
 }
 let syncing = null;
 async function cloudSync(silent = false) {
@@ -873,8 +928,9 @@ async function uploadMany(tracks, bucketId) {
 }
 /** Si hay varios buckets, pregunta a cuál subir. */
 function uploadTo(tracks) {
-  const bks = cloud.buckets();
-  if (bks.length < 2) return uploadMany(tracks);
+  const bks = cloud.ownedBuckets();
+  if (!bks.length) return toast('Para subir hace falta un bucket tuyo y su clave de API de Oracle (Ajustes → Modo desarrollador)', 6000);
+  if (bks.length < 2) return uploadMany(tracks, bks[0].id);
   menu(`<div class="sheet-head"><div><b>¿A qué bucket?</b><small>${plural(tracks.length, 'canción', 'canciones')}</small></div></div>`,
     bks.map(b => ({ icon: 'cloudUp', label: b.name, fn: () => uploadMany(tracks, b.id) })));
 }
@@ -1023,6 +1079,7 @@ async function sealAiKeys() {
 }
 
 function editTrack(t) {
+  if (!devOn()) return;
   let coverFile = null;
   const moods = new Set(t.moods || []);
   const field = (name, label, value, extra = '') => `<label class="lbl">${label}<span class="field"><input name="${name}" value="${esc(value ?? '')}" autocomplete="off" ${extra}></span></label>`;
@@ -1168,6 +1225,7 @@ async function keepAwake() {
   try { return await navigator.wakeLock?.request('screen'); } catch { return null; }
 }
 async function updateCloudFiles() {
+  if (!devOn()) return;
   if (bulk) return;
   const inCloud = allTracks().filter(t => t.cloudName);
   const list = inCloud.filter(t => cloud.canWriteFile(t));
@@ -1241,7 +1299,7 @@ async function writeFiles(list, { fields = null, stop = () => false } = {}) {
 // ------------------------------------------------- canciones repetidas (desarrollador)
 const dupKeep = {};   // copia elegida a mano en cada grupo: clave -> id
 function viewDuplicates() {
-  if (!S.settings.dev) return show(empty('settings', 'Solo en modo desarrollador', 'Activa el modo desarrollador en Ajustes para revisar las canciones repetidas.', `<a class="btn primary" href="#/ajustes">Ir a Ajustes</a>`));
+  if (!devOn()) return show(empty('settings', 'Solo en modo desarrollador', 'Activa el modo desarrollador en Ajustes para revisar las canciones repetidas.', `<a class="btn primary" href="#/ajustes">Ir a Ajustes</a>`));
   const groups = lib.findDuplicates(dupKeep);
   const extra = groups.flatMap(g => g.tracks.slice(1));
   const ignored = (S.settings.dupIgnore || []).length;
@@ -1264,12 +1322,11 @@ function viewDuplicates() {
 async function deleteForever(list, keepOf = null) {
   const note = toast('Borrando…', 0);
   const gone = new Set(), fails = [];
-  let emptied = 0;
   for (let i = 0; i < list.length; i++) {
     const t = list[i];
     note.set(`Borrando ${i + 1} de ${list.length}: ${t.title}`);
     try {
-      if (t.cloudName && cloud.configured() && (await cloud.deleteRemote(t)) === 'emptied') emptied++;
+      if (t.cloudName && cloud.configured()) await cloud.deleteRemote(t);   // solo en buckets propios; si no, lanza
       const keep = keepOf?.get(t.id);
       if (keep && S.tracks.has(keep.id)) await lib.mergeInto(t, keep);
       await lib.removeTrack(t.id);
@@ -1277,13 +1334,13 @@ async function deleteForever(list, keepOf = null) {
     } catch (e) { console.warn(e); fails.push(`«${t.title}»: ${e.message}`); }
   }
   if (gone.size) player.forget(gone);
-  const msg = `${plural(gone.size, 'canción borrada', 'canciones borradas')}${emptied ? `. ${emptied === 1 ? 'Ha quedado vacía' : `${emptied} han quedado vacías`} en la nube: para borrarlas del todo de Oracle, añade una clave de API en Ajustes → Modo desarrollador` : ''}`;
-  note.done(fails.length ? `${msg}. No se pudo borrar ${fails[0]}${fails.length > 1 ? ` y ${fails.length - 1} más` : ''}` : msg, fails.length || emptied ? 8000 : 4000);
+  const msg = plural(gone.size, 'canción borrada', 'canciones borradas');
+  note.done(fails.length ? `${msg}. No se pudo borrar ${fails[0]}${fails.length > 1 ? ` y ${fails.length - 1} más` : ''}` : msg, fails.length ? 8000 : 4000);
   refresh();
 }
 function confirmDelete(t) {
   const b = t.cloudName && (cloud.buckets().find(x => x.id === t.bucketId) || cloud.buckets()[0]);
-  return confirmDlg('¿Borrar la canción para siempre?', `«${t.title}» se borrará de tu biblioteca, de este dispositivo${b ? ` y del bucket «${b.name}» (en todos tus dispositivos)${oci.configured() ? '' : '. Sin clave de API de Oracle, el archivo queda vacío en el bucket, sin ocupar espacio'}` : ''}. No se puede deshacer.`, 'Borrar');
+  return confirmDlg('¿Borrar la canción para siempre?', `«${t.title}» se borrará de tu biblioteca, de este dispositivo${b ? ` y del bucket «${b.name}» (en todos tus dispositivos y para quien lo tenga compartido)` : ''}. No se puede deshacer.`, 'Borrar');
 }
 
 // Estado de la sincronización de Explorar en Ajustes.
@@ -1308,7 +1365,7 @@ function trackMenu(t, o = {}, i = -1) {
     !o.queue && { icon: 'plus', label: 'Añadir a la cola', fn: () => { player.enqueue([t]); toast('Añadida a tu cola'); } },
     !lib_ && { icon: 'library', label: 'Añadir a mi biblioteca', fn: async () => { await saveToLibrary([t]); toast('Añadida a tu biblioteca'); } },
     lib_ && { icon: 'list', label: 'Añadir a playlist…', fn: () => addToPlaylist([t]) },
-    lib_ && S.settings.dev && { icon: 'edit', label: 'Editar metadatos', fn: () => editTrack(t) },
+    lib_ && devOn() && { icon: 'edit', label: 'Editar metadatos', fn: () => editTrack(t) },
     lib_ && { icon: 'heart', label: isFav(t.id) ? 'Quitar de favoritas' : 'Me gusta', fn: () => toggleFav(t.id) },
     lib_ && { icon: 'spark', label: 'Radio de esta canción', fn: () => { player.playQueue(recs.songRadio(t)); toast('Mezcla creada a partir de la canción'); } },
     lib_ && t.album && { icon: 'disc', label: 'Ir al álbum', fn: () => go(`#/album/${enc(lib.albumKey(t))}`) },
@@ -1322,10 +1379,10 @@ function trackMenu(t, o = {}, i = -1) {
     lib_ && remote && !t.hasBlob && !t.noDownload && { icon: 'download', label: 'Descargar en la app (sin conexión)', fn: () => downloadMany([t]) },
     !t.noDownload && (t.hasBlob || remote) && { icon: 'folder', label: 'Guardar el archivo en el dispositivo', fn: () => exportFile(t) },
     lib_ && remote && t.hasBlob && { icon: 'x', label: 'Quitar la descarga de este dispositivo', fn: async () => { await lib.dropBlob(t.id); toast('Descarga eliminada'); } },
-    lib_ && t.hasBlob && !t.cloudName && cloud.configured() && { icon: 'cloudUp', label: 'Subir a la nube', fn: () => uploadTo([t]) },
+    lib_ && t.hasBlob && !t.cloudName && cloud.uploadTarget() && { icon: 'cloudUp', label: 'Subir a la nube', fn: () => uploadTo([t]) },
     t.link && /^https:\/\//.test(t.link) && { icon: 'compass', label: `Ver origen y licencia${t.license ? ` (${t.license})` : ''}`, fn: () => window.open(t.link, '_blank', 'noopener') },
     ...(o.playlist && lib_ ? PL.menuItems(t, o.playlist) : []),
-    lib_ && S.settings.dev && t.cloudName && cloud.configured() && {
+    lib_ && devOn() && cloud.ownsTrack(t) && {
       icon: 'trash', label: 'Borrar también de la nube', danger: true, fn: async () => { if (await confirmDelete(t)) deleteForever([t]); },
     },
     lib_ && {
@@ -1397,7 +1454,7 @@ const ACTIONS = {
   },
   'clear-user-queue'() { player.clearUserQueue(); },
   'cloud-sync'() { cloudSync(); },
-  'cloud-upload-all'() { uploadMany(allTracks().filter(t => t.hasBlob && !t.cloudName && !t.url)); },
+  'cloud-upload-all'() { if (cloud.uploadTarget()) uploadMany(allTracks().filter(t => t.hasBlob && !t.cloudName && !t.url)); },
   async 'bucket-remove'(el) {
     const b = cloud.buckets().find(x => x.id === el.dataset.bid);
     if (!b || !(await confirmDlg(`¿Desconectar «${b.name}»?`, 'Sus canciones que no estén descargadas desaparecerán de la biblioteca hasta que vuelvas a conectarlo. No se borra nada en Oracle.', 'Desconectar'))) return;
@@ -1424,7 +1481,7 @@ const ACTIONS = {
   'cloud-tags'() { updateCloudFiles(); },
   'cloud-report'() { showReport(); },
   'cloud-tags-stop'() { if (bulk) { bulk.stop = true; toast('Deteniendo al terminar el archivo actual…'); } },
-  'write-files'() { const l = allTracks().filter(t => fileOutdated(t) && cloud.canWriteFile(t)); if (l.length) offerWrite(l); },
+  'write-files'() { if (!devOn()) return; const l = allTracks().filter(t => fileOutdated(t) && cloud.canWriteFile(t)); if (l.length) offerWrite(l); },
   'lib-unfilter'(el) { clearFilter(el.dataset.k, el.dataset.v); paintLibrary(); },
   'lib-clear'() { resetFilters(); paintLibrary(); },
   async 'explore-retry'() { await rdata.pull(); refresh(); },
@@ -1461,6 +1518,7 @@ const ACTIONS = {
     refresh();
   },
   async 'dup-auto'() {
+    if (!devOn()) return;
     const groups = lib.findDuplicates(dupKeep);
     const keepOf = new Map(), list = [];
     for (const g of groups) for (const t of g.tracks.slice(1)) { list.push(t); keepOf.set(t.id, g.tracks[0]); }
@@ -1470,9 +1528,27 @@ const ACTIONS = {
       `Se conserva una copia de cada canción.${inCloud ? ` ${plural(inCloud, 'copia está', 'copias están')} en la nube: se ${inCloud === 1 ? 'borrará' : 'borrarán'} también del bucket y desaparecerá${inCloud === 1 ? '' : 'n'} en todos tus dispositivos.` : ''} No se puede deshacer.`, 'Borrar'))) return;
     await deleteForever(list, keepOf);
   },
-  async 'oci-forget'() { await oci.forget(); toast('Clave de Oracle quitada de este dispositivo'); refresh(); },
+  async 'oci-forget'() {
+    await oci.forget();
+    S.settings.dev = false; await saveKV('settings', false);
+    toast('Clave de Oracle quitada de este dispositivo: el modo desarrollador queda desactivado'); refresh();
+  },
+  async 'oci-recheck'() {
+    const t = toast('Comprobando la clave con Oracle…', 0);
+    try { const own = await cloud.verifyKey(); t.done(own.length ? 'Clave comprobada' : 'La clave no tiene permiso sobre ningún bucket conectado', 6000); }
+    catch (e) { t.done(e.message, 9000); }
+    refresh();
+  },
+  async 'share-revoke'(el) {
+    const b = cloud.buckets().find(x => x.id === el.dataset.bid);
+    if (!b || !(await confirmDlg(`¿Revocar el enlace de ${el.dataset.who}?`, `Dejará de funcionar al momento: ${el.dataset.who} ya no podrá escuchar ni descargar las canciones de «${b.name}». Lo que ya descargó en su dispositivo no se puede borrar desde aquí.`, 'Revocar'))) return;
+    const t = toast('Revocando…', 0);
+    try { await oci.revokeShare(b.url, el.dataset.pid); t.done('Enlace revocado'); }
+    catch (e) { t.done(e.message, 8000); }
+    loadShares();
+  },
   async 'oci-purge'() {
-    if (!(await confirmDlg('¿Borrar los archivos vacíos?', 'Se buscarán en tus buckets los archivos de audio vacíos (canciones borradas antes de añadir la clave) y se eliminarán de Oracle.', 'Borrar'))) return;
+    if (!devReady() || !(await confirmDlg('¿Borrar los archivos vacíos?', 'Se buscarán en tus buckets los archivos de audio vacíos (canciones borradas antes de añadir la clave) y se eliminarán de Oracle.', 'Borrar'))) return;
     const t = toast('Buscando archivos vacíos…', 0);
     try {
       const n = await cloud.purgeEmpty((i, name) => t.set(`Borrando ${i}: ${name.split('/').pop()}`));
@@ -1485,6 +1561,7 @@ const ACTIONS = {
     await saveKV('settings', false); emit('dirty'); refresh();
   },
   async 'ai-tag-all'() {
+    if (!devOn()) return;
     const list = allTracks().filter(needsTags);
     const A = aiConf(), o = { provider: A.provider, model: A.models[A.provider] || (A.provider === 'anthropic' ? ai.DEFAULT_MODEL : '') }, service = ai.PROVIDERS[o.provider].name;
     if (!list.length || !(await confirmDlg(`¿Etiquetar ${plural(list.length, 'canción', 'canciones')} con IA?`,
@@ -1590,10 +1667,26 @@ document.addEventListener('submit', async e => {
       const file = form.pem.files[0];
       if (!file) throw new Error('Elige el archivo .pem de la clave privada');
       await oci.save(cfg, await oci.importPem(await file.text()));
-      try { await cloud.checkOci(); } catch (err) { await oci.forget(); throw err; }
-      t.done('Clave de Oracle conectada: lo que borres de la nube se eliminará de Oracle', 5000);
+      try { if (!(await cloud.verifyKey()).length) throw new Error('La clave no tiene permiso sobre ningún bucket conectado'); }
+      catch (err) { await oci.forget(); throw err; }
+      t.done('Clave de Oracle conectada: ya puedes activar el modo desarrollador y compartir tu bucket', 6000);
       refresh();
     } catch (err) { t.done(err.message, 9000); }
+  }
+  if (kind === 'share') {
+    const b = cloud.ownedBuckets().find(x => x.id === form.dataset.bid);
+    if (!b) return;
+    const who = form.who.value.trim(), btn = $('button', form);
+    btn.disabled = true;
+    const t = toast('Creando el enlace en Oracle…', 0);
+    try {
+      const url = await oci.createShare(b.url, who, form.days.value);
+      t.done('Enlace creado', 2500);
+      form.reset();
+      showShareLink(who, url);
+    } catch (err) { t.done(err.message, 8000); }
+    btn.disabled = false;
+    loadShares();
   }
   if (kind === 'par') {
     const t = toast('Comprobando la conexión…', 0);
@@ -1861,6 +1954,7 @@ document.addEventListener('change', async e => {
   if (e.target.matches?.('[data-ai-provider]')) { aiConf().provider = e.target.value; await saveKV('settings', false); return refresh(); }
   const key = e.target.dataset?.toggle;
   if (!key) return;
+  if (key === 'dev' && e.target.checked && !devReady()) { e.target.checked = false; return toast('El modo desarrollador necesita la clave de API de Oracle con permiso sobre un bucket conectado', 6000); }
   S.settings[key] = e.target.checked;
   S.settings[key + 'At'] = Date.now();
   await saveKV('settings', false);
@@ -1902,7 +1996,11 @@ async function accountSync() {
   try { await account.sync(); } catch (e) { console.warn('Cuenta sin sincronizar', e); }
 }
 on('account', refresh);
-on('cloud-changed', () => { refresh(); cloudSync(true); });
+on('cloud-changed', async () => {
+  // Buckets que llegan de la cuenta: se comprueba en cuáles tiene permiso la clave de este dispositivo.
+  if (oci.configured() && navigator.onLine) await cloud.verifyKey().catch(e => console.warn('Clave de Oracle', e));
+  refresh(); cloudSync(true);
+});
 on('volume', v => { P.audio.volume = v; });
 
 async function start() {
@@ -1915,7 +2013,7 @@ async function start() {
   if (typeof S.settings.volume === 'number') P.audio.volume = S.settings.volume;
   cloud.migrate();
   await sealAiKeys().catch(e => console.warn('No se pudieron cifrar las claves de IA', e));
-  if (S.settings.dev) {
+  if (devOn()) {
     const pending = allTracks().filter(t => fileOutdated(t) && cloud.canWriteFile(t)).length;
     if (pending) setTimeout(() => toast(`${plural(pending, 'canción tiene', 'canciones tienen')} géneros u otros cambios que aún no están en su archivo. Guárdalos en Ajustes → Modo desarrollador.`, 9000), 1500);
   }

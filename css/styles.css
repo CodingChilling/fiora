@@ -1186,3 +1186,12 @@ body.dnd, body.dnd * { cursor: grabbing !important; }
 .pl-list.drop-end { box-shadow: inset 0 -3px 0 var(--accent); border-radius: 12px; }
 .disc-hint { font-size: 13px; margin: -2px 0 10px; }
 @media (prefers-reduced-motion: reduce) { .dnd-ghost { transform: none; } }
+
+/* Ajustes: interruptor bloqueado (modo desarrollador sin clave de Oracle) y enlaces compartidos */
+.switch.disabled { opacity: .55; }
+.switch.disabled input { cursor: not-allowed; }
+.share-box .shares { margin: 6px 0 4px; }
+.share-box .shares li.muted { background: none; padding: 2px 0; font-size: 13px; }
+.share-box .shares .row-text { min-width: 0; }
+.share-box .shares .row-text b { overflow-wrap: anywhere; }
+.share-box .shares .row-text small { white-space: normal; overflow: visible; text-overflow: clip; }

@@ -1,10 +1,11 @@
 // Copia de los datos del usuario (playlists, favoritos, estadísticas, emisoras, ajustes)
-// y fusión con una copia remota. Lo usan tanto la cuenta (Supabase) como el bucket de Oracle.
+// y fusión con una copia remota. Solo viaja a la cuenta de la persona en Supabase (fila propia,
+// protegida con RLS); nunca al bucket de Oracle, que puede estar compartido con otras personas.
 import { forget as forgetOci } from './oci.js';
 import * as db from './db.js';
 import { S, saveKV, emit, applyEdit, fileSig } from './store.js';
 
-/** Datos que se guardan fuera del dispositivo. Los ajustes solo viajan con la cuenta. */
+/** Datos que se guardan en la cuenta. La clave de API de Oracle y las de IA nunca salen del dispositivo. */
 export function snapshot(withPrefs = false) {
   const data = { v: 2, at: Date.now(), playlists: S.playlists, favs: S.favs, stats: S.stats, stations: S.stations, edits: S.edits, trans: S.trans, hist: S.hist };
   if (withPrefs) {

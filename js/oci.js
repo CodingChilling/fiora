@@ -65,14 +65,27 @@ export async function forget() {
 // Codificación estricta de RFC 3986 (encodeURIComponent deja sin codificar !'()*).
 export const enc = s => encodeURIComponent(s).replace(/[!'()*]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase());
 
-/** Texto que se firma y cabecera Authorization para una petición sin cuerpo (GET, HEAD, DELETE). */
-export async function sign(method, url, cfg, cryptoKey, date = new Date().toUTCString()) {
+/**
+ * Texto que se firma y cabecera Authorization. Sin cuerpo (GET, DELETE) se firman
+ * "(request-target)", "host" y "x-date"; con cuerpo JSON (POST) además "x-content-sha256",
+ * "content-type" y "content-length", como pide Oracle.
+ */
+export async function sign(method, url, cfg, cryptoKey, date = new Date().toUTCString(), body = null) {
   const u = new URL(url);
-  const signing = `(request-target): ${method.toLowerCase()} ${u.pathname}${u.search}\nhost: ${u.host}\nx-date: ${date}`;
+  let signing = `(request-target): ${method.toLowerCase()} ${u.pathname}${u.search}\nhost: ${u.host}\nx-date: ${date}`;
+  let names = '(request-target) host x-date';
+  const headers = { 'x-date': date };
+  if (body !== null) {
+    const bytes = new TextEncoder().encode(body);
+    const sha = btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))));
+    signing += `\nx-content-sha256: ${sha}\ncontent-type: application/json\ncontent-length: ${bytes.length}`;
+    names += ' x-content-sha256 content-type content-length';
+    Object.assign(headers, { 'x-content-sha256': sha, 'content-type': 'application/json' });   // content-length lo pone el navegador
+  }
   const sig = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', cryptoKey, new TextEncoder().encode(signing));
   const s64 = btoa(String.fromCharCode(...new Uint8Array(sig)));
-  const auth = `Signature version="1",keyId="${cfg.tenancy}/${cfg.user}/${cfg.fingerprint}",algorithm="rsa-sha256",headers="(request-target) host x-date",signature="${s64}"`;
-  return { signing, headers: { 'x-date': date, authorization: auth } };
+  headers.authorization = `Signature version="1",keyId="${cfg.tenancy}/${cfg.user}/${cfg.fingerprint}",algorithm="rsa-sha256",headers="${names}",signature="${s64}"`;
+  return { signing, headers };
 }
 
 /** Punto de acceso de la API y nombres de namespace/bucket a partir de la URL de la PAR. */
@@ -85,18 +98,19 @@ export function target(parUrl) {
   return { base: region ? `https://objectstorage.${region}.oraclecloud.com` : u.origin, ns: decodeURIComponent(m[1]), bucket: decodeURIComponent(m[2]) };
 }
 
-async function call(method, url) {
+async function call(method, url, json) {
   const cfg = S.settings.oci;
   if (!cfg?.user) throw new Error('No hay clave de API de Oracle');
-  const { headers } = await sign(method, url, cfg, await key());
-  const r = await fetch(url, { method, headers, cache: 'no-store' });
+  const body = json === undefined ? null : JSON.stringify(json);
+  const { headers } = await sign(method, url, cfg, await key(), undefined, body);
+  const r = await fetch(url, { method, headers, body, cache: 'no-store' });
   let code = '';
   if (!r.ok) { try { code = (await r.json()).code || ''; } catch { /* sin cuerpo */ } }
   return { r, code };
 }
 const explain = (r, code, what) => {
   if (r.status === 401) return `Oracle no aceptó la clave de API (401${code ? ` ${code}` : ''}). Revisa que la configuración y el archivo .pem sean de la misma clave y que la hora del dispositivo sea correcta.`;
-  if (r.status === 404 || r.status === 403) return `Oracle no deja ${what} (${r.status}${code ? ` ${code}` : ''}): tu usuario no tiene permiso sobre ese bucket o no existe.`;
+  if (r.status === 404 || r.status === 403) return `Oracle no te deja ${what} (${r.status}${code ? ` ${code}` : ''}): tu usuario no tiene permiso sobre ese bucket o no existe.`;
   return `Oracle respondió ${r.status}${code ? ` ${code}` : ''} al ${what}`;
 };
 
@@ -113,4 +127,49 @@ export async function deleteObject(parUrl, name) {
   const { r, code } = await call('DELETE', `${base}/n/${enc(ns)}/b/${enc(bucket)}/o/${enc(name)}`);
   if (r.ok || code === 'ObjectNotFound') return;
   throw new Error(explain(r, code, 'borrar el archivo'));
+}
+
+// --- Enlaces de solo lectura para compartir el bucket -------------------------------
+// Cada persona recibe su propia PAR de bucket con acceso «AnyObjectRead» y listado: puede listar
+// y leer las canciones, pero Oracle le rechaza cualquier escritura o borrado. Se revoca borrándola.
+// Solo se gestionan las que creó Fiora (por el prefijo del nombre); las demás no se tocan.
+const SHARE = 'fiora-compartir:';
+export const MAX_SHARES = 5;
+const parBase = parUrl => { const { base, ns, bucket } = target(parUrl); return `${base}/n/${enc(ns)}/b/${enc(bucket)}/p`; };
+
+/** Enlaces creados por Fiora para este bucket: [{id, who, expires, created}], los vigentes primero. */
+export async function listShares(parUrl) {
+  const { r, code } = await call('GET', `${parBase(parUrl)}?limit=1000`);
+  if (!r.ok) throw new Error(explain(r, code, 'ver los enlaces del bucket'));
+  const list = await r.json();
+  return (Array.isArray(list) ? list : [])
+    .filter(p => typeof p.name === 'string' && p.name.startsWith(SHARE))
+    .map(p => ({ id: p.id, who: p.name.slice(SHARE.length), expires: Date.parse(p.timeExpires) || 0, created: Date.parse(p.timeCreated) || 0, readOnly: p.accessType === 'AnyObjectRead' }))
+    .sort((a, b) => (b.expires > Date.now()) - (a.expires > Date.now()) || b.created - a.created);
+}
+export const activeShares = list => list.filter(p => p.expires > Date.now());
+
+/** Crea un enlace de solo lectura (con listado) que caduca en `days` días. Devuelve su URL completa. */
+export async function createShare(parUrl, who, days) {
+  who = String(who || '').replace(/\s+/g, ' ').trim().slice(0, 40);
+  if (!who) throw new Error('Escribe para quién es el enlace');
+  days = Math.min(366, Math.max(1, Math.round(+days) || 30));
+  if (activeShares(await listShares(parUrl)).length >= MAX_SHARES) throw new Error(`Ya hay ${MAX_SHARES} enlaces vigentes: revoca alguno antes de crear otro`);
+  const { r, code } = await call('POST', parBase(parUrl), {
+    name: SHARE + who, accessType: 'AnyObjectRead', bucketListingAction: 'ListObjects',
+    timeExpires: new Date(Date.now() + days * 86400000).toISOString(),
+  });
+  if (!r.ok) throw new Error(explain(r, code, 'crear el enlace'));
+  const j = await r.json();
+  if (j.accessType && j.accessType !== 'AnyObjectRead') throw new Error('Oracle no creó el enlace como de solo lectura');
+  const url = j.fullPath || (j.accessUri ? target(parUrl).base + j.accessUri : '');
+  if (!/^https?:\/\/[^/]+\/p\/.+\/n\/[^/]+\/b\/[^/]+\/o\/$/.test(url)) throw new Error('Oracle no devolvió la URL del enlace');
+  return url;
+}
+
+/** Revoca un enlace: deja de funcionar al momento. Si ya no existía, también cuenta como revocado. */
+export async function revokeShare(parUrl, id) {
+  const { r, code } = await call('DELETE', `${parBase(parUrl)}/${enc(id)}`);
+  if (r.ok || r.status === 404) return;
+  throw new Error(explain(r, code, 'revocar el enlace'));
 }

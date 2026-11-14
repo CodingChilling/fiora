@@ -5,7 +5,7 @@
 // En el dispositivo: IndexedDB (almacén `playlists`) como copia para trabajar sin conexión, más
 // una cola de cambios pendientes que se reintenta sola.
 // Sin sesión, o si aún no se ha aplicado la migración, todo sigue funcionando como antes (copia
-// en `fiora_datos` y en el bucket de Oracle) y no se pierde nada.
+// en `fiora_datos`, la fila de la cuenta) y no se pierde nada. Nunca se guardan en el bucket.
 //
 // Lo que es solo de este dispositivo (fotos de más de 16 MB, subidas pendientes, orden local del
 // carrusel) se guarda aparte, en `plLocal`, y nunca se envía a Supabase.

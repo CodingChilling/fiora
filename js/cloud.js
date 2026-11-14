@@ -5,24 +5,60 @@
 //   GET  {par}{nombre}    -> descarga (admite Range)
 //   PUT  {par}{nombre}    -> subida
 // Las PAR no permiten borrar: para eso se usa la API de Oracle con una clave de API (oci.js).
+//
+// Un bucket es «tuyo» en este dispositivo cuando la clave de API de Oracle guardada aquí tiene
+// permiso sobre él. Solo entonces la app sube, cambia o borra archivos en él; si no, es de solo
+// lectura (por ejemplo, el bucket que otra persona comparte contigo con un enlace de lectura).
+// En el bucket solo hay música y portadas de canciones: playlists, favoritos, escuchas y ediciones
+// viven en el dispositivo y en la cuenta de cada persona (Supabase), nunca en el bucket.
 import * as db from './db.js';
-import { S, saveTrack, saveKV, emit, on, albumArtistOf, fileSig, tagFields, fileOutdated } from './store.js';
+import { S, saveTrack, saveKV, emit, albumArtistOf, fileSig, tagFields, fileOutdated } from './store.js';
 import { buildTrack, trackId, rekey, setRemoteCover, moodsFrom } from './library.js';
 import { isAudioName, splitArtistTag, splitGenres, splitMoods } from './tags.js';
-import { snapshot, merge } from './sync.js';
 import { wavToFlac } from './flac.js';
 import * as oci from './oci.js';
 import { writeTags, canWrite, readFileTags, blobReader, writableKind } from './tagwrite.js';
 
-const DATA_OBJECT = '_fiora/datos.json';
+// Copia de playlists, favoritos, escuchas y ediciones que guardaban versiones anteriores en el
+// primer bucket. Ya no se usa: quien tuviera la URL del bucket podía leerla. Se elimina al sincronizar.
+const LEGACY_DATA = '_fiora/datos.json';
 const HEAD_BYTES = 768 * 1024;   // suficiente para las etiquetas y la carátula en casi todos los archivos
 
-/** Buckets conectados: [{id, name, url}]. El primero guarda además la copia de playlists y favoritos. */
+/** Buckets conectados: [{id, name, url}]. */
 export const buckets = () => S.settings.buckets || [];
 export const configured = () => buckets().length > 0;
 const bucket = id => buckets().find(b => b.id === id) || buckets()[0];
-/** Bucket al que se sube por defecto. */
-export const uploadTarget = () => bucket(S.settings.uploadBucket);
+/** Bucket donde está el archivo de una pista. */
+export const trackBucket = t => (t.bucketId ? buckets().find(b => b.id === t.bucketId) : buckets()[0]) || null;
+
+// --- Buckets propios (con la clave de API de Oracle de este dispositivo) -----
+const keyOf = url => { try { const t = oci.target(url); return `${t.ns}/${t.bucket}`; } catch { return ''; } };
+/** ¿La clave de API de este dispositivo tiene permiso sobre este bucket? */
+export const owns = b => !!b && oci.configured() && (S.settings.oci.own || []).includes(keyOf(b.url));
+export const ownedBuckets = () => buckets().filter(owns);
+export const ownsTrack = t => !!t.cloudName && owns(trackBucket(t));
+/** Bucket al que se sube por defecto (solo uno propio), o null. */
+export const uploadTarget = () => { const own = ownedBuckets(); return own.find(b => b.id === S.settings.uploadBucket) || own[0] || null; };
+const readOnly = b => new Error(`${b ? `«${b.name}»` : 'Ese bucket'} es de solo lectura en este dispositivo: para cambiar sus archivos hace falta la clave de API de Oracle de quien lo creó`);
+
+/**
+ * Comprueba con la clave de API sobre qué buckets conectados tiene permiso. Si no puede contactar
+ * con Oracle, conserva lo que se sabía. Lanza el error si la clave no vale para ninguno.
+ */
+export async function verifyKey(only = null) {
+  if (!oci.configured()) return [];
+  const own = new Set(S.settings.oci.own || []);
+  let firstError = null;
+  for (const b of only ? [only] : buckets()) {
+    const k = keyOf(b.url);
+    try { await oci.check(b.url); own.add(k); }
+    catch (e) { if (e instanceof TypeError) continue; own.delete(k); firstError ||= e; }   // TypeError: sin red
+  }
+  S.settings.oci.own = [...own].filter(k => buckets().some(b => keyOf(b.url) === k));
+  await saveKV('settings', false);
+  if (!only && !ownedBuckets().length && firstError) throw firstError;
+  return ownedBuckets();
+}
 
 /** Convierte la configuración antigua (un solo bucket) a la lista de buckets. */
 export function migrate() {
@@ -50,7 +86,7 @@ async function listObjects(b) {
   let start = '';
   do {
     const r = await fetch(`${b.url}?fields=name,size,etag,timeModified&limit=1000${start ? `&start=${encodeURIComponent(start)}` : ''}`);
-    if (!r.ok) throw new Error(`«${b.name}» respondió ${r.status} al listar. Revisa que la PAR tenga activado el listado de objetos y no haya caducado.`);
+    if (!r.ok) throw new Error(`«${b.name}» respondió ${r.status} al listar. Revisa que la URL tenga activado el listado de objetos y no haya caducado ni la hayan revocado.`);
     const j = await r.json();
     out.push(...(j.objects || []));
     start = j.nextStartWith || '';
@@ -73,6 +109,7 @@ export async function addBucket(name, rawUrl) {
   const b = { id: 'b' + Date.now().toString(36), name: name.trim() || `Bucket ${buckets().length + 1}`, url };
   S.settings.buckets = [...buckets(), b];
   await touchBuckets();
+  if (oci.configured()) await verifyKey(b).catch(() => {});
   return b;
 }
 
@@ -131,8 +168,11 @@ export async function syncLibrary(onProgress = () => {}) {
 
   for (const b of buckets()) {
     let objects;
-    try { objects = (await listObjects(b)).filter(o => o.size > 0 && isAudioName(o.name)); }   // los vacíos son canciones borradas
-    catch (e) { failed.add(b.id); errors.push(e.message); continue; }
+    try {
+      const all = await listObjects(b);
+      if (all.some(o => o.name === LEGACY_DATA && (o.size > 0 || owns(b)))) await dropLegacyData(b);
+      objects = all.filter(o => o.size > 0 && isAudioName(o.name));   // los vacíos son canciones borradas
+    } catch (e) { failed.add(b.id); errors.push(e.message); continue; }
     let n = 0;
     for (const o of objects) {
       n++;
@@ -184,7 +224,21 @@ export async function syncLibrary(onProgress = () => {}) {
   for (const t of redownload) { onProgress(0, 0, `Descargando de nuevo ${t.fileName}`); await download(t).catch(e => console.warn('No se pudo volver a descargar', e)); }
   const removed = await dropMissing(found, failed);
   if (added || removed || updated) emit('library');
+  S.settings.lastSync = Date.now();
+  saveKV('settings', false);
   return { added, removed, updated, total: found.size, errors };
+}
+export const syncAll = syncLibrary;
+
+/**
+ * Quita del bucket la copia de datos personales de versiones anteriores. Con la clave de API se
+ * borra; sin ella se sobrescribe vacía (si la URL lo permite), que basta para que no se pueda leer.
+ */
+async function dropLegacyData(b) {
+  try {
+    if (owns(b)) await oci.deleteObject(b.url, LEGACY_DATA);
+    else await fetch(objectUrl(LEGACY_DATA, b.id), { method: 'PUT', body: new Blob([]), headers: { 'Content-Type': 'application/octet-stream' } });
+  } catch (e) { console.warn('No se pudo quitar la copia antigua de datos del bucket', e); }
 }
 
 // --- Cambios hechos en los archivos desde otros dispositivos ------------------
@@ -234,8 +288,9 @@ async function takeFromFile(t, fresh, o) {
  * Devuelve los bytes ahorrados.
  */
 export async function upload(t, bucketId, onStage = () => {}) {
-  const b = bucket(bucketId || S.settings.uploadBucket);
-  if (!b) throw new Error('No hay ningún bucket conectado');
+  const b = bucketId ? buckets().find(x => x.id === bucketId) : uploadTarget();
+  if (!b) throw new Error('No hay ningún bucket tuyo conectado: hace falta la clave de API de Oracle (Ajustes → Modo desarrollador)');
+  if (!owns(b)) throw readOnly(b);
   let blob = await db.get('blobs', t.id);
   if (!blob) throw new Error('No hay copia local que subir');
   let saved = 0;
@@ -271,35 +326,33 @@ export async function upload(t, bucketId, onStage = () => {}) {
 }
 
 /**
- * Borra de su bucket el archivo de una pista. Las PAR no permiten borrar (limitación de Oracle):
- * con una clave de API de Oracle configurada se borra de verdad ('deleted'); si no, el archivo se
- * sobrescribe vacío (0 bytes), lo que libera el espacio y Fiora deja de mostrarlo ('emptied').
+ * Borra de su bucket el archivo de una pista, con la API de Oracle (las PAR no permiten borrar).
+ * Solo en buckets propios: sin la clave de API de su propietario no se toca nada.
  */
 export async function deleteRemote(t) {
   if (!t.cloudName) return null;
-  const b = t.bucketId ? buckets().find(x => x.id === t.bucketId) : buckets()[0];
+  const b = trackBucket(t);
   if (!b) throw new Error('El bucket de esta canción no está conectado');
-  if (oci.configured()) { await oci.deleteObject(b.url, t.cloudName); return 'deleted'; }
-  const w = await fetch(objectUrl(t.cloudName, b.id), { method: 'PUT', body: new Blob([]), headers: { 'Content-Type': 'application/octet-stream' } });
-  if (w.ok) return 'emptied';
-  throw new Error(`«${b.name}» respondió ${w.status} al borrar. ¿La PAR permite escritura?`);
+  if (!owns(b)) throw readOnly(b);
+  await oci.deleteObject(b.url, t.cloudName);
+  return 'deleted';
 }
 
-/** Comprueba la clave de API de Oracle con el primer bucket. */
-export const checkOci = () => oci.check(buckets()[0].url);
-
-/** Borra del todo los archivos de audio vacíos (canciones borradas sin clave de API). */
+/** Borra del todo los archivos de audio vacíos (canciones que versiones anteriores dejaban vacías al borrarlas). */
 export async function purgeEmpty(onProgress = () => {}) {
   let deleted = 0;
-  for (const b of buckets()) {
+  for (const b of ownedBuckets()) {
     const empty = (await listObjects(b)).filter(o => !o.size && isAudioName(o.name));
     for (const o of empty) { onProgress(deleted + 1, o.name); await oci.deleteObject(b.url, o.name); deleted++; }
   }
   return deleted;
 }
 
-/** Se puede escribir en el archivo de esta canción (formato compatible y archivo accesible). */
-export const canWriteFile = t => canWrite(t.fileName) && !!(t.hasBlob || (t.cloudName && configured() && (!t.bucketId || buckets().some(b => b.id === t.bucketId))));
+/**
+ * Se puede escribir en el archivo de esta canción: formato compatible y, si está en la nube, en un
+ * bucket propio (si no, el archivo de la nube se quedaría distinto de la copia del dispositivo).
+ */
+export const canWriteFile = t => canWrite(t.fileName) && (t.cloudName ? ownsTrack(t) : !!t.hasBlob);
 
 /**
  * Escribe los metadatos editados dentro del archivo de la canción y, si está en la nube, lo sube
@@ -309,6 +362,7 @@ export const canWriteFile = t => canWrite(t.fileName) && !!(t.hasBlob || (t.clou
 export async function writeFile(t, onStage = () => {}, fields = null) {
   const e = S.edits[t.id];
   if (!e && !fields) return false;
+  if (t.cloudName && !ownsTrack(t)) throw readOnly(trackBucket(t));
   const f = fields || tagFields(e);
   onStage(t.hasBlob ? 'Preparando' : 'Descargando');
   const blob = await fetchBlob(t);
@@ -429,7 +483,7 @@ export async function taggedBlob(t, blob) {
 const coverName = cid => `_fiora/portadas/${cid}.jpg`;
 setRemoteCover(cid => (configured() ? objectUrl(coverName(cid), buckets()[0].id) : null));
 export async function uploadCover(cid, blob) {
-  if (!configured()) return false;
+  if (!owns(buckets()[0])) return false;
   const r = await fetch(objectUrl(coverName(cid), buckets()[0].id), { method: 'PUT', body: blob, headers: { 'Content-Type': 'image/jpeg' } });
   return r.ok;
 }
@@ -457,30 +511,3 @@ export async function download(t) {
   await saveTrack(t);
   emit('library');
 }
-
-// --- Copia de playlists, favoritos y estadísticas en el primer bucket -------
-export async function syncData() {
-  const first = buckets()[0];
-  if (!first) return;
-  const r = await fetch(objectUrl(DATA_OBJECT, first.id), { cache: 'no-store' });
-  if (r.ok) await merge(await r.json());
-  else if (r.status !== 404) throw new Error(`Respuesta ${r.status} al leer los datos`);
-  const w = await fetch(objectUrl(DATA_OBJECT, first.id), { method: 'PUT', body: JSON.stringify(snapshot()), headers: { 'Content-Type': 'application/json' } });
-  if (!w.ok) throw new Error(`Respuesta ${w.status} al guardar los datos`);
-  S.settings.lastSync = Date.now();
-  saveKV('settings', false);
-}
-
-export async function syncAll(onProgress) {
-  const res = await syncLibrary(onProgress);
-  await syncData();
-  return res;
-}
-
-// Subida automática (con retardo) cuando cambian playlists, favoritos o estadísticas.
-let timer = null;
-on('dirty', () => {
-  if (!configured() || !navigator.onLine) return;
-  clearTimeout(timer);
-  timer = setTimeout(() => syncData().catch(e => console.warn('Sincronización pendiente', e)), 8000);
-});
