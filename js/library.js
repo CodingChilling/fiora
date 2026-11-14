@@ -1,6 +1,6 @@
 // Biblioteca: importar archivos del dispositivo, borrar pistas, carátulas.
 import * as db from './db.js';
-import { S, saveTrack, saveKV, emit, savePlaylist, albumArtistOf, artistsOf, MOODS } from './store.js';
+import { S, saveTrack, saveKV, emit, savePlaylist, albumArtistOf, artistsOf, MOODS, renameInPlaylist, dropFromPlaylist } from './store.js';
 import { readTags, fromFilename, splitArtists, splitGenres, shrinkCover, probeDuration, isAudioName, hash } from './tags.js';
 
 export const trackId = (size, name) => `${size}:${name}`;
@@ -87,7 +87,7 @@ export async function removeTrack(id) {
   S.tracks.delete(id);
   await Promise.all([db.del('tracks', id), db.del('blobs', id)]);
   for (const p of S.playlists) {
-    if (p.trackIds.includes(id)) { p.trackIds = p.trackIds.filter(x => x !== id); await savePlaylist(p); }
+    if (dropFromPlaylist(p, id)) await savePlaylist(p);
   }
   emit('library');
 }
@@ -101,7 +101,7 @@ export async function rekey(t, newId, { blob, fileName, size }) {
   Object.assign(t, { id: newId, fileName, size });
   await saveTrack(t);
   for (const p of S.playlists) {
-    if (p.trackIds.includes(old)) { p.trackIds = p.trackIds.map(x => (x === old ? newId : x)); await savePlaylist(p); }
+    if (renameInPlaylist(p, old, newId)) await savePlaylist(p);
   }
   if (S.favs[old]) { S.favs[newId] = { on: S.favs[old].on, at: Date.now() }; S.favs[old] = { on: false, at: Date.now() }; saveKV('favs'); }
   if (S.stats[old]) { S.stats[newId] = S.stats[old]; delete S.stats[old]; saveKV('stats'); }
@@ -161,8 +161,7 @@ export function findDuplicates(keep = {}) {
 /** Pasa a `keep` lo que tenía la copia que se va a borrar: playlists, me gusta y escuchas. */
 export async function mergeInto(dup, keep) {
   for (const p of S.playlists) {
-    if (!p.trackIds.includes(dup.id)) continue;
-    p.trackIds = [...new Set(p.trackIds.map(x => (x === dup.id ? keep.id : x)))];
+    if (!renameInPlaylist(p, dup.id, keep.id)) continue;
     await savePlaylist(p);
   }
   if (S.favs[dup.id]?.on && !S.favs[keep.id]?.on) { S.favs[keep.id] = { on: true, at: Date.now() }; saveKV('favs'); }

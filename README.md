@@ -8,7 +8,8 @@ Tu música, sin suscripciones. Una app web instalable (PWA) para escuchar tu pro
 - **Descargas**: baja una canción, un álbum o una playlist entera dentro de la app, o guarda el archivo en la carpeta de descargas del móvil u ordenador.
 - **Nube personal**: conecta uno o varios buckets de Oracle Cloud Object Storage y escucha tu música desde cualquier dispositivo. Playlists, favoritos y estadísticas se sincronizan.
 - **Cuenta**: inicia sesión con correo y contraseña y recupera tus datos en cualquier dispositivo.
-- **Playlists y favoritos**, aleatorio y repetición, controles en la pantalla de bloqueo.
+- **Playlists personalizables**: portada propia (recortable) o collage de carátulas, colores automáticos o elegidos, emoji, descripción, frase, etiquetas y estado de ánimo; carrusel de hasta 15 fotos con visor a pantalla completa; orden manual arrastrando, filtros, buscador y ordenaciones que no tocan tu orden; capítulos que se pliegan y se reproducen por separado; hasta 3 canciones destacadas; notas personales en cada canción; «Descubre más» con canciones de tu biblioteca; estadísticas con gráficos; modos sorpresa y ambiente; y módulos que se activan y reordenan por playlist. Todo se sincroniza con tu cuenta (Supabase).
+- **Favoritos**, aleatorio y repetición, controles en la pantalla de bloqueo.
 - **Cola**: lo que añades a mano suena antes de seguir con lo que estabas escuchando; desliza una canción a la derecha para añadirla. Al acabar, continúa sola con canciones parecidas.
 - **Letras** sincronizadas (incrustadas en el archivo o de [LRCLIB](https://lrclib.net)) y carátulas.
 - **Para ti**: mezcla diaria, mezclas por ambiente y por hora del día, redescubre y radio a partir de una canción. Aprenden de lo que terminas, lo que saltas y lo que escuchas seguido; todo se calcula en tu dispositivo.
@@ -72,6 +73,36 @@ La clave pública está pensada para ir en el navegador: lo que protege los dato
 
 Por defecto Supabase pide confirmar el correo al crear la cuenta. Si la app es solo para ti, puedes desactivarlo en *Authentication → Sign In / Providers → Email → Confirm email*.
 
+## Playlists en Supabase
+
+Las playlists se guardan en tablas propias de tu proyecto de Supabase y sus imágenes en Supabase Storage, para que portadas, fotos, capítulos, notas y estadísticas te acompañen en todos tus dispositivos. **Hay que preparar Supabase una vez**:
+
+1. En Supabase → **SQL Editor**, abre y ejecuta el archivo [`supabase/migrations/20261114120000_playlists.sql`](supabase/migrations/20261114120000_playlists.sql) de este repositorio (o `supabase db push` si usas la CLI). Es idempotente: se puede repetir sin perder nada, y no toca `fiora_datos`.
+2. Vuelve a abrir la app. En **Ajustes → Cuenta** verás «Playlists: Guardado en tu cuenta». La primera vez, las playlists que ya tenías se suben solas, con sus canciones y su orden.
+
+Mientras no se ejecute, la app lo detecta, lo indica en Ajustes y sigue funcionando como antes (las playlists se guardan en el dispositivo, en `fiora_datos` y en el bucket de Oracle). No se pierde nada.
+
+**Qué crea la migración**
+
+| Tabla / objeto | Para qué |
+|---|---|
+| `fiora_playlists` | Nombre, descripción, emoji, frase, ánimo, etiquetas, destacadas, colores, portada (ruta y encuadre), módulos y preferencias, fechas y marca de eliminada. |
+| `fiora_playlist_tracks` | Canciones de cada playlist (por su id estable), su **orden manual**, capítulo y fecha en que se añadieron. Una canción no se repite en una playlist. |
+| `fiora_playlist_sections` | Capítulos: nombre, descripción, orden y si están plegados. |
+| `fiora_playlist_photos` | Fotos del carrusel: ruta en Storage, miniatura, tamaño, tipo, dimensiones, descripción y orden. Máximo 15 (también si se escribe directamente en la tabla). |
+| `fiora_playlist_notes` | Notas personales sobre canciones de una playlist. |
+| `fiora_playlist_plays` | Escuchas por playlist, canción y **día** (veces y segundos). Nada más: ni horas exactas ni dispositivo. |
+| `fiora_save_playlist`, `fiora_load_playlists`, `fiora_count_plays` | Guardan una playlist completa en una transacción (si otro dispositivo guardó algo más nuevo, no lo pisa), la cargan y suman escuchas. Devuelven las rutas de imágenes que dejan de usarse para borrarlas de Storage (sin archivos huérfanos). |
+| Bucket `fiora-playlists` | **Privado**, máximo **16 MB** por archivo y solo imágenes (JPEG, PNG, WebP, GIF, AVIF). Carpetas `{tu id}/{playlist}/covers/…` y `…/photos/…`. |
+
+**Seguridad.** Todas las tablas tienen RLS: cada usuario solo puede leer, crear, cambiar o borrar sus propias filas, y las funciones se ejecutan con los permisos de quien llama (`security invoker`). En Storage, cada usuario solo puede leer, subir, sustituir y borrar archivos dentro de su carpeta; nadie más ve tus fotos, ni siquiera con la URL. Los usuarios anónimos no tienen acceso. Las imágenes se descargan con la sesión del usuario y se guardan en caché en el dispositivo. En PostgreSQL nunca se guardan imágenes, solo sus rutas y datos.
+
+**Fotos de más de 16 MB.** El límite está en `js/config.js` (`IMAGE_MAX_BYTES`) y es el mismo que el del bucket. Antes de subir, la app comprueba que el archivo sea de verdad una imagen (por su contenido, no por la extensión), su tamaño y sus dimensiones. Si una foto supera los 16 MB, avisa y deja elegir: usarla **solo en este dispositivo** (se guarda en IndexedDB, nunca se sube y lleva la marca «Solo local»), reducirla y subirla (solo si lo eliges), elegir otra o cancelar. Los demás dispositivos ven la portada sincronizada o la predeterminada. Si el navegador no garantiza que guardará la foto, la app lo dice.
+
+**Sin conexión.** Los cambios se guardan primero en el dispositivo y se suben solos al volver la conexión. Si una subida se corta, la foto se queda en el dispositivo como «Pendiente de subir» y se reintenta. La cabecera de cada playlist muestra si está guardada, guardándose, pendiente o con un error (con un botón para reintentar).
+
+**Pruebas.** En [`tests/playlists`](tests/playlists/README.md) hay pruebas de la migración (incluido RLS) en PostgreSQL y pruebas de la app de punta a punta.
+
 ## Modo desarrollador y etiquetado con IA
 
 Se activa en **Ajustes → Modo desarrollador**. Añade «Editar metadatos» al menú ⋯ de cada canción.
@@ -126,6 +157,10 @@ Y abre `http://localhost:8000`.
 | `js/library.js`, `js/tags.js` | Importación y lectura de etiquetas |
 | `js/cloud.js` | Oracle Cloud Object Storage (uno o varios buckets) |
 | `js/flac.js` | Conversión sin pérdida de WAV a FLAC |
+| `js/playlists-data.js` | Playlists: modelo, sincronización con Supabase (cola de pendientes, reintentos), imágenes pendientes de subir, escuchas por playlist |
+| `js/playlist-ui.js` | Playlists: vista, editor por categorías, carrusel y visor, capítulos, filtros, reordenar, recomendaciones, estadísticas, modos |
+| `js/images.js` | Imágenes de las playlists: validación, miniaturas, colores con contraste, Supabase Storage, caché y fotos solo locales |
+| `supabase/migrations/` | Migración de las playlists para Supabase (tablas, RLS, funciones, bucket) |
 | `js/tagwrite.js` | Escritura de metadatos dentro de MP3, FLAC y M4A |
 | `js/vault.js` | Cifrado de las claves de IA con una clave del dispositivo no exportable |
 | `js/oci.js` | Peticiones firmadas a la API de Oracle (borrado real de archivos) |

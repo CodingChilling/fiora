@@ -101,6 +101,7 @@ export async function clearPersonal() {
   S.playlists = []; S.favs = {}; S.stats = {}; S.stations = []; S.trans = {}; S.hist = { days: {}, hours: Array(24).fill(0), week: Array(7).fill(0) };
   S.settings.buckets = []; S.settings.bucketsAt = 0; delete S.settings.uploadBucket;   // la nube era de la otra persona
   await forgetOci();
+  emit('personal-cleared');   // las playlists en Supabase y sus fotos locales también se olvidan
   await Promise.all([saveKV('favs', false), saveKV('stats', false), saveKV('stations', false), saveKV('trans', false), saveKV('hist', false), saveKV('settings', false)]);
   emit('playlists'); emit('favs');
 }

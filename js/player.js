@@ -20,6 +20,7 @@ export const P = {
   now: null,        // pista que suena
   fromUser: false,  // la pista que suena salió de la cola del usuario
   autoFrom: -1,     // índice de P.queue donde empieza la continuación automática (-1: no hay)
+  ctx: null,        // de dónde viene lo que suena ({playlist: id}), para las estadísticas
   shuffle: false,
   repeat: 'off',    // off | all | one
   get current() { return this.now; },
@@ -114,10 +115,15 @@ function playContext(i) {
 }
 
 /** Sustituye la lista en reproducción y empieza desde `start`. La cola del usuario se conserva. */
-export function playQueue(tracks, start = 0) {
+/**
+ * Reproduce una lista. `ctx` dice de dónde viene (p. ej. {playlist: id}) para las estadísticas
+ * de esa playlist; no cambia nada de cómo suena.
+ */
+export function playQueue(tracks, start = 0, ctx = null) {
   if (!tracks.length) return;
   const first = tracks[start];
   P.autoFrom = -1;
+  P.ctx = ctx;
   if (P.shuffle) {
     original = tracks.slice();
     P.queue = [first, ...shuffled(tracks.filter((_, i) => i !== start))];
@@ -249,6 +255,8 @@ audio.addEventListener('timeupdate', () => {
       (audio.currentTime > 30 || (audio.duration && audio.currentTime > audio.duration / 2))) {
     counted = true;
     countPlay(t.id);
+    // escucha dentro de una playlist (no cuenta lo que suena de la cola manual ni la continuación automática)
+    if (P.ctx && !P.fromUser && (P.autoFrom < 0 || P.index < P.autoFrom)) emit('played', { id: t.id, ctx: P.ctx, secs: Number.isFinite(audio.duration) ? audio.duration : t.duration || 0 });
     if (lastHeard && lastHeard.id !== t.id && Date.now() - lastHeard.at < 30 * 60000) countNext(lastHeard.id, t.id);
     lastHeard = { id: t.id, at: Date.now() };
   }
