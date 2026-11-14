@@ -8,7 +8,8 @@ Tu música, sin suscripciones. Una app web instalable (PWA) para escuchar tu pro
 - **Sin conexión**: la música importada o descargada se guarda en el dispositivo y la app se abre sin internet.
 - **Descargas**: baja una canción, un álbum o una playlist entera dentro de la app, o guarda el archivo en la carpeta de descargas del móvil u ordenador.
 - **Nube personal**: conecta uno o varios buckets de Oracle Cloud Object Storage y escucha tu música desde cualquier dispositivo. En el bucket solo hay música: playlists, favoritos y estadísticas van a tu cuenta.
-- **Compartir tu música con pocas personas**: un enlace de solo lectura para cada una (como mucho 5 a la vez), con caducidad y revocable. Escuchan tus canciones; sus playlists son suyas y nadie ve las de nadie. Más abajo, [Compartir tu música](#compartir-tu-música).
+- **Compartir tu música con pocas personas**: un enlace de solo lectura para cada una (como mucho 5 a la vez), con caducidad y revocable. Escuchan tus canciones; sus playlists son suyas y nadie ve las de nadie, salvo las que cada uno decida compartir. Más abajo, [Compartir tu música](#compartir-tu-música).
+- **Playlists compartidas**: comparte una playlist con quien elijas entre las personas que conectan el mismo bucket; cada una puede editarla (canciones y capítulos) o solo verla, y los cambios hechos a la vez se fusionan sin perder ninguno. Más abajo, [Compartir playlists](#compartir-playlists).
 - **Cuenta**: inicia sesión con correo y contraseña y recupera tus datos en cualquier dispositivo.
 - **Playlists personalizables**: portada propia (recortable) o collage de carátulas, colores automáticos o elegidos, emoji, descripción, frase, etiquetas y estado de ánimo; carrusel de hasta 15 fotos con visor a pantalla completa; orden manual arrastrando, filtros, buscador y ordenaciones que no tocan tu orden; capítulos que se pliegan y se reproducen por separado; hasta 3 canciones destacadas; notas personales en cada canción; «Descubre más» con canciones de tu biblioteca; estadísticas con gráficos; modos sorpresa y ambiente; y módulos que se activan y reordenan por playlist. Todo se sincroniza con tu cuenta (Supabase). **«Canciones que te gustan»** tiene el mismo diseño y se personaliza igual; sus canciones las decide el corazón, por defecto de la más reciente a la más antigua, y se puede reordenar a mano (las nuevas favoritas entran arriba) o volver al orden por fecha. No se puede eliminar.
 - **Favoritos**, aleatorio y repetición, controles en la pantalla de bloqueo.
@@ -57,11 +58,38 @@ Pensado para un número muy pequeño de personas. Necesitas la clave de API de O
 2. Copia el enlace y envíaselo por un canal privado. Solo se muestra esa vez; Fiora no lo guarda en ningún sitio.
 3. La otra persona, con **su propia cuenta**, lo pega en **Ajustes → Nube → Conectar bucket**.
 
-Qué puede hacer: escuchar y descargar tus canciones. Qué no: subir, cambiar ni borrar nada. Oracle rechaza cualquier escritura con ese enlace, también fuera de la app, y la app tampoco lo ofrece. Sus playlists, favoritos y escuchas se guardan en su cuenta de Supabase, nunca en el bucket. No ve los tuyos ni tú los suyos, porque cada fila está protegida con RLS.
+Qué puede hacer: escuchar y descargar tus canciones. Qué no: subir, cambiar ni borrar nada. Oracle rechaza cualquier escritura con ese enlace, también fuera de la app, y la app tampoco lo ofrece. Sus playlists, favoritos y escuchas se guardan en su cuenta de Supabase, nunca en el bucket. No ve los tuyos ni tú los suyos, porque cada fila está protegida con RLS, salvo las playlists que cada uno comparta a propósito (ver abajo).
 
 En la misma pantalla ves los enlaces vigentes y caducados, y puedes **revocar** cualquiera: deja de funcionar al momento. Como mucho hay 5 enlaces vigentes a la vez. Lo que alguien ya haya descargado en su dispositivo no se puede borrar a distancia. Solo se listan los enlaces creados por Fiora; los demás (por ejemplo, la URL de tus dispositivos) se gestionan en la consola de Oracle, en **Bucket → Pre-Authenticated Requests**.
 
 > **Si antes compartiste la URL de lectura y escritura de tu bucket**, quien la tenga puede seguir escribiendo en él y pudo leer la copia de tus datos (`_fiora/datos.json`). Revócala en la consola de Oracle (**Bucket → Pre-Authenticated Requests → Delete**), crea otra para tus dispositivos, pégala en **Ajustes → Nube** y da a cada persona un enlace de solo lectura. Si sus apps llegaron a mezclar tus playlists con las suyas y las guardaron en su cuenta, [`supabase/compartido-limpieza.sql`](supabase/compartido-limpieza.sql) las localiza.
+
+## Compartir playlists
+
+Las personas que conectan un mismo bucket con su propia cuenta forman su **grupo**, y dentro de él cada una puede compartir sus playlists con quien quiera. Hay que ejecutar una vez [`supabase/migrations/20261116120000_shared_playlists.sql`](supabase/migrations/20261116120000_shared_playlists.sql) en el SQL Editor (después de las otras dos; es idempotente).
+
+- **Cómo se forma el grupo.** El dispositivo con la clave de API de Oracle del bucket guarda en él `_fiora/grupo.json`, con un identificador y una clave aleatorios (nada personal). Quien puede leer el bucket, también con un enlace de solo lectura, presenta esa clave a Supabase al sincronizar y entra en el grupo. Supabase solo guarda la huella (SHA-256) de la clave.
+- **Cómo te ven.** Cada persona elige su nombre para el grupo, en **Ajustes → Nube → Playlists compartidas** o la primera vez que comparte. Nunca se muestra el correo.
+- **Compartir.** En la playlist, **Compartir** muestra a las personas del grupo. Marcas a quién y eliges, para cada una, **Puede editar** o **Solo ver**. Si alguna canción de la playlist no está en ese bucket, el diálogo lo avisa, porque quien la reciba no podrá escucharla. «Canciones que te gustan» no se comparte.
+- **Qué ve quien la recibe.** Aparece en **Playlists → Compartidas contigo**, con el nombre de quien la compartió. Ve canciones, capítulos, portada, colores, descripción, etiquetas y fotos del carrusel. **No ve** las notas personales ni las escuchas, y sus propias escuchas de esa playlist no se guardan.
+- **Qué puede hacer.**
+  - Con **Puede editar**: añadir canciones (desde «Descubre más», arrastrando o con «Añadir a playlist…»), quitarlas, ordenarlas, moverlas de capítulo y crear, renombrar o borrar capítulos.
+  - El aspecto, las fotos, las destacadas, compartirla y eliminarla son solo de su dueño.
+  - Con **Solo ver**: escucharla y descargarla.
+  - Cualquiera puede **dejar de verla** desde su menú ⋯.
+- **Cambios a la vez.** Si dos personas (o dos dispositivos) la cambian a la vez, no se pisa nada.
+  - Cada guardado lleva la versión de la que partía. Si alguien guardó después, la app trae lo nuevo, junta los dos cambios y vuelve a guardar.
+  - Lo que uno añade se añade y lo que uno quita se quita. Si solo uno reordenó, vale su orden.
+- **Quitar el acceso.**
+  - Al **revocar el enlace** de una persona en Ajustes → Nube, la app cambia la clave del grupo. Quien sigue pudiendo leer el bucket entra solo con la nueva al sincronizar; quien ya no, deja de ver al momento todo lo que le habían compartido.
+  - Si revocas un enlace desde la consola de Oracle, pulsa **Renovar el grupo** en Ajustes → Nube.
+  - Desmarcar a alguien en **Compartir** o eliminar la playlist también le quita el acceso.
+- **Seguridad.**
+  - Las tablas nuevas tienen RLS y ningún acceso directo: todo pasa por funciones que comprueban quién llama.
+  - Solo se comparte con miembros vigentes del grupo, y Supabase comprueba en cada lectura que quien recibe y quien comparte siguen en él.
+  - Quien colabora solo puede cambiar canciones y capítulos, aunque llame a Supabase directamente.
+  - En Storage, la portada y las fotos de una playlist compartida se pueden leer, nunca cambiar.
+  - Pruebas en [`tests/sharing`](tests/sharing/README.md).
 
 ## Cuentas (iniciar sesión)
 
@@ -213,6 +241,7 @@ Y abre `http://localhost:8000`.
 | `supabase/migrations/` | Migraciones para Supabase: playlists y Explorar (tablas, RLS, funciones, bucket) |
 | `js/tagwrite.js` | Escritura de metadatos dentro de MP3, FLAC y M4A |
 | `js/vault.js` | Cifrado de las claves de IA con una clave del dispositivo no exportable |
+| `js/groups.js`, `js/merge.js` | Grupo de cada bucket (para compartir playlists) y fusión de cambios hechos a la vez |
 | `js/oci.js` | Peticiones firmadas a la API de Oracle: comprobar la clave, borrar archivos y crear, listar y revocar enlaces de solo lectura |
 | `js/account.js`, `js/sync.js`, `js/config.js` | Cuentas con Supabase y sincronización de datos |
 | `js/sources.js` | Catálogos de música libre |

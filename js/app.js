@@ -13,6 +13,7 @@ import * as pldata from './playlists-data.js';
 import { initPlaylists } from './playlist-ui.js';
 import { initExplore } from './explore-ui.js';
 import * as rdata from './radio-data.js';
+import * as groups from './groups.js';
 import * as account from './account.js';
 import * as src from './sources.js';
 import { getLyrics } from './lyrics.js';
@@ -759,16 +760,18 @@ async function viewSettings() {
        <form class="stack" data-form="share" data-bid="${esc(b.id)}">
          <label class="field">${icon('user')}<input name="who" placeholder="Para quién (p. ej. Ana)" autocomplete="off" maxlength="40" required></label>
          <label class="field">${icon('lock')}<select name="days" aria-label="Caducidad del enlace"><option value="30">Caduca en 1 mes</option><option value="90">Caduca en 3 meses</option><option value="180" selected>Caduca en 6 meses</option><option value="365">Caduca en 1 año</option></select></label>
-         <div class="actions"><button class="btn">${icon('plus')}Crear enlace de solo lectura</button></div></form></div>`;
+         <div class="actions"><button class="btn">${icon('plus')}Crear enlace de solo lectura</button>${groups.of(b.id)?.owner ? `<button type="button" class="btn ghost" data-act="group-rotate" data-bid="${esc(b.id)}">${icon('sync')}Renovar el grupo</button>` : ''}</div></form></div>`;
   const cloudPanel = bks.length
     ? `<p>${plural(inCloud, 'canción', 'canciones')} en la nube${S.settings.lastSync ? ` · última sincronización: ${new Date(S.settings.lastSync).toLocaleString('es')}` : ''}.</p>
        <ul class="buckets">${bks.map(b => {
          const n = tracks.filter(t => t.cloudName && (t.bucketId || bks[0].id) === b.id).length;
          const mine = cloud.owns(b), isTarget = !!target && b.id === target.id;
-         return `<li><span class="badge-ic">${icon(mine ? 'cloud' : 'lock')}</span><span class="row-text"><b>${esc(b.name)}</b><small>${plural(n, 'canción', 'canciones')} · ${mine ? 'tuyo' : 'solo lectura'}${isTarget && own.length > 1 ? ' · las subidas van aquí' : ''}</small></span>
+         const g = groups.of(b.id), grp = g?.status === 'ok' ? ` · grupo de ${plural(g.members || 1, 'persona', 'personas')}` : '';
+         return `<li><span class="badge-ic">${icon(mine ? 'cloud' : 'lock')}</span><span class="row-text"><b>${esc(b.name)}</b><small>${plural(n, 'canción', 'canciones')} · ${mine ? 'tuyo' : 'solo lectura'}${grp}${isTarget && own.length > 1 ? ' · las subidas van aquí' : ''}</small></span>
            ${mine && !isTarget ? `<button class="chip" data-act="bucket-default" data-bid="${esc(b.id)}">Subir aquí</button>` : ''}
            <button class="icon-btn" data-act="bucket-remove" data-bid="${esc(b.id)}" aria-label="Desconectar ${esc(b.name)}">${icon('x')}</button></li>`;
        }).join('')}</ul>
+       ${groupsPanel()}
        ${own.length < bks.length ? `<p class="muted">${own.length ? 'En los buckets de solo lectura (de otra persona, o sobre los que tu clave no tiene permiso) no se sube, cambia ni borra nada.' : 'En este dispositivo la nube es de solo lectura: escuchas y descargas, pero no se sube, cambia ni borra nada. Si el bucket es tuyo, añade su clave de API de Oracle en Modo desarrollador.'}</p>` : ''}
        <div class="actions"><button class="btn primary" data-act="cloud-sync">${icon('sync')}Sincronizar ahora</button>
        ${onlyLocal && target ? `<button class="btn" data-act="cloud-upload-all">${icon('cloudUp')}Subir ${plural(onlyLocal, 'canción', 'canciones')}${own.length > 1 ? ` a «${esc(target.name)}»` : ' a la nube'}</button>` : ''}</div>
@@ -855,6 +858,18 @@ async function viewSettings() {
     <p class="muted" style="text-align:center">Fiora · Letras de LRCLIB · Música libre de Internet Archive, Openverse, Wikimedia Commons y Jamendo · Radios de Radio Browser</p>`);
   loadShares();
 }
+// Grupos de los buckets: con quién se pueden compartir playlists y con qué nombre te ven.
+function groupsPanel() {
+  if (!account.user()) return '';
+  if (groups.status() === 'missing') return `<div class="sub-panel"><b>Falta preparar Supabase para compartir playlists</b>
+    <small>Para compartir playlists con quienes comparten tus buckets, ejecuta una vez <code>supabase/migrations/20261116120000_shared_playlists.sql</code> en Supabase → SQL Editor. No borra nada.</small></div>`;
+  const list = cloud.buckets().map(b => ({ b, g: groups.of(b.id) })).filter(x => x.g?.status === 'ok');
+  if (!list.length) return '';
+  return `<div class="sub-panel"><b>Playlists compartidas</b>
+    <small>Quienes conectan el mismo bucket con su cuenta forman un grupo: puedes compartir playlists con ellos (botón «Compartir» de cada playlist). Te ven por el nombre que elijas, nunca por tu correo.</small>
+    <ul class="buckets">${list.map(({ b, g }) => `<li><span class="badge-ic">${icon('user')}</span><span class="row-text"><b>${g.name ? esc(g.name) : 'Sin nombre todavía'}</b><small>tu nombre en «${esc(b.name)}» · ${plural(g.members || 1, 'persona', 'personas')} en el grupo</small></span>
+      <button class="chip" data-act="group-name" data-bid="${esc(b.id)}">${g.name ? 'Cambiar' : 'Elegir nombre'}</button></li>`).join('')}</ul></div>`;
+}
 // Enlaces de solo lectura de cada bucket propio (se piden a Oracle después de pintar Ajustes).
 const fmtDay = ms => new Date(ms).toLocaleDateString('es', { day: 'numeric', month: 'long', year: 'numeric' });
 async function loadShares() {
@@ -912,6 +927,8 @@ async function doCloudSync(silent) {
     console.warn(e);
     if (t) t.done(`No se pudo sincronizar: ${e.message}`, 6000);
   }
+  await groups.sync().catch(e => console.warn('Grupos', e));   // y, con ello, las playlists compartidas
+  pldata.pullShared();   // playlists que te hayan compartido (o dejado de compartir) desde la última vez
   refresh();
 }
 const mb = n => `${(n / 1048576).toLocaleString('es', { maximumFractionDigits: 1 })} MB`;
@@ -1350,6 +1367,8 @@ function exploreChip() {
     : st.mode === 'missing' ? ['warn', 'Solo en este dispositivo: falta preparar Supabase'] : st.mode === 'offline' ? ['warn', 'Sin conexión: se guardará al volver'] : ['busy', 'Comprobando…'];
   return `<span class="sync-chip ${cls}" role="status" data-xsync>${icon(cls === 'ok' ? 'cloud' : 'sync')}<span>${esc(txt)}</span></span>`;
 }
+// Al cambiar los grupos (alguien entra o sale, o se cambia la clave) se vuelven a mirar las compartidas.
+on('groups', () => { pldata.pullShared(); if (location.hash.startsWith('#/ajustes')) refresh(); });
 on('explore-sync', () => { for (const el of $$('[data-xsync]')) el.outerHTML = exploreChip(); });
 const ROUTES = { inicio: viewHome, biblioteca: viewLibrary, album: viewAlbum, artista: viewArtist, playlists: () => PL.viewList(), playlist: id => PL.viewPlaylist(id), favoritos: () => PL.viewPlaylist('favoritos'), mix: viewMix, estadisticas: viewStats, genero: n => viewTag('genero', n), ambiente: n => viewTag('ambiente', n), explorar: (...a) => EX.view(...a), archivo: viewArchive, ajustes: viewSettings, repetidas: viewDuplicates };
 
@@ -1539,12 +1558,29 @@ const ACTIONS = {
     catch (e) { t.done(e.message, 9000); }
     refresh();
   },
+  async 'group-rotate'(el) {
+    if (!(await confirmDlg('¿Renovar el grupo?', 'Se cambia la clave del grupo de este bucket. Quien siga pudiendo leer el bucket entra solo de nuevo al sincronizar; quien ya no (por ejemplo, un enlace que revocaste en la consola de Oracle) deja de ver las playlists compartidas.', 'Renovar'))) return;
+    const t = toast('Renovando…', 0);
+    try { await groups.rotate(el.dataset.bid); await groups.sync(); t.done('Grupo renovado'); }
+    catch (e) { t.done(e.message, 8000); }
+  },
+  async 'group-name'(el) {
+    const g = groups.of(el.dataset.bid);
+    if (!g?.id) return;
+    const name = await ask({ title: 'Tu nombre en el grupo', text: 'Lo verán quienes comparten este bucket al compartir playlists contigo. Nunca se muestra tu correo.', value: g.name || '', placeholder: 'Por ejemplo, Pablo', ok: 'Guardar' });
+    if (name === null) return;
+    try { await groups.setName(g.id, name); toast('Nombre guardado'); } catch (e) { toast(e.message, 6000); }
+  },
   async 'share-revoke'(el) {
     const b = cloud.buckets().find(x => x.id === el.dataset.bid);
     if (!b || !(await confirmDlg(`¿Revocar el enlace de ${el.dataset.who}?`, `Dejará de funcionar al momento: ${el.dataset.who} ya no podrá escuchar ni descargar las canciones de «${b.name}». Lo que ya descargó en su dispositivo no se puede borrar desde aquí.`, 'Revocar'))) return;
     const t = toast('Revocando…', 0);
-    try { await oci.revokeShare(b.url, el.dataset.pid); t.done('Enlace revocado'); }
-    catch (e) { t.done(e.message, 8000); }
+    try {
+      await oci.revokeShare(b.url, el.dataset.pid);
+      // nueva clave del grupo: quien ya no puede leer el bucket deja de ver las playlists compartidas
+      const rotated = await groups.rotate(b.id).catch(e => { console.warn('Grupo', e); return false; });
+      t.done(rotated ? 'Enlace revocado: ya no puede escuchar el bucket ni ver las playlists que se le compartieron' : 'Enlace revocado');
+    } catch (e) { t.done(e.message, 8000); }
     loadShares();
   },
   async 'oci-purge'() {
@@ -2019,6 +2055,7 @@ async function start() {
   }
   const linked = await account.init();   // puede venir de un enlace de correo de Supabase
   await pldata.init();
+  await groups.init();                  // grupos de los buckets (playlists compartidas)
   await rdata.init();                    // Explorar: favoritas, colecciones, pasaporte y preferencias                   // playlists: datos nuevos, cola pendiente y sincronización con Supabase
   addEventListener('hashchange', route);
   await route();

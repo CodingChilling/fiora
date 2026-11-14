@@ -163,14 +163,14 @@ const sql = async q => (await fetch(API + '/__sql', { method: 'POST', body: q })
   const rows = await sql("select u.email, p.name from public.fiora_playlists p join auth.users u on u.id = p.user_id where p.name in ('Solo mía', 'De Ana', 'Secreta del dueño') order by 2");
   check(JSON.stringify(rows.rows || rows) === JSON.stringify([{ email: 'ana@example.com', name: 'De Ana' }, { email: 'dueno@example.com', name: 'Solo mía' }]), 'en Supabase cada playlist está solo en la cuenta de su dueño');
   s = await oracle();
-  check(!s.log.some(l => / PUT /.test(l) && !/_fiora\/datos\.json|intruso/.test(l)) && !s.objects.some(([n]) => /datos|playlist/i.test(n)), 'nada de playlists, favoritos ni escuchas se ha escrito en el bucket');
+  check(!s.log.some(l => / PUT /.test(l) && !/_fiora\/(datos|grupo)\.json|intruso/.test(l)) && !s.objects.some(([n]) => /datos|playlist/i.test(n)), 'nada de playlists, favoritos ni escuchas se ha escrito en el bucket');
 
   // --- límite de enlaces
   const more = await ev(O, async url => { const oci = await import('./js/oci.js'); const r = []; for (const w of ['Bea', 'Carla', 'Dani', 'Eva', 'Fran']) { try { await oci.createShare(url, w, 30); r.push('ok'); } catch (e) { r.push(e.message); } } return r; }, OWNER_PAR);
   check(more.slice(0, 4).every(x => x === 'ok') && /revoca/.test(more[4]), `como mucho 5 enlaces vigentes a la vez (${more[4]})`);
   await O.goto(APP + '#/ajustes');
   await until(O, () => document.querySelector('[data-shares]')?.innerText.includes('Eva'), null, 8000);
-  check(await O.$eval('[data-form="share"] button', x => x.disabled), 'con 5 enlaces el botón de crear otro queda desactivado');
+  check(await until(O, () => document.querySelector('[data-form="share"] button')?.disabled, null, 8000), 'con 5 enlaces el botón de crear otro queda desactivado');
 
   // --- revocar el de Ana
   await O.locator('[data-shares] li', { hasText: 'Ana' }).locator('[data-act="share-revoke"]').click();

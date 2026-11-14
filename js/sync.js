@@ -7,7 +7,9 @@ import { S, saveKV, emit, applyEdit, fileSig } from './store.js';
 
 /** Datos que se guardan en la cuenta. La clave de API de Oracle y las de IA nunca salen del dispositivo. */
 export function snapshot(withPrefs = false) {
-  const data = { v: 2, at: Date.now(), playlists: S.playlists, favs: S.favs, stats: S.stats, stations: S.stations, edits: S.edits, trans: S.trans, hist: S.hist };
+  // las compartidas contigo son de otras personas: nunca van a tu cuenta como tuyas
+  const playlists = S.playlists.filter(p => !p.shared).map(({ base, baseAt, ...p }) => p);
+  const data = { v: 2, at: Date.now(), playlists, favs: S.favs, stats: S.stats, stations: S.stations, edits: S.edits, trans: S.trans, hist: S.hist };
   if (withPrefs) {
     const s = S.settings;
     if (s.buckets?.length && !s.bucketsAt) s.bucketsAt = 1;   // conexión hecha antes de tener cuenta
@@ -26,6 +28,7 @@ export async function merge(remote) {
   if (!remote || typeof remote !== 'object') return false;
   let changed = false;
   for (const rp of remote.playlists || []) {
+    if (rp.shared || String(rp.id).startsWith('sh~')) continue;
     const lp = S.playlists.find(p => p.id === rp.id);
     if (!lp) { S.playlists.push(rp); await db.put('playlists', rp.id, rp); changed = true; }
     else if ((rp.updatedAt || 0) > (lp.updatedAt || 0)) { Object.assign(lp, rp); await db.put('playlists', lp.id, lp); changed = true; }

@@ -9,11 +9,18 @@
 //
 // Lo que es solo de este dispositivo (fotos de más de 16 MB, subidas pendientes, orden local del
 // carrusel) se guarda aparte, en `plLocal`, y nunca se envía a Supabase.
+//
+// Playlists compartidas contigo (de otras personas del grupo de un bucket, ver groups.js): viven
+// también en S.playlists, con id `sh~{dueño}~{id}` y `shared = {owner, pid, ownerName, role, group}`.
+// Nunca se guardan en tu cuenta como tuyas; si puedes editarlas, tus cambios de canciones y
+// capítulos van a la playlist de su dueño (fiora_save_shared_playlist). `base` es la última
+// versión común de canciones y capítulos, para fusionar cambios hechos a la vez (merge.js).
 import * as db from './db.js';
 import * as account from './account.js';
 import * as img from './images.js';
 import { S, emit, on, saveKV, savePlaylist, dayKey } from './store.js';
 import { MAX_FEATURED, MAX_PHOTOS } from './config.js';
+import { mergeLists, listsOf } from './merge.js';
 
 // ------------------------------------------------------------ modelo
 /** Módulos de la vista de una playlist: [id, nombre]. Los «bloques» se pueden reordenar. */
@@ -145,17 +152,30 @@ async function mergeRemote(r) {
   if (!l) {
     if (r.deleted) return false;
     const p = normalize(r);
+    p.base = listsOf(r); p.baseAt = r.updatedAt || 0;
     S.playlists.push(p); await db.put('playlists', p.id, p);
     return true;
   }
-  if ((r.updatedAt || 0) > (l.updatedAt || 0) || (l.autoOnly && !r.deleted)) {
-    // gana la versión de Supabase (más reciente, o la de la cuenta frente a una copia creada aquí sin tocar)
-    for (const k of Object.keys(l)) if (!(k in r)) delete l[k];
-    Object.assign(l, normalize(r));
-    st.pending.delete(l.id);
+  // ¿Ha cambiado allí desde la última versión que conoce este dispositivo?
+  const news = l.baseAt ? (r.updatedAt || 0) > l.baseAt : (r.updatedAt || 0) > (l.updatedAt || 0);
+  if (news || (l.autoOnly && !r.deleted)) {
+    if (st.pending.has(l.id) && l.base && !r.deleted && !l.deleted && !l.autoOnly) {
+      // cambios aquí sin subir y allí (otro dispositivo o quien colabora): se fusionan canciones y
+      // capítulos; lo demás (aspecto, textos) solo lo cambia su dueño y se queda lo de aquí
+      Object.assign(l, mergeLists(l.base, listsOf(l), listsOf(r)));
+      normalize(l);
+      l.updatedAt = Math.max(Date.now(), (r.updatedAt || 0) + 1, (l.updatedAt || 0) + 1);
+    } else {
+      // gana la versión de Supabase (más reciente, o la de la cuenta frente a una copia creada aquí sin tocar)
+      for (const k of Object.keys(l)) if (!(k in r)) delete l[k];
+      Object.assign(l, normalize(r));
+      st.pending.delete(l.id);
+    }
+    l.base = listsOf(r); l.baseAt = r.updatedAt || 0;
     await db.put('playlists', l.id, l);
     return true;
   }
+  if (!l.baseAt && (r.updatedAt || 0) === (l.updatedAt || 0)) { l.base = listsOf(r); l.baseAt = r.updatedAt || 0; }
   if ((l.updatedAt || 0) > (r.updatedAt || 0)) st.pending.add(l.id);   // la del dispositivo es más nueva
   return false;
 }
@@ -175,7 +195,7 @@ export async function pull() {
     if (!st.fullPulled) {
       // Playlists que solo estaban en el dispositivo (las de antes de esta versión): se suben.
       const remote = new Set((rows || []).map(r => r.id));
-      for (const p of S.playlists) if (!remote.has(p.id)) st.pending.add(p.id);
+      for (const p of S.playlists) if (!remote.has(p.id) && !p.shared) st.pending.add(p.id);
       st.fullPulled = true;
     }
     st.lastPull = Date.now();
@@ -187,7 +207,7 @@ export async function pull() {
     else if (e.network) st.mode = 'offline';
     else { st.error = e.message; console.warn('Playlists: no se pudieron traer', e); }
   } finally { st.busy = false; announce(); }
-  if (st.mode === 'ready') { await push(); processUploads(); flushPlays(); }
+  if (st.mode === 'ready') { await push(); processUploads(); flushPlays(); pullShared(); }
 }
 
 // ------------------------------------------------------------ subir a Supabase
@@ -207,10 +227,12 @@ export async function push() {
       const p = S.playlists.find(x => x.id === id);
       if (!p) { st.pending.delete(id); continue; }
       const sent = toRemote(p);
+      if (p.baseAt) sent.baseAt = p.baseAt;
       const res = await rpc('fiora_save_playlist', { p: sent });
       if (res?.status === 'stale') { st.busy = false; st.fullPulled = false; await pull(); return; }   // otro dispositivo guardó algo más nuevo
       // si se cambió mientras se guardaba, sigue pendiente (se sube la versión nueva en la siguiente vuelta)
       if ((p.updatedAt || 0) <= sent.updatedAt) st.pending.delete(id);
+      p.base = listsOf(sent); p.baseAt = sent.updatedAt;
       await persist();
       if (res?.removed?.length) img.remove(res.removed).catch(e => console.warn('No se pudieron borrar imágenes viejas', e));
     }
@@ -311,14 +333,117 @@ export async function playRows(pid) {
   return Object.entries(plays.agg[pid] || {}).map(([k, [n, s]]) => { const [t, d] = [k.slice(0, k.lastIndexOf('|')), k.slice(k.lastIndexOf('|') + 1)]; return { track_id: t, day: d, plays: n, seconds: s }; });
 }
 
+// ------------------------------------------------------------ playlists compartidas
+export const sharedId = (owner, pid) => `sh~${owner}~${pid}`;
+export const isShared = p => !!p?.shared;
+/** ¿Puede quien usa la app cambiar las canciones y capítulos de esta playlist? */
+export const canEdit = p => !p?.shared || p.shared.role === 'edit';
+const sh = { mode: 'unknown', pending: new Set(), busy: false };
+let myShares = {};   // {playlistId: [{id, name, edit, group, valid}]}: con quién compartes las tuyas
+const persistShared = () => db.put('kv', 'plShared', { pending: [...sh.pending] }).catch(() => {});
+export const sharedStatus = () => ({ mode: sh.mode, pending: sh.pending.size, busy: sh.busy, again: !!sh.again });
+export const sharesOf = pid => myShares[pid] || [];
+
+/** Trae las playlists que otras personas comparten contigo y quita las que ya no. */
+export async function pullShared() {
+  if (!account.user() || st.mode !== 'ready') return;
+  if (sh.busy) { sh.again = true; return; }   // se repite al acabar la que está en marcha
+  sh.busy = true; sh.again = false;
+  let changed = false;
+  try {
+    const [rows, mine] = await Promise.all([rpc('fiora_load_shared_playlists', {}), rpc('fiora_my_shares', {})]);
+    sh.mode = 'ready';
+    if (JSON.stringify(mine || {}) !== JSON.stringify(myShares)) { myShares = mine || {}; changed = true; }
+    const seen = new Set();
+    for (const r of rows || []) {
+      const { owner, ownerName, role, group, ...rest } = r;
+      const id = sharedId(owner, rest.id), meta = { owner, pid: rest.id, ownerName, role, group };
+      seen.add(id);
+      const remote = normalize({ ...rest, id, shared: meta, notes: {} });
+      const l = S.playlists.find(x => x.id === id);
+      if (!l) { Object.assign(remote, { base: listsOf(remote), baseAt: remote.updatedAt }); S.playlists.push(remote); await db.put('playlists', id, remote); changed = true; continue; }
+      if ((remote.updatedAt || 0) <= (l.baseAt || 0) && JSON.stringify(l.shared) === JSON.stringify(meta)) continue;
+      const mine = sh.pending.has(id) && role === 'edit' && l.base ? listsOf(l) : null, base = l.base;
+      for (const k of Object.keys(l)) delete l[k];
+      Object.assign(l, remote, { base: listsOf(remote), baseAt: remote.updatedAt });
+      if (mine) { Object.assign(l, mergeLists(base, mine, l.base)); normalize(l); l.updatedAt = Math.max(Date.now(), remote.updatedAt + 1); }
+      else sh.pending.delete(id);
+      await db.put('playlists', id, l);
+      changed = true;
+    }
+    // ya no compartidas contigo (o eliminadas, o ya no estás en el grupo)
+    for (const p of S.playlists.filter(x => x.shared && !seen.has(x.id))) {
+      S.playlists.splice(S.playlists.indexOf(p), 1);
+      await db.del('playlists', p.id);
+      sh.pending.delete(p.id);
+      changed = true;
+    }
+  } catch (e) {
+    if (isMissing(e)) sh.mode = 'missing';
+    else if (!e.network) console.warn('Playlists compartidas', e);
+  } finally { sh.busy = false; persistShared(); }
+  if (changed) emit('playlists');
+  if (sh.again) return pullShared();
+  if (sh.pending.size) pushShared();
+}
+
+let shTimer = null;
+function schedulePushShared(ms = 1200) { clearTimeout(shTimer); shTimer = setTimeout(pushShared, ms); }
+async function pushShared() {
+  if (!sh.pending.size || st.mode !== 'ready') return;
+  if (sh.busy) return schedulePushShared(800);
+  sh.busy = true;
+  let stale = false, retry = false;
+  try {
+    for (const id of [...sh.pending]) {
+      const p = S.playlists.find(x => x.id === id);
+      if (!p || p.shared?.role !== 'edit') { sh.pending.delete(id); continue; }
+      const lists = listsOf(p), sent = { id: p.shared.pid, updatedAt: p.updatedAt || Date.now(), baseAt: p.baseAt || 0, ...lists };
+      const res = await rpc('fiora_save_shared_playlist', { owner: p.shared.owner, p: sent });
+      if (res?.status === 'stale') { stale = true; break; }
+      if ((p.updatedAt || 0) <= sent.updatedAt) sh.pending.delete(id);
+      p.base = lists; p.baseAt = sent.updatedAt;
+      await db.put('playlists', p.id, p);
+    }
+  } catch (e) {
+    if (e.code === '42501') { stale = true; for (const id of sh.pending) { const p = S.playlists.find(x => x.id === id); if (p) delete p.base; } sh.pending.clear(); }   // ya no puedes editarla
+    else retry = true;
+  } finally { sh.busy = false; persistShared(); }
+  if (stale) return pullShared();   // fusiona con lo de la otra persona y vuelve a guardar
+  if (retry) schedulePushShared(15000);
+}
+
+/** Comparte una playlist tuya con personas de un grupo: [{id, edit}]. Vacío deja de compartirla allí. */
+export async function share(p, groupId, members) {
+  if (p.shared || isFavs(p)) throw new Error('Esta playlist no se puede compartir');
+  if (st.mode !== 'ready') throw new Error('Para compartir hace falta conexión y sesión iniciada con Supabase preparado');
+  if (st.pending.has(p.id)) await push();
+  if (st.pending.has(p.id)) throw new Error('La playlist aún no se ha guardado en tu cuenta; prueba en un momento');
+  await rpc('fiora_share_playlist', { pid: p.id, g: groupId, members });
+  myShares = (await rpc('fiora_my_shares', {})) || {};
+  emit('playlists');
+}
+/** Deja de ver una playlist que te compartieron. */
+export async function leave(p) {
+  if (!p.shared) return;
+  await rpc('fiora_leave_shared_playlist', { owner: p.shared.owner, pid: p.shared.pid });
+  S.playlists.splice(S.playlists.indexOf(p), 1);
+  sh.pending.delete(p.id);
+  await db.del('playlists', p.id);
+  persistShared();
+  emit('playlists');
+}
+
 // ------------------------------------------------------------ arranque
 export async function init() {
   const saved = await db.get('kv', 'plsync').catch(() => null);
   if (saved) { st.pending = new Set(saved.pending || []); st.lastPull = saved.lastPull || 0; }
   local = (await db.get('kv', 'plLocal').catch(() => null)) || {};
   plays = { queue: [], agg: {}, ...((await db.get('kv', 'plPlays').catch(() => null)) || {}) };
+  sh.pending = new Set((await db.get('kv', 'plShared').catch(() => null))?.pending || []);
   for (const p of S.playlists) normalize(p);
   on('playlist-saved', p => {
+    if (p.shared) { normalize(p); if (p.shared.role === 'edit' && account.user()) { sh.pending.add(p.id); persistShared(); schedulePushShared(); } return; }
     if (p.autoOnly && !savingFavs) delete p.autoOnly;   // el usuario la ha cambiado: ya es «suya» en este dispositivo
     normalize(p);
     if (account.user()) { st.pending.add(p.id); persist(); schedulePush(); }
@@ -330,12 +455,13 @@ export async function init() {
   on('personal-cleared', () => setTimeout(syncFavs, 0));
   on('played', ({ id, ctx, secs }) => {
     const p = ctx?.playlist && S.playlists.find(x => x.id === ctx.playlist);
-    if (p && !p.deleted && p.trackIds.includes(id)) recordPlay(p.id, id, secs);
+    if (p && !p.deleted && !p.shared && p.trackIds.includes(id)) recordPlay(p.id, id, secs);   // las escuchas de compartidas no se guardan
   });
   on('account', () => { st.fullPulled = false; if (account.user()) pull(); else { st.mode = 'local'; announce(); } });
   on('personal-cleared', async () => {
     // otra cuenta en este dispositivo: lo de la anterior no se mezcla
     st.pending.clear(); st.lastPull = 0; st.fullPulled = false; remoteRows.clear();
+    sh.pending.clear(); sh.mode = 'unknown'; myShares = {}; persistShared();
     for (const l of Object.values(local)) for (const id of [l.cover, ...l.photos].filter(Boolean)) await img.dropLocal(id);
     local = {}; plays = { queue: [], agg: {} };
     await Promise.all([persist(), saveLocalState(), savePlays()]);

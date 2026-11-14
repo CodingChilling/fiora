@@ -8,6 +8,8 @@ import * as img from './images.js';
 import * as lib from './library.js';
 import * as player from './player.js';
 import * as account from './account.js';
+import * as groups from './groups.js';
+import * as cloud from './cloud.js';
 import { icon } from './icons.js';
 import { IMAGE_MAX_BYTES, MAX_PHOTOS, MAX_FEATURED } from './config.js';
 
@@ -21,6 +23,9 @@ export function initPlaylists(c) {
   const { esc, enc, plural, totalTime, toast, openSheet, sheet, confirmDlg, menu, show, rows, empty, refresh, playable, num } = c;
   const byId = id => S.playlists.find(p => p.id === id && !p.deleted);
   const tracksOf = p => p.trackIds.map(id => S.tracks.get(id)).filter(Boolean);
+  const editable = p => data.canEdit(p);                 // canciones y capítulos
+  const mine = p => !p.shared;                           // aspecto, fotos, notas, destacadas, eliminar
+  const sharedLine = p => `Compartida por ${esc(p.shared.ownerName || 'otra persona')} · ${p.shared.role === 'edit' ? 'puedes editar' : 'solo ver'}`;
   const views = new Map();   // estado de la vista de cada playlist (búsqueda, orden, filtros…) mientras se usa la app
   const viewOf = p => {
     if (!views.has(p.id)) views.set(p.id, { q: '', sort: 'custom', f: {}, reorder: false, discover: 'similar', page: 0, ...(p.settings.view || {}) });
@@ -100,7 +105,7 @@ export function initPlaylists(c) {
       const b = await coverBlob(p);
       if (!b) return;
       p.colors.auto = await img.dominantColors(b);
-      await savePlaylist(p);
+      if (mine(p)) await savePlaylist(p);
       const hero = $(`.pl[data-pl="${CSS.escape(p.id)}"]`);
       if (hero) hero.style.cssText = themeStyle(p);
     } catch (e) { console.warn('Colores de la portada', e); }
@@ -213,14 +218,19 @@ export function initPlaylists(c) {
   function viewList() {
     if (data.reconcileFavs()) savePlaylist(byId(data.FAVS));
     const fp = byId(data.FAVS);
-    const pls = livePlaylists().filter(p => !data.isFavs(p)).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    const all = livePlaylists().filter(p => !data.isFavs(p)).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    const pls = all.filter(mine), shared = all.filter(p => p.shared);
+    const card = (p, sub) => `<a class="card pl-card" href="#/playlist/${enc(p.id)}" style="${themeStyle(p)}">${coverHTML(p)}
+          <span><b>${p.emoji ? `${esc(p.emoji)} ` : ''}${esc(p.name)}</b><small>${sub}</small></span></a>`;
+    const sharedWith = p => { const n = data.sharesOf(p.id).filter(x => x.valid).length; return n ? ` · compartida con ${n}` : ''; };
     show(`<div class="head"><h1>Playlists</h1><button class="btn primary" data-act="new-playlist">${icon('plus')}Nueva playlist</button></div>
       <p class="pl-list-sync">${syncChip()}</p>
       <div class="grid pl-grid">
         <a class="card pl-card" href="#/favoritos" style="${themeStyle(fp)}">${coverHTML(fp)}<span><b>${fp.emoji ? `${esc(fp.emoji)} ` : ''}${esc(fp.name)}</b><small>${plural(fp.trackIds.length, 'canción', 'canciones')} · tus «me gusta»</small></span></a>
-        ${pls.map(p => `<a class="card pl-card" href="#/playlist/${enc(p.id)}" style="${themeStyle(p)}">${coverHTML(p)}
-          <span><b>${p.emoji ? `${esc(p.emoji)} ` : ''}${esc(p.name)}</b><small>${plural(p.trackIds.length, 'canción', 'canciones')}${p.tags.length ? ` · ${esc(p.tags.slice(0, 2).join(' · '))}` : ''}</small></span></a>`).join('')}
+        ${pls.map(p => card(p, `${plural(p.trackIds.length, 'canción', 'canciones')}${sharedWith(p)}${p.tags.length ? ` · ${esc(p.tags.slice(0, 2).join(' · '))}` : ''}`)).join('')}
       </div>
+      ${shared.length ? `<h2 class="pl-shared-head">Compartidas contigo</h2>
+        <div class="grid pl-grid">${shared.map(p => card(p, `${plural(p.trackIds.length, 'canción', 'canciones')} · de ${esc(p.shared.ownerName || 'otra persona')}${p.shared.role === 'edit' ? ' · puedes editar' : ''}`)).join('')}</div>` : ''}
       ${pls.length ? '' : '<p class="muted" style="margin-top:18px">Crea una playlist o usa el menú ⋯ de cualquier canción para añadirla a una.</p>'}`);
     hydrate();
   }
@@ -267,7 +277,9 @@ export function initPlaylists(c) {
     if (!p) return show(empty('list', 'Playlist no encontrada', 'Puede que se haya eliminado.'));
     const v = viewOf(p), tracks = tracksOf(p), s = p.settings;
     const missing = p.trackIds.length - tracks.length;
-    const blocks = s.modules.filter(([m, on]) => on && data.BLOCKS.includes(m)).map(([m]) => m);
+    // en las compartidas contigo no hay notas ni estadísticas (son de su dueño), ni «Descubre más» si solo puedes verla
+    const hidden = p.shared ? ['stats', 'notes', ...(editable(p) ? [] : ['discover'])] : [];
+    const blocks = s.modules.filter(([m, on]) => on && data.BLOCKS.includes(m) && !hidden.includes(m)).map(([m]) => m);
     if (!blocks.includes('songs')) blocks.push('songs');   // la lista de canciones siempre está
     const html = { photos: photosBlock, featured: featuredBlock, songs: songsBlock, stats: statsBlock, discover: discoverBlock, notes: notesBlock };
     show(`<article class="pl density-${s.density} hdr-${s.header}" data-pl="${esc(p.id)}" style="${themeStyle(p)}">
@@ -283,9 +295,9 @@ export function initPlaylists(c) {
     const on = id => data.moduleOn(p, id);
     const amb = ambientPlan(p);
     return `<header class="pl-hero">
-      ${on('cover') ? `<button class="pl-hero-cover" data-act="pl-edit" data-tab="look" aria-label="Cambiar la portada">${coverHTML(p, '', true)}</button>` : ''}
+      ${on('cover') ? (mine(p) ? `<button class="pl-hero-cover" data-act="pl-edit" data-tab="look" aria-label="Cambiar la portada">${coverHTML(p, '', true)}</button>` : `<div class="pl-hero-cover">${coverHTML(p, '', true)}</div>`) : ''}
       <div class="pl-info">
-        <div class="kind">${data.isFavs(p) ? 'Tus «me gusta»' : 'Playlist'} ${syncChip()}</div>
+        <div class="kind">${p.shared ? sharedLine(p) : `${data.isFavs(p) ? 'Tus «me gusta»' : 'Playlist'}${data.sharesOf(p.id).some(x => x.valid) ? ` · compartida con ${esc(data.sharesOf(p.id).filter(x => x.valid).map(x => x.name || 'alguien').join(', '))}` : ''} ${syncChip()}`}</div>
         <h1>${p.emoji ? `<span class="emoji">${esc(p.emoji)}</span> ` : ''}${esc(p.name)}</h1>
         ${on('description') && p.quote ? `<blockquote class="pl-quote">${esc(p.quote)}</blockquote>` : ''}
         ${on('description') && p.description ? `<p class="pl-desc">${esc(p.description)}</p>` : ''}
@@ -297,7 +309,8 @@ export function initPlaylists(c) {
             <button class="btn" data-act="pl-shuffle" data-pid="${esc(p.id)}">${icon('shuffle')}Aleatorio</button>
             <button class="btn" data-act="pl-surprise" data-pid="${esc(p.id)}" title="Aleatorio evitando lo que has escuchado hace poco">${icon('dice')}Sorpresa</button>
             <button class="btn" data-act="pl-ambient" data-pid="${esc(p.id)}" ${amb.ok ? '' : `aria-disabled="true" title="${esc(amb.why)}"`}>${icon('wave')}Ambiente</button>` : ''}
-          <button class="btn" data-act="pl-edit" data-pid="${esc(p.id)}">${icon('edit')}Editar</button>
+          ${mine(p) ? `<button class="btn" data-act="pl-edit" data-pid="${esc(p.id)}">${icon('edit')}Editar</button>` : editable(p) ? `<button class="btn" data-act="pl-edit" data-pid="${esc(p.id)}" data-tab="org">${icon('list')}Capítulos</button>` : ''}
+          ${mine(p) && !data.isFavs(p) ? `<button class="btn" data-act="pl-share" data-pid="${esc(p.id)}">${icon('user')}Compartir</button>` : ''}
           <button class="icon-btn" data-act="pl-more" data-pid="${esc(p.id)}" aria-label="Más opciones">${icon('more')}</button>
         </div>
       </div>
@@ -332,7 +345,7 @@ export function initPlaylists(c) {
   function songsBlock(p, v) {
     const list = visible(p, v), nf = activeFilters(v), custom = isCustom(v);
     const chapters = data.moduleOn(p, 'chapters') && p.sections.length && custom;
-    const o = { playlist: p.id, notes: p.notes, featured: p.featured, reorder: v.reorder && custom, playAll: list };
+    const o = { playlist: p.id, notes: mine(p) ? p.notes : {}, featured: p.featured, reorder: v.reorder && custom && editable(p), playAll: list };
     let body;
     if (!p.trackIds.length) body = data.isFavs(p) ? empty('heart', 'Todavía no hay favoritas', 'Pulsa el corazón en cualquier canción para guardarla aquí.')
       : empty('list', 'Playlist vacía', 'Añade canciones desde el menú ⋯ de cualquier canción, o mira «Descubre más».');
@@ -364,12 +377,12 @@ export function initPlaylists(c) {
         <label class="field">${icon('search')}<input type="search" data-plq="${esc(p.id)}" value="${esc(v.q)}" placeholder="Buscar en esta playlist" autocomplete="off"></label>
         <label class="field sort">${icon('list')}<select data-plsort="${esc(p.id)}" aria-label="Ordenar">${Object.entries(SORTS).map(([k, [l]]) => `<option value="${k}" ${v.sort === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
         <button class="btn ${nf ? 'on' : ''}" data-act="pl-filters" data-pid="${esc(p.id)}">${icon('filter')}Filtros${nf ? ` <span class="count">${nf}</span>` : ''}</button>
-        ${custom && p.trackIds.length > 1 ? `<button class="btn ${v.reorder ? 'on' : ''}" data-act="pl-reorder" data-pid="${esc(p.id)}" aria-pressed="${v.reorder}">${icon('grip')}${v.reorder ? 'Listo' : 'Reordenar'}</button>` : ''}
+        ${custom && editable(p) && p.trackIds.length > 1 ? `<button class="btn ${v.reorder ? 'on' : ''}" data-act="pl-reorder" data-pid="${esc(p.id)}" aria-pressed="${v.reorder}">${icon('grip')}${v.reorder ? 'Listo' : 'Reordenar'}</button>` : ''}
         ${!custom ? `<button class="btn ghost" data-act="pl-clear-view" data-pid="${esc(p.id)}">Volver a mi orden</button>` : ''}
       </div>
       ${chips.length ? `<div class="chips pl-fchips">${chips.map(([l, k, x]) => `<button class="chip on" data-act="pl-unfilter" data-pid="${esc(p.id)}" data-k="${k}" data-v="${esc(x ?? '')}">${esc(l)} ✕</button>`).join('')}</div>` : ''}
-      ${v.reorder && custom ? `<p class="muted reorder-hint">Arrastra ${icon('grip')} para cambiar el orden${chapters ? ' (también entre capítulos)' : ''}. Con el teclado: flechas arriba y abajo.</p>`
-        : custom && p.trackIds.length > 1 ? `<p class="muted reorder-hint dnd-hint">${matchMedia('(hover: hover)').matches ? 'Arrastra' : 'Mantén pulsada'} una canción para moverla${chapters ? ' o llevarla a otro capítulo' : ''}.</p>` : ''}
+      ${v.reorder && custom && editable(p) ? `<p class="muted reorder-hint">Arrastra ${icon('grip')} para cambiar el orden${chapters ? ' (también entre capítulos)' : ''}. Con el teclado: flechas arriba y abajo.</p>`
+        : custom && editable(p) && p.trackIds.length > 1 ? `<p class="muted reorder-hint dnd-hint">${matchMedia('(hover: hover)').matches ? 'Arrastra' : 'Mantén pulsada'} una canción para moverla${chapters ? ' o llevarla a otro capítulo' : ''}.</p>` : ''}
       ${data.isFavs(p) && custom && p.trackIds.length ? `<p class="muted reorder-hint">${p.settings.favOrder === 'manual' ? `Orden manual: las nuevas favoritas entran arriba. <button class="chip" data-act="pl-fav-date" data-pid="${esc(p.id)}">Ordenar por fecha</button>` : 'De la más reciente a la más antigua. Usa «Reordenar» para ponerlas a tu gusto.'}</p>` : ''}
       ${!custom && p.trackIds.length ? `<p class="muted reorder-hint">Vista ${v.sort !== 'custom' ? `ordenada por ${SORTS[v.sort][0].toLowerCase()}` : 'filtrada'}: tu orden personalizado se conserva.</p>` : ''}
       <div class="pl-list" data-pid="${esc(p.id)}">${body}</div>
@@ -557,9 +570,11 @@ export function initPlaylists(c) {
   const TABS = [['info', 'Información'], ['look', 'Apariencia'], ['photos', 'Fotos'], ['org', 'Organización'], ['mods', 'Personalización'], ['adv', 'Avanzado']];
   let ed = null;   // {p, tab, draft}
   function openEditor(p, tab = 'info') {
+    if (p.shared && !editable(p)) return;
+    if (p.shared) tab = 'org';   // quien colabora solo cambia canciones y capítulos
     ed = { p, tab, draft: { name: p.name, emoji: p.emoji, description: p.description, quote: p.quote, tags: [...p.tags], mood: p.mood } };
     openSheet(`<div class="pl-editor" style="${themeStyle(p)}"><div class="ed-top"><h3>Editar playlist</h3><button class="icon-btn" data-ed="close" aria-label="Cerrar">${icon('x')}</button></div>
-      <nav class="ed-tabs" role="tablist">${TABS.map(([id, l]) => `<button role="tab" data-ed-tab="${id}" aria-selected="${id === tab}">${l}</button>`).join('')}</nav>
+      <nav class="ed-tabs" role="tablist">${TABS.filter(([id]) => !p.shared || id === 'org').map(([id, l]) => `<button role="tab" data-ed-tab="${id}" aria-selected="${id === tab}">${l}</button>`).join('')}</nav>
       <div class="ed-body" role="tabpanel"></div></div>`, onEditorClick);
     sheet.classList.add('wide');
     sheet.addEventListener('close', () => { sheet.classList.remove('wide'); ed = null; refresh(); }, { once: true });
@@ -629,7 +644,7 @@ export function initPlaylists(c) {
       sortable($('[data-sortable]', body), async ids => { data.localOf(p.id).order = ids; p.photos = data.orderPhotos(p, ids).filter(x => x.path); await data.saveLocalState(); await savePlaylist(p); paintTab(); });
     } else if (tab === 'org') {
       const feat = p.featured.map(id => S.tracks.get(id)).filter(Boolean);
-      body.innerHTML = `${sw(data.moduleOn(p, 'chapters'), 'data-ed-mod="chapters"', 'Usar capítulos', 'Divide la playlist en partes que se pueden plegar y reproducir por separado. Si lo desactivas, verás una lista normal.')}
+      body.innerHTML = `${p.shared ? `<p class="muted">${sharedLine(p)}. Los cambios en los capítulos los verán todas las personas con las que se comparte.</p>` : sw(data.moduleOn(p, 'chapters'), 'data-ed-mod="chapters"', 'Usar capítulos', 'Divide la playlist en partes que se pueden plegar y reproducir por separado. Si lo desactivas, verás una lista normal.')}
         <div class="block-head"><h4>Capítulos</h4><span class="grow"></span><button class="btn" data-ed="sec-add">${icon('plus')}Nuevo capítulo</button></div>
         ${p.sections.length ? `<ol class="ed-secs">${p.sections.map((sc, i) => `<li data-id="${esc(sc.id)}">
           <span class="field"><input data-sec-name="${esc(sc.id)}" value="${esc(sc.name)}" maxlength="200" placeholder="Nombre del capítulo" aria-label="Nombre del capítulo ${i + 1}"></span>
@@ -637,13 +652,13 @@ export function initPlaylists(c) {
           <small class="muted">${plural(p.trackIds.filter(t => p.trackSection[t] === sc.id).length, 'canción', 'canciones')}</small>
           <span class="ph-ops"><button class="icon-btn" data-ed="sec-up" data-id="${esc(sc.id)}" aria-label="Subir" ${i ? '' : 'disabled'}>${icon('up')}</button><button class="icon-btn" data-ed="sec-del" data-id="${esc(sc.id)}" aria-label="Eliminar el capítulo">${icon('trash')}</button></span></li>`).join('')}</ol>
           <p class="muted">Para poner una canción en un capítulo: menú ⋯ de la canción → «Mover a capítulo…», o arrástrala en modo «Reordenar».</p>` : '<p class="muted">Ejemplo: «El comienzo», «Medianoche», «Los recuerdos», «El final».</p>'}
-        <div class="block-head"><h4>Destacadas</h4><span class="muted">${feat.length} / ${MAX_FEATURED}</span></div>
+        ${p.shared ? '' : `<div class="block-head"><h4>Destacadas</h4><span class="muted">${feat.length} / ${MAX_FEATURED}</span></div>
         ${feat.length ? `<ol class="ed-secs">${feat.map((t, i) => `<li><span class="row-text"><b>${esc(t.title)}</b><small>${esc(t.artist || '')}</small></span><span class="ph-ops"><button class="icon-btn" data-ed="feat-up" data-id="${esc(t.id)}" aria-label="Subir" ${i ? '' : 'disabled'}>${icon('up')}</button><button class="icon-btn" data-ed="feat-del" data-id="${esc(t.id)}" aria-label="Quitar de destacadas">${icon('x')}</button></span></li>`).join('')}</ol>` : '<p class="muted">Fija hasta 3 canciones con «Destacar» en su menú ⋯.</p>'}
         <h4>Orden y filtros</h4>
         ${data.isFavs(p) ? `<div class="seg">${[['date', 'Por fecha de «me gusta»'], ['manual', 'Manual']].map(([k, l]) => `<button class="chip ${(p.settings.favOrder || 'date') === k ? 'on' : ''}" data-ed="favorder" data-v="${k}">${l}</button>`).join('')}</div>
           <p class="muted">Con el orden manual, las canciones que marques con el corazón entran arriba y puedes moverlas con «Reordenar».</p>` : ''}
         <p class="muted">Tu orden personalizado se guarda siempre; ordenar o filtrar la vista no lo cambia.</p>
-        ${sw(!!p.settings.view, 'data-ed-sw="rememberView"', 'Recordar la vista de esta playlist', 'Guarda el orden y los filtros elegidos para la próxima vez y en tus otros dispositivos.')}`;
+        ${sw(!!p.settings.view, 'data-ed-sw="rememberView"', 'Recordar la vista de esta playlist', 'Guarda el orden y los filtros elegidos para la próxima vez y en tus otros dispositivos.')}`}`;
     } else if (tab === 'mods') {
       const blocks = p.settings.modules;
       body.innerHTML = `<p class="muted">Elige qué se ve en esta playlist y en qué orden. Cada playlist tiene su propia configuración.</p>
@@ -944,7 +959,7 @@ export function initPlaylists(c) {
   }
   /** Si el usuario pidió recordar la vista, se guarda con la playlist (y se sincroniza). */
   function rememberView(p) {
-    if (!p.settings.view) return;
+    if (!p.settings.view || p.shared) return;
     const v = viewOf(p);
     p.settings.view = { sort: v.sort, f: v.f, discover: v.discover };
     clearTimeout(rememberView.t); rememberView.t = setTimeout(() => savePlaylist(p), 800);
@@ -987,7 +1002,7 @@ export function initPlaylists(c) {
   const sourceOf = el => el.closest('.pl-list .row[data-id]') || el.closest('.disc[data-dnd]');
   function dndPlaylist(src) {
     const art = src.closest('.pl[data-pl]'), p = art && byId(art.dataset.pl);
-    if (!p || !$('.pl-list', art) || !isCustom(viewOf(p))) return null;   // solo en tu orden (sin filtros ni otra ordenación)
+    if (!p || !editable(p) || !$('.pl-list', art) || !isCustom(viewOf(p))) return null;   // solo en tu orden (sin filtros ni otra ordenación)
     return p;
   }
   const clearMarks = list => {
@@ -1181,8 +1196,17 @@ export function initPlaylists(c) {
     'pl-edit'(el) { openEditor(P_(el), el.dataset.tab || 'info'); },
     'pl-more'(el) {
       const p = P_(el), ts = tracksOf(p);
+      if (p.shared) return menu(`<div class="sheet-head"><div><b>${esc(p.name)}</b><small>${sharedLine(p)}</small></div></div>`, [
+        ts.some(c.needsDownload) && { icon: 'download', label: 'Descargar para escuchar sin conexión', fn: () => c.downloadMany(ts.filter(c.needsDownload)) },
+        editable(p) && { icon: 'list', label: 'Capítulos', fn: () => openEditor(p, 'org') },
+        { icon: 'x', label: 'Dejar de ver esta playlist', danger: true, fn: async () => {
+          if (!(await confirmDlg('¿Dejar de ver esta playlist?', `«${p.name}» desaparecerá de tus playlists. Solo ${p.shared.ownerName || 'su dueño'} puede volver a compartirla contigo.`, 'Dejar de verla'))) return;
+          try { await data.leave(p); toast('Ya no ves esta playlist'); location.hash = '#/playlists'; } catch (e) { toast(e.message, 6000); }
+        } },
+      ]);
       menu(`<div class="sheet-head"><div><b>${esc(p.name)}</b></div></div>`, [
         ts.some(c.needsDownload) && { icon: 'download', label: 'Descargar para escuchar sin conexión', fn: () => c.downloadMany(ts.filter(c.needsDownload)) },
+        !data.isFavs(p) && { icon: 'user', label: 'Compartir…', fn: () => openShare(p) },
         { icon: 'image', label: 'Fotos del carrusel', fn: () => openEditor(p, 'photos') },
         { icon: 'list', label: 'Capítulos y destacadas', fn: () => openEditor(p, 'org') },
         { icon: 'settings', label: 'Personalizar la vista', fn: () => openEditor(p, 'mods') },
@@ -1190,6 +1214,7 @@ export function initPlaylists(c) {
       ]);
     },
     'pl-retry'() { data.pull(); },
+    'pl-share'(el) { openShare(P_(el)); },
     'pl-photo'(el) { openViewer(P_(el), +el.dataset.i); },
     'pl-car'(el) { const car = $('.carousel', el.closest('.pl-photos')); car.scrollBy({ left: +el.dataset.d * car.clientWidth * 0.8, behavior: reduced() ? 'auto' : 'smooth' }); },
     'pl-filters'(el) { openFilters(P_(el)); },
@@ -1212,7 +1237,7 @@ export function initPlaylists(c) {
       refresh();
       setTimeout(() => $(`.pl-list .row[data-id="${CSS.escape(t.id)}"]`)?.classList.add('moved'), 200);
     },
-    'pl-note'(el) { editNote(P_(el), el.dataset.tid); },
+    'pl-note'(el) { const p = P_(el); if (mine(p)) editNote(p, el.dataset.tid); },
     async 'pl-fav-date'(el) { const p = P_(el); p.settings.favOrder = 'date'; data.reconcileFavs(); await savePlaylist(p); refresh(); },
   });
 
@@ -1220,14 +1245,15 @@ export function initPlaylists(c) {
   function menuItems(t, pid) {
     const p = byId(pid);
     if (!p) return [];
+    if (!editable(p)) return [];
     const feat = p.featured.includes(t.id), note = p.notes[t.id]?.text, v = viewOf(p), i = p.trackIds.indexOf(t.id);
     return [
-      { icon: 'star', label: feat ? 'Quitar de destacadas' : 'Destacar', fn: async () => {
+      mine(p) && { icon: 'star', label: feat ? 'Quitar de destacadas' : 'Destacar', fn: async () => {
         if (feat) p.featured = p.featured.filter(x => x !== t.id);
         else { if (p.featured.length >= MAX_FEATURED) return toast(`Ya hay ${MAX_FEATURED} destacadas: quita una antes`); p.featured.push(t.id); }
         await savePlaylist(p); refresh();
       } },
-      { icon: 'note', label: note ? 'Ver o cambiar la nota' : 'Añadir una nota', fn: () => editNote(p, t.id) },
+      mine(p) && { icon: 'note', label: note ? 'Ver o cambiar la nota' : 'Añadir una nota', fn: () => editNote(p, t.id) },
       p.sections.length && { icon: 'list', label: 'Mover a capítulo…', fn: () => menu(`<div class="sheet-head"><div><b>¿A qué capítulo?</b></div></div>`,
         [...p.sections.map(sc => ({ icon: p.trackSection[t.id] === sc.id ? 'heart' : 'list', label: sc.name || 'Capítulo', fn: async () => { songOrder(p, t.id, null, sc.id); await savePlaylist(p); refresh(); } })),
           { icon: 'x', label: 'Sin capítulo', fn: async () => { songOrder(p, t.id, null, ''); await savePlaylist(p); refresh(); } }]) },
@@ -1237,6 +1263,60 @@ export function initPlaylists(c) {
         ? { icon: 'heart', label: 'Quitar de «me gusta»', fn: () => toggleFav(t.id) }
         : { icon: 'x', label: 'Quitar de esta playlist', fn: async () => { dropFromPlaylist(p, t.id); await savePlaylist(p); refresh(); } },
     ];
+  }
+
+  // ================================================================ compartir con el grupo del bucket
+  // Se elige a quién, entre las personas que también están conectadas a alguno de tus buckets
+  // (groups.js), y si cada una puede editar o solo ver. Nunca se muestran correos, solo el nombre
+  // que cada persona elige para el grupo.
+  async function openShare(p) {
+    if (!p || p.shared || data.isFavs(p)) return;
+    if (!account.user()) return toast('Para compartir, inicia sesión en Ajustes → Cuenta', 6000);
+    if (data.status().mode !== 'ready') return toast('Para compartir hace falta conexión y Supabase preparado (ver Ajustes)', 6000);
+    const note = toast('Buscando con quién…', 0);
+    await groups.sync().catch(() => {});
+    if (groups.status() === 'missing') return note.done('Falta preparar Supabase para compartir: ejecuta supabase/migrations/20261116120000_shared_playlists.sql (ver Ajustes)', 9000);
+    const gs = groups.list();
+    let lists;
+    try { lists = await Promise.all(gs.map(g => groups.members(g.id))); }
+    catch (e) { return note.done(`No se pudo ver quién comparte tus buckets: ${e.message}`, 7000); }
+    note.done('Listo', 600);
+    const cur = new Map(data.sharesOf(p.id).map(x => [x.id, x]));
+    const notIn = g => p.trackIds.filter(id => { const t = S.tracks.get(id); return !t || !t.cloudName || cloud.trackBucket(t)?.id !== g.bucket.id; }).length;
+    const blocks = gs.map((g, gi) => {
+      const others = (lists[gi] || []).filter(m => !m.me);
+      const miss = notIn(g);
+      return `<section class="share-group" data-g="${esc(g.id)}"><h4>Quienes comparten «${esc(g.bucket.name)}»</h4>
+        ${g.name ? '' : `<label class="lbl">Tu nombre en este grupo <small>lo verán las demás personas en lugar de tu correo</small><span class="field"><input data-sh-name="${esc(g.id)}" maxlength="40" placeholder="Por ejemplo, Pablo" autocomplete="off"></span></label>`}
+        ${others.length ? `<ul class="share-people">${others.map(m => { const c0 = cur.get(m.id); return `<li><label class="switch mini"><input type="checkbox" data-sh-member="${esc(m.id)}" ${c0 && c0.group === g.id ? 'checked' : ''}><span><b>${esc(m.name || 'Sin nombre todavía')}</b>${m.owner ? '<small>creó el bucket</small>' : ''}</span></label>
+          <label class="field sm"><select data-sh-edit="${esc(m.id)}" aria-label="Permiso de ${esc(m.name || 'esta persona')}"><option value="edit" ${!c0 || c0.edit ? 'selected' : ''}>Puede editar</option><option value="view" ${c0 && !c0.edit ? 'selected' : ''}>Solo ver</option></select></label></li>`; }).join('')}</ul>`
+          : '<p class="muted">Aún no hay nadie más en este grupo. Comparte el bucket desde Ajustes → Nube y, cuando la otra persona lo conecte con su cuenta, aparecerá aquí.</p>'}
+        ${miss && others.length ? `<p class="muted">${plural(miss, 'canción de esta playlist no está', 'canciones de esta playlist no están')} en «${esc(g.bucket.name)}»: quien la reciba no ${miss === 1 ? 'la' : 'las'} podrá escuchar.</p>` : ''}
+      </section>`;
+    }).join('');
+    openSheet(`<div class="dlg share-dlg"><h3>Compartir «${esc(p.name)}»</h3>
+      ${gs.length ? `<p>Las personas que elijas verán la playlist con sus canciones, capítulos, portada y fotos, y sus cambios. No verán tus notas ni tus escuchas. Quien pueda editar podrá añadir, quitar y ordenar canciones y capítulos; el aspecto y eliminarla son solo cosa tuya.</p>${blocks}`
+        : `<p>Solo se puede compartir con quienes están conectados a uno de tus buckets con su propia cuenta. Conecta un bucket en Ajustes → Nube y comparte su enlace; cuando la otra persona lo conecte, podrás elegirla aquí.</p>`}
+      <div class="actions"><button class="btn ghost" data-x>Cancelar</button>${gs.length ? '<button class="btn primary" data-ok>Guardar</button>' : ''}</div></div>`,
+    async e => {
+      if (e.target.closest('[data-x]')) return sheet.close();
+      const btn = e.target.closest('[data-ok]');
+      if (!btn) return;
+      btn.disabled = true;
+      try {
+        for (const box of $$('.share-group', sheet)) {
+          const gid = box.dataset.g, nm = $('[data-sh-name]', box)?.value.trim();
+          if (nm) await groups.setName(gid, nm);
+          const members = $$('[data-sh-member]', box).filter(x => x.checked).map(x => ({ id: x.dataset.shMember, edit: $(`[data-sh-edit="${CSS.escape(x.dataset.shMember)}"]`, box).value === 'edit' }));
+          const before = data.sharesOf(p.id).filter(x => x.group === gid).length;
+          if (members.length || before) await data.share(p, gid, members);
+        }
+        sheet.close();
+        const n = data.sharesOf(p.id).length;
+        toast(n ? `«${p.name}» compartida con ${plural(n, 'persona', 'personas')}` : `«${p.name}» ya no está compartida`);
+        refresh();
+      } catch (err) { btn.disabled = false; toast(err.message, 7000); }
+    });
   }
 
   // ================================================================ crear y añadir
@@ -1250,12 +1330,12 @@ export function initPlaylists(c) {
     return p;
   }
   function addToPlaylist(tracks) {
-    const pls = livePlaylists().filter(p => !data.isFavs(p)).sort((a, b) => collator.compare(a.name, b.name));
+    const pls = livePlaylists().filter(p => !data.isFavs(p) && editable(p)).sort((a, b) => collator.compare(a.name, b.name));
     menu(`<div class="sheet-head"><div><b>Añadir a playlist</b></div></div>`, [
       { icon: 'plus', label: 'Nueva playlist…', fn: async () => { if (await newPlaylist(tracks)) refresh(); } },
       { icon: 'heart', label: 'Canciones que te gustan', fn: () => { const fresh = tracks.filter(t => !isFav(t.id)); fresh.forEach(t => toggleFav(t.id)); toast(fresh.length ? 'Añadida a tus «me gusta»' : 'Ya estaba en tus «me gusta»'); } },
       ...pls.map(p => ({
-        icon: 'list', label: `${p.emoji ? `${p.emoji} ` : ''}${p.name}`, fn: async () => {
+        icon: p.shared ? 'user' : 'list', label: `${p.emoji ? `${p.emoji} ` : ''}${p.name}${p.shared ? ` (de ${p.shared.ownerName || 'otra persona'})` : ''}`, fn: async () => {
           const n = data.addTracks(p, tracks.map(t => t.id));
           if (n) await savePlaylist(p);
           toast(n ? `Añadida a «${p.name}»` : `Ya estaba en «${p.name}»`);
@@ -1264,5 +1344,5 @@ export function initPlaylists(c) {
     ]);
   }
 
-  return { viewList, viewPlaylist, newPlaylist, addToPlaylist, menuItems, hydrate, syncChip, prepareImages, pickFiles };
+  return { viewList, viewPlaylist, newPlaylist, addToPlaylist, menuItems, hydrate, syncChip, prepareImages, pickFiles, openShare };
 }
