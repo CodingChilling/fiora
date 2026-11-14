@@ -1177,5 +1177,5 @@ export function initPlaylists(c) {
     ]);
   }
 
-  return { viewList, viewPlaylist, newPlaylist, addToPlaylist, menuItems, hydrate, syncChip };
+  return { viewList, viewPlaylist, newPlaylist, addToPlaylist, menuItems, hydrate, syncChip, prepareImages, pickFiles };
 }

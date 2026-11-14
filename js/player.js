@@ -34,6 +34,7 @@ let counted = false;
 let errors = 0;
 let sess = null;          // escucha en curso: {id, max, dur, done, error}
 let lastHeard = null;     // última canción escuchada de verdad: {id, at}
+const radioClock = { id: null, secs: 0, last: 0 };   // tiempo real de escucha de la emisora en curso
 
 /** Cierra la escucha anterior y anota si se terminó o se saltó. */
 function settle() {
@@ -69,6 +70,7 @@ async function load(autoplay = true) {
   counted = false;
   settle();
   if (t && !t.radio) sess = { id: t.id, max: 0, dur: 0 };
+  radioClock.id = null; radioClock.secs = 0;
   emit('track', t);
   if (!t) { audio.removeAttribute('src'); audio.load(); return; }
   try {
@@ -86,6 +88,12 @@ async function load(autoplay = true) {
 function onError(e) {
   const t = P.current;
   if (sess) sess.error = true;
+  if (t?.radio) {
+    // Las experiencias de radio (ruleta, viajes, degustación) buscan otra emisora; si alguna lo hace, no se avisa aquí.
+    const ev = { track: t, handled: false };
+    emit('play-error', ev);
+    if (ev.handled) { console.warn(e); return; }
+  }
   emit('toast', `No se pudo reproducir «${t?.title || ''}»${navigator.onLine ? '' : ' (sin conexión)'}`);
   console.warn(e);
   if (++errors < 3 && (P.user.length || P.index < P.queue.length - 1)) next(true);
@@ -261,6 +269,14 @@ audio.addEventListener('timeupdate', () => {
     lastHeard = { id: t.id, at: Date.now() };
   }
   if (sess) { sess.max = Math.max(sess.max, audio.currentTime); sess.dur = Number.isFinite(audio.duration) ? audio.duration : 0; }
+  // Segundos escuchados de verdad de la emisora actual (para el pasaporte y las sesiones por tiempo).
+  if (t?.radio && !audio.paused) {
+    const now = performance.now();
+    if (radioClock.id === t.id && now - radioClock.last < 3000) radioClock.secs += (now - radioClock.last) / 1000;
+    else if (radioClock.id !== t.id) radioClock.secs = 0;
+    radioClock.id = t.id; radioClock.last = now;
+    emit('radio-time', { track: t, secs: radioClock.secs });
+  }
   emit('time');
   if ('mediaSession' in navigator && Number.isFinite(audio.duration) && audio.duration > 0) {
     try {

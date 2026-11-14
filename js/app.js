@@ -11,12 +11,13 @@ import * as oci from './oci.js';
 import * as vault from './vault.js';
 import * as pldata from './playlists-data.js';
 import { initPlaylists } from './playlist-ui.js';
+import { initExplore } from './explore-ui.js';
+import * as rdata from './radio-data.js';
 import * as account from './account.js';
 import * as src from './sources.js';
 import { getLyrics } from './lyrics.js';
 import * as recs from './recs.js';
 import { icon } from './icons.js';
-import { JAMENDO_CLIENT_ID } from './config.js';
 
 // ---------------------------------------------------------------- utilidades
 const $ = (s, r = document) => r.querySelector(s);
@@ -684,72 +685,7 @@ const newPlaylist = t => PL.newPlaylist(t);
 const addToPlaylist = t => PL.addToPlaylist(t);
 
 // ------------------------------------------------------------------ explorar
-const explore = { src: 'archive', q: '', results: {}, more: {}, page: {}, loading: false, error: '', radioQ: '', stations: null };
-const jamendoKey = () => JAMENDO_CLIENT_ID || S.settings.jamendoId || '';
-const SUGGEST = ['jazz', 'música clásica', 'flamenco', 'blues', 'netlabel', 'ambient', 'folk', 'chiptune'];
-async function viewExplore(tab = 'archivo') {
-  const tabs = `<div class="head"><h1>Explorar</h1></div><div class="tabs"><a href="#/explorar/archivo" class="${tab === 'archivo' ? 'on' : ''}">Música libre</a><a href="#/explorar/radios" class="${tab === 'radios' ? 'on' : ''}">Radios</a></div>`;
-  if (tab === 'radios') {
-    show(`${tabs}<form class="search" data-form="radio"><label class="field">${icon('search')}<input name="q" type="search" placeholder="Buscar emisoras por nombre" value="${esc(explore.radioQ)}" autocomplete="off"></label><button class="btn primary">Buscar</button></form>
-      ${S.stations.length ? `<h2>Tus emisoras</h2>${rows(S.stations)}` : ''}
-      <h2>${explore.radioQ ? `Resultados de «${esc(explore.radioQ)}»` : 'Populares en España'}</h2><div id="radio-list"><p class="muted">Cargando emisoras…</p></div>`);
-    if (!explore.stations) {
-      try { explore.stations = await src.searchRadio(explore.radioQ); }
-      catch { $('#radio-list') && ($('#radio-list').innerHTML = `<p class="muted">No se pudieron cargar las emisoras. ${navigator.onLine ? 'Inténtalo de nuevo más tarde.' : 'No hay conexión.'}</p>`); return; }
-    }
-    const box = $('#radio-list');
-    if (box) setHTML(box, explore.stations.length ? rows(explore.stations) : '<p class="muted">No se encontraron emisoras.</p>');
-    return;
-  }
-  const source = src.SOURCES.find(x => x.id === explore.src);
-  const res = explore.results[source.id];
-  const needsKey = source.needsKey && !jamendoKey();
-  let body;
-  if (needsKey) {
-    body = `<div class="panel"><h2>Conectar Jamendo</h2><p>Jamendo pide una clave gratuita para buscar en su catálogo:</p>
-      <ol class="steps"><li>Regístrate en <b>devportal.jamendo.com</b> y crea una aplicación.</li><li>Copia su <b>Client ID</b> y pégalo aquí.</li></ol>
-      <form class="search" data-form="jamendo-key"><label class="field">${icon('lock')}<input name="key" placeholder="Client ID de Jamendo" autocomplete="off" required></label><button class="btn primary">Guardar</button></form></div>`;
-  } else if (explore.loading && !res) body = '<p class="muted">Buscando…</p>';
-  else if (explore.error) body = `<p class="muted">${esc(explore.error)}</p>`;
-  else if (!res) body = '';
-  else if (!res.length) body = '<p class="muted">Sin resultados. Prueba con otra búsqueda o con otro catálogo.</p>';
-  else if (source.albums) {
-    body = `<div class="grid">${res.map(r =>
-      `<a class="card" href="#/archivo/${enc(r.id)}">${cover({ album: r.title, coverUrl: r.cover })}<span><b>${esc(r.title)}</b><small>${esc(r.creator || r.year || '')}</small></span></a>`).join('')}</div>`;
-  } else {
-    body = `${!explore.q && source.id === 'jamendo' ? '<h2>Populares esta semana</h2>' : ''}${rows(res.map(t => S.tracks.get(t.id) || t), { remote: true })}
-      ${explore.more[source.id] ? `<div class="actions" style="justify-content:center;margin-top:16px"><button class="btn" data-act="more-results" ${explore.loading ? 'disabled' : ''}>${explore.loading ? 'Cargando…' : 'Más resultados'}</button></div>` : ''}`;
-  }
-  show(`${tabs}
-    <div class="chips sources">${src.SOURCES.map(x => `<button class="chip ${x.id === source.id ? 'on' : ''}" data-act="source" data-src="${x.id}">${esc(x.name)}</button>`).join('')}</div>
-    <p class="muted">${esc(source.about)} Puedes escucharla en línea o guardarla en tu biblioteca.</p>
-    ${needsKey ? '' : `<form class="search" data-form="archive"><label class="field">${icon('search')}<input name="q" type="search" placeholder="Artista, género, canción…" value="${esc(explore.q)}" autocomplete="off"></label><button class="btn primary">Buscar</button></form>
-    <div class="chips">${SUGGEST.map(q => `<button class="chip" data-act="suggest" data-q="${esc(q)}">${esc(q)}</button>`).join('')}</div>`}
-    <div id="archive-list">${body}</div>`);
-}
-/** Busca en el catálogo elegido. Con `append`, añade la página siguiente a los resultados. */
-async function searchMusic(q, append = false) {
-  const id = explore.src;
-  explore.q = q; explore.error = ''; explore.loading = true;
-  if (!append) { explore.results[id] = null; explore.page[id] = 1; } else explore.page[id]++;
-  const onExplore = () => location.hash.startsWith('#/explorar') && !location.hash.includes('radios');
-  if (onExplore()) route();
-  try {
-    const r = await src.search(id, q, explore.page[id], jamendoKey());
-    if (explore.src !== id || explore.q !== q) return;
-    explore.results[id] = append ? [...(explore.results[id] || []), ...r.items] : r.items;
-    explore.more[id] = r.more;
-  } catch (e) {
-    if (explore.src !== id) return;
-    if (e.needsKey) { S.settings.jamendoId = ''; saveKV('settings', false); toast('La clave de Jamendo no es válida'); }
-    else if (append) toast('No se pudieron cargar más resultados');
-    else explore.error = !navigator.onLine ? 'No hay conexión a internet.'
-      : e.limit ? 'Este catálogo limita las búsquedas por hora y se ha alcanzado el límite. Prueba más tarde o con otro catálogo.'
-        : 'No se pudo consultar este catálogo. Inténtalo de nuevo o prueba con otro.';
-  }
-  explore.loading = false;
-  if (onExplore()) route();
-}
+// Explorar vive en explore-ui.js (Para ti, Música libre, Radios y experiencias).
 const archiveCache = new Map();
 async function viewArchive(id) {
   let item = archiveCache.get(id);
@@ -838,6 +774,10 @@ async function viewSettings() {
        ${pldata.status().mode === 'missing' ? `<div class="sub-panel"><b>Falta preparar Supabase para las playlists</b>
          <small>Las playlists se siguen guardando como hasta ahora. Para guardarlas en tablas propias (con portadas, fotos, capítulos, notas y estadísticas en tu cuenta), ejecuta una vez el archivo <code>supabase/migrations/20261114120000_playlists.sql</code> del repositorio en Supabase → SQL Editor. No borra nada.</small>
          <div class="actions"><button class="btn" data-act="pl-retry">${icon('sync')}Volver a comprobar</button></div></div>` : ''}
+       <p class="pl-account">Explorar (emisoras favoritas, colecciones y pasaporte): ${exploreChip()}</p>
+       ${rdata.status().mode === 'missing' ? `<div class="sub-panel"><b>Falta preparar Supabase para Explorar</b>
+         <small>Tus emisoras favoritas, colecciones, pasaporte y preferencias se guardan en este dispositivo. Para tenerlas en todos, ejecuta una vez <code>supabase/migrations/20261115120000_explore.sql</code> en Supabase → SQL Editor. No borra nada.</small>
+         <div class="actions"><button class="btn" data-act="explore-retry">${icon('sync')}Volver a comprobar</button></div></div>` : ''}
        <div class="actions"><button class="btn primary" data-act="account-sync">${icon('sync')}Guardar y sincronizar</button><button class="btn ghost" data-act="sign-out">Cerrar sesión</button></div>`
     : account.available()
       ? `<p>Inicia sesión para guardar tus playlists, favoritos, estadísticas, emisoras, ajustes y la conexión a tu nube, y recuperarlos en cualquier dispositivo.</p>
@@ -1346,20 +1286,20 @@ function confirmDelete(t) {
   return confirmDlg('¿Borrar la canción para siempre?', `«${t.title}» se borrará de tu biblioteca, de este dispositivo${b ? ` y del bucket «${b.name}» (en todos tus dispositivos)${oci.configured() ? '' : '. Sin clave de API de Oracle, el archivo queda vacío en el bucket, sin ocupar espacio'}` : ''}. No se puede deshacer.`, 'Borrar');
 }
 
-const ROUTES = { inicio: viewHome, biblioteca: viewLibrary, album: viewAlbum, artista: viewArtist, playlists: () => PL.viewList(), playlist: id => PL.viewPlaylist(id), favoritos: () => PL.viewPlaylist('favoritos'), mix: viewMix, estadisticas: viewStats, genero: n => viewTag('genero', n), ambiente: n => viewTag('ambiente', n), explorar: viewExplore, archivo: viewArchive, ajustes: viewSettings, repetidas: viewDuplicates };
+// Estado de la sincronización de Explorar en Ajustes.
+function exploreChip() {
+  const st = rdata.status();
+  const [cls, txt] = st.mode === 'ready' ? (st.error ? ['bad', st.error] : st.pending || st.busy ? ['busy', 'Guardando…'] : ['ok', 'Guardado en tu cuenta'])
+    : st.mode === 'missing' ? ['warn', 'Solo en este dispositivo: falta preparar Supabase'] : st.mode === 'offline' ? ['warn', 'Sin conexión: se guardará al volver'] : ['busy', 'Comprobando…'];
+  return `<span class="sync-chip ${cls}" role="status" data-xsync>${icon(cls === 'ok' ? 'cloud' : 'sync')}<span>${esc(txt)}</span></span>`;
+}
+on('explore-sync', () => { for (const el of $$('[data-xsync]')) el.outerHTML = exploreChip(); });
+const ROUTES = { inicio: viewHome, biblioteca: viewLibrary, album: viewAlbum, artista: viewArtist, playlists: () => PL.viewList(), playlist: id => PL.viewPlaylist(id), favoritos: () => PL.viewPlaylist('favoritos'), mix: viewMix, estadisticas: viewStats, genero: n => viewTag('genero', n), ambiente: n => viewTag('ambiente', n), explorar: (...a) => EX.view(...a), archivo: viewArchive, ajustes: viewSettings, repetidas: viewDuplicates };
 
 // ------------------------------------------------------- menú de una canción
 function trackMenu(t, o = {}, i = -1) {
   const head = `<div class="sheet-head">${cover(t)}<div><b>${esc(t.title)}</b><small>${esc(t.artist || '')}</small></div></div>`;
-  if (t.radio) {
-    const saved = S.stations.some(s => s.id === t.id);
-    return menu(head, [
-      { icon: 'play', label: 'Escuchar', fn: () => player.playQueue([t]) },
-      saved
-        ? { icon: 'trash', label: 'Quitar de tus emisoras', danger: true, fn: () => { S.stations = S.stations.filter(s => s.id !== t.id); saveKV('stations'); refresh(); } }
-        : { icon: 'plus', label: 'Guardar en tus emisoras', fn: () => { S.stations.push(t); saveKV('stations'); toast('Emisora guardada'); refresh(); } },
-    ]);
-  }
+  if (t.radio) return EX.stationMenu(t);
   const lib_ = inLibrary(t);
   const remote = t.cloudName || t.url;
   menu(head, [
@@ -1438,13 +1378,6 @@ const ACTIONS = {
     ]);
   },
   async 'new-playlist'() { const p = await newPlaylist(); if (p) location.hash = `#/playlist/${enc(p.id)}`; },
-  suggest(el) { searchMusic(el.dataset.q); },
-  source(el) {
-    explore.src = el.dataset.src; explore.error = ''; explore.loading = false;
-    const pending = !explore.results[explore.src] && (explore.q || explore.src === 'jamendo') && !(explore.src === 'jamendo' && !jamendoKey());
-    if (pending) searchMusic(explore.q); else route();
-  },
-  'more-results'() { searchMusic(explore.q, true); },
   async 'save-archive'(el) {
     const item = archiveCache.get(el.dataset.aid);
     await saveToLibrary(item.tracks);
@@ -1494,6 +1427,7 @@ const ACTIONS = {
   'write-files'() { const l = allTracks().filter(t => fileOutdated(t) && cloud.canWriteFile(t)); if (l.length) offerWrite(l); },
   'lib-unfilter'(el) { clearFilter(el.dataset.k, el.dataset.v); paintLibrary(); },
   'lib-clear'() { resetFilters(); paintLibrary(); },
+  async 'explore-retry'() { await rdata.pull(); refresh(); },
   'lib-quick'(el) { toggleFilter(el.dataset.k, el.dataset.v); paintLibrary(); },
   'lib-q-clear'() {
     const q = $('#lib-q');
@@ -1593,6 +1527,10 @@ const PL = initPlaylists({
   esc, enc, plural, totalTime, toast, openSheet, sheet, confirmDlg, menu, ask, show, rows, cover, empty, refresh, playable, num,
   columns, bars, allTracks, needsDownload, downloadMany, setHTML, watch: watchSentinels, saveKV, ACTIONS,
 });
+const EX = initExplore({
+  esc, enc, plural, toast, openSheet, sheet, menu, show, rows, cover, empty, setHTML, watch: watchSentinels, ACTIONS, playable,
+  saveToLibrary, trackMenu: t => trackMenu(t, {}), confirmDlg, ask, PL, go: h => go(h), refresh: () => refresh(), saveKV,
+});
 
 document.addEventListener('click', e => {
   const el = e.target.closest('[data-act]');
@@ -1603,9 +1541,7 @@ document.addEventListener('submit', async e => {
   if (!form) return;
   e.preventDefault();
   const kind = form.dataset.form;
-  if (kind === 'archive') { const q = form.q.value.trim(); if (q || explore.src === 'jamendo') searchMusic(q); }
-  if (kind === 'jamendo-key') { S.settings.jamendoId = form.key.value.trim(); await saveKV('settings', false); searchMusic(explore.q); }
-  if (kind === 'radio') { explore.radioQ = form.q.value.trim(); explore.stations = null; route(); }
+  if (EX.forms[kind]) return EX.forms[kind](form);
   if (kind === 'ai-key') {
     const A = aiConf();
     if (form.key.value.trim()) A.keys[A.provider] = await vault.seal(form.key.value.trim(), A.provider);
@@ -1782,6 +1718,13 @@ addEventListener('popstate', () => { now.hidden = true; });
 function renderNow() {
   const t = P.current;
   if (now.hidden || !t) { if (!t) now.hidden = true; return; }
+  if (t.radio && t.uuid) {
+    // Emisora en directo: pantalla propia (mismo reproductor, controles de directo)
+    setHTML(now, EX.liveHTML(t));
+    syncState();
+    EX.fillLive(now, t);
+    return;
+  }
   const modes = [['cover', 'Carátula'], ['lyrics', 'Letra'], ['queue', 'Cola']];
   setHTML(now, `<div class="top">
       <button class="icon-btn" data-act="close-now" aria-label="Cerrar">${icon('down')}</button>
@@ -1807,7 +1750,7 @@ function renderNow() {
 
 let lyr = { id: null, data: null, active: -1 };
 async function renderNowPane() {
-  if (now.hidden) return;
+  if (now.hidden || (P.current?.radio && P.current.uuid)) return;   // la pantalla de directo tiene su propio panel
   const pane = $('.pane', now), stage = $('.stage', now);
   if (!pane) return;
   const desktop = matchMedia('(min-width: 900px)').matches;
@@ -1877,7 +1820,8 @@ function syncState() {
   $$('.js-shuffle').forEach(b => b.classList.toggle('on', P.shuffle));
   $$('.js-repeat').forEach(b => { b.innerHTML = icon(P.repeat === 'one' ? 'repeat1' : 'repeat'); b.classList.toggle('on', P.repeat !== 'off'); b.setAttribute('aria-label', REPEAT_LABEL[P.repeat]); });
   $$('.js-fav').forEach(b => b.classList.toggle('on', !!t && isFav(t.id)));
-  document.body.classList.toggle('audio-on', !!P.playing);   // anima el indicador de la fila que suena
+  document.body.classList.toggle('audio-on', !!P.playing);
+  document.body.classList.toggle('live', !!t?.radio);   // directo: sin barra de posición ni anterior/siguiente   // anima el indicador de la fila que suena
   document.title = t && P.playing ? `${t.title} · ${t.artist || 'Fiora'}` : 'Fiora';
 }
 function syncTime() {
@@ -1975,7 +1919,8 @@ async function start() {
     if (pending) setTimeout(() => toast(`${plural(pending, 'canción tiene', 'canciones tienen')} géneros u otros cambios que aún no están en su archivo. Guárdalos en Ajustes → Modo desarrollador.`, 9000), 1500);
   }
   const linked = await account.init();   // puede venir de un enlace de correo de Supabase
-  await pldata.init();                   // playlists: datos nuevos, cola pendiente y sincronización con Supabase
+  await pldata.init();
+  await rdata.init();                    // Explorar: favoritas, colecciones, pasaporte y preferencias                   // playlists: datos nuevos, cola pendiente y sincronización con Supabase
   addEventListener('hashchange', route);
   await route();
   if (linked === 'confirmed') toast('Correo confirmado. Sesión iniciada');

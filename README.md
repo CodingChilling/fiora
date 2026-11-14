@@ -17,7 +17,7 @@ Tu música, sin suscripciones. Una app web instalable (PWA) para escuchar tu pro
 - **Estadísticas**: panel con tus minutos por día, horas y días en que más escuchas, y tus artistas, canciones, álbumes, géneros y ambientes más oídos.
 - **Géneros y ambiente**: cada canción puede tener varios géneros y etiquetas de lo que transmite (alegre, melancólica, enérgica…).
 - **Modo desarrollador**: edita portada, título, artistas, álbum, géneros y ambiente desde la app; los cambios se sincronizan con tu cuenta y tu nube. Los géneros y el ambiente también se pueden etiquetar con IA.
-- **Explorar**: música con licencias abiertas de [Internet Archive](https://archive.org), [Openverse](https://openverse.org), [Wikimedia Commons](https://commons.wikimedia.org) y [Jamendo](https://www.jamendo.com), y emisoras de [Radio Browser](https://www.radio-browser.info).
+- **Explorar**: música con licencias abiertas de [Internet Archive](https://archive.org), [Openverse](https://openverse.org), [Wikimedia Commons](https://commons.wikimedia.org) y [Jamendo](https://www.jamendo.com), y emisoras de [Radio Browser](https://www.radio-browser.info), en tres vistas (Para ti · Música libre · Radios) con un buscador común, ambientes, géneros, ciudades con su hora local, Radio Roulette, Sorpréndeme, Fiora Atlas (globo y mapa), Universo musical, Radar de emisoras parecidas, Pasaporte musical, Viajes musicales, Degustación de radios, mezclador de descubrimiento, y emisoras favoritas y colecciones sincronizadas. Más abajo, [Explorar](#explorar).
 
 No hay servidor propio ni seguimiento: es HTML, CSS y JavaScript sin paso de compilación.
 
@@ -119,6 +119,37 @@ Se activa en **Ajustes → Modo desarrollador**. Añade «Editar metadatos» al 
 - **Géneros predefinidos**: el editor ofrece una lista de géneros habituales, y puedes añadir los tuyos en Ajustes.
 - **Etiquetado con IA**: elige el servicio, pega su clave de API y el modelo. Funciona con Claude (console.anthropic.com), con OpenAI (platform.openai.com; los modelos de GPT y Codex), con Gemini (claves de aistudio.google.com/api-keys), con los modelos abiertos de **Hugging Face** (Llama, Qwen, Mistral, DeepSeek…; token «Fine-grained» de huggingface.co/settings/tokens con el permiso «Make calls to Inference Providers») y con cualquier servicio que tenga una API compatible con la de OpenAI y admita llamadas desde el navegador. La app envía título, artistas, álbum y año, y recibe géneros y ambiente. La llamada sale directamente de tu navegador con tu clave, que se guarda solo en ese dispositivo y nunca se sincroniza. Cada uso puede tener coste en tu cuenta de ese servicio.
 
+## Explorar
+
+Una sola sección del menú con tres vistas: **Para ti** (lo más visual: ambientes, canciones y radios destacadas, géneros, destinos y experiencias), **Música libre** (los catálogos de siempre y novedades, géneros y recomendaciones) y **Radios** (tus emisoras y colecciones, descubrimiento del día, destacadas, tendencias, ciudades, países y géneros). El buscador de arriba consulta a la vez los catálogos de música y el directorio de radios y agrupa los resultados (canciones, álbumes, artistas, emisoras, países, etiquetas); si una fuente falla, las demás siguen y la que falla ofrece reintentar. La búsqueda se conserva al cambiar de vista.
+
+**De dónde sale cada cosa (nada se inventa)**
+- **Emisoras**: [Radio Browser](https://api.radio-browser.info), directorio comunitario gratuito. Se elige un servidor de su lista y, si falla, el siguiente; se avisa del clic al empezar a escuchar (lo piden sus normas; solo se envía el identificador de la emisora). Solo se muestran emisoras HTTPS en formatos que el navegador puede reproducir. Las «tendencias» son los **clics de las últimas 24 horas** en el directorio (no oyentes en directo) y los votos de su comunidad.
+- **Ambientes** («Noches de neón», «Café parisino»…): cada uno es una lista de etiquetas en `js/discover.js`. Las canciones son las que el catálogo etiqueta con ellas y las radios las que tienen esas etiquetas en el directorio; la página lo dice. No se atribuye un estado de ánimo a nada por intuición.
+- **Ciudades**: lista fija con coordenadas y zona horaria. La hora local es la real y el «amanecer», «atardecer» o «noche» se calcula con la altura del sol en ese momento. Las emisoras son las que el directorio sitúa a menos de 40 km (por sus coordenadas); las que no tienen coordenadas se encuentran por país.
+- **Atlas**: solo emisoras con coordenadas válidas, agrupadas por cercanía. Globo o mapa plano (automático: plano con «reducir movimiento» o si el globo va lento). El mapa (Natural Earth, dominio público) y el Atlas se descargan solo al abrirlo. Hay una lista accesible como alternativa.
+- **Radar**: emisoras parecidas por etiquetas, idioma y país, con el motivo de cada una. No analiza el sonido.
+- **Mezclador** (opcional): Familiar ↔ Sorprendente (géneros de tu biblioteca y lo que escuchas), Local ↔ Internacional (tu país) y Tranquilo ↔ Energético (solo por etiquetas, marcado como aproximado).
+- **Pantalla de directo**: logo, país, géneros, idioma, códec y bitrate, favoritas, parecidas y Radar. La animación es decorativa (lo dice) porque los streams de otros sitios no permiten analizar su sonido. Radio Browser no informa de qué canción suena, así que no se muestra.
+
+**Experiencias**: Radio Roulette (cualquier lugar, solo música, un género, un país o «fuera de mi zona»; no repite las últimas y, si una emisora no responde, pasa a otra), Sorpréndeme (canción, emisora o lo que sea), Universo musical (géneros relacionados según una taxonomía editable), Viajes musicales (destinos, orden, género, 3/5/10 minutos por emisora; pausar, saltar, repetir y terminar), Degustación (15/30/60 s por emisora) y Pasaporte musical. Ninguna graba ni guarda audio, y todas usan el mismo reproductor: nunca suenan dos cosas a la vez, y si pones otra música la experiencia termina sola.
+
+**Pasaporte musical** (opcional, se desactiva en su pantalla): un país se sella cuando escuchas una emisora suya un tiempo mínimo seguido (30 s, 1, 2 o 5 minutos; por defecto 1 minuto, sin contar pausas). Abrir una ficha no cuenta. Solo se guarda el país, cuándo se descubrió y con qué emisora.
+
+**Emisoras favoritas, colecciones, pasaporte y preferencias en Supabase.** Sin sesión todo funciona y se guarda en el dispositivo; con sesión se sincroniza. Hay que ejecutar una vez [`supabase/migrations/20261115120000_explore.sql`](supabase/migrations/20261115120000_explore.sql) en el SQL Editor (después de la de playlists; es idempotente). Mientras no se ejecute, Radios lo indica y todo sigue guardándose en el dispositivo.
+
+| Tabla / función | Para qué |
+|---|---|
+| `fiora_radio_favorites` | Emisoras favoritas: el identificador y una ficha mínima de referencia (nombre, URL del stream, logo, país, etiquetas), nunca audio. |
+| `fiora_radio_collections`, `fiora_radio_collection_items` | Colecciones: nombre, descripción, portada opcional y emisoras en tu orden. |
+| `fiora_passport` | Un sello por país: primera y última vez, y la emisora. |
+| `fiora_explore_prefs` | Mezclador, tu país, pasaporte, modo del Atlas, intervalos y el último viaje. |
+| `fiora_load_explore`, `fiora_radio_fav`, `fiora_save_radio_collection`, `fiora_passport_stamp`, `fiora_save_explore_prefs` | Cargar y guardar (las colecciones y preferencias no pisan una versión más nueva de otro dispositivo). |
+
+Todas con RLS (cada usuario solo ve y cambia lo suyo; el rol anónimo no tiene acceso), funciones `security invoker`, límites de tamaño y borrado en cascada al eliminar la cuenta. Las portadas de las colecciones van al bucket `fiora-playlists` con el mismo límite de 16 MB y la misma opción de usarlas solo en el dispositivo. Con esta migración, las emisoras favoritas dejan de viajar en la copia general de la cuenta: así, una emisora quitada en un dispositivo ya no reaparece.
+
+**Pruebas.** En [`tests/explore`](tests/explore/README.md): la migración con RLS en PostgreSQL y la app de punta a punta contra emuladores de Radio Browser, los catálogos y Supabase.
+
 ## Catálogos de música libre
 
 En **Explorar** eliges dónde buscar. Todo se puede escuchar en línea, añadir a la biblioteca y (si la licencia lo permite) descargar; cada canción enlaza a su origen y su licencia.
@@ -130,7 +161,7 @@ En **Explorar** eliges dónde buscar. Todo se puede escuchar en línea, añadir 
 | Wikimedia Commons | Dominio público y libre; mucha clásica | No |
 | Jamendo | Música independiente actual | *Client ID* gratuito de devportal.jamendo.com |
 
-La clave de Jamendo se pega en **Explorar → Jamendo** (se guarda en ese dispositivo) o en `js/config.js`.
+La clave de Jamendo se pega en **Explorar → Música libre → Jamendo** (se guarda en ese dispositivo) o en `js/config.js`.
 
 ## Seguridad
 
@@ -161,15 +192,21 @@ Y abre `http://localhost:8000`.
 | `js/playlists-data.js` | Playlists: modelo, sincronización con Supabase (cola de pendientes, reintentos), imágenes pendientes de subir, escuchas por playlist |
 | `js/playlist-ui.js` | Playlists: vista, editor por categorías, carrusel y visor, capítulos, filtros, reordenar, recomendaciones, estadísticas, modos |
 | `js/images.js` | Imágenes de las playlists: validación, miniaturas, colores con contraste, Supabase Storage, caché y fotos solo locales |
-| `supabase/migrations/` | Migración de las playlists para Supabase (tablas, RLS, funciones, bucket) |
+| `supabase/migrations/` | Migraciones para Supabase: playlists y Explorar (tablas, RLS, funciones, bucket) |
 | `js/tagwrite.js` | Escritura de metadatos dentro de MP3, FLAC y M4A |
 | `js/vault.js` | Cifrado de las claves de IA con una clave del dispositivo no exportable |
 | `js/oci.js` | Peticiones firmadas a la API de Oracle (borrado real de archivos) |
 | `js/account.js`, `js/sync.js`, `js/config.js` | Cuentas con Supabase y sincronización de datos |
-| `js/sources.js` | Catálogos de música libre y radios |
+| `js/sources.js` | Catálogos de música libre |
+| `js/explore-ui.js` | Explorar: vistas, buscador universal y experiencias |
+| `js/radio.js` | Directorio de emisoras Radio Browser (servidores, caché, formatos reproducibles) |
+| `js/discover.js` | Ambientes, géneros, ciudades y hora local, ruleta, radar y mezclador |
+| `js/radio-data.js` | Favoritas, colecciones, pasaporte y preferencias (dispositivo + Supabase) |
+| `js/session.js` | Viajes musicales y degustación (emisoras por tiempo) |
+| `js/atlas.js`, `data/world.json` | Globo y mapa (se cargan al usarlos); `tools/make-world.mjs` genera el mapa |
 | `js/lyrics.js`, `js/recs.js` | Letras y recomendaciones |
 | `js/ai.js` | Etiquetado de géneros y ambiente con IA |
 | `js/db.js`, `js/store.js` | Almacenamiento en IndexedDB |
 | `sw.js`, `manifest.webmanifest` | Modo sin conexión e instalación |
 
-Las etiquetas se leen con [jsmediatags](https://github.com/aadsm/jsmediatags) (licencia BSD-3-Clause, en `vendor/`).
+Las etiquetas se leen con [jsmediatags](https://github.com/aadsm/jsmediatags) (licencia BSD-3-Clause, en `vendor/`). Las fronteras del mapa son de [Natural Earth](https://www.naturalearthdata.com) 1:110m (dominio público), convertidas con `world-atlas`, `topojson-client` e `i18n-iso-countries` solo al generar `data/world.json`; la app no carga ninguna librería externa.
