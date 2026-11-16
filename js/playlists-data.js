@@ -317,6 +317,8 @@ export async function flushPlays() {
   } catch (e) { if (!e.network) console.warn('Escuchas pendientes', e); }
 }
 const remoteRows = new Map();
+/** Escuchas de cada playlist anotadas en este dispositivo: {id: escuchas}. */
+export const localPlayTotals = () => Object.fromEntries(Object.entries(plays.agg).map(([pid, m]) => [pid, Object.values(m).reduce((n, v) => n + (v[0] || 0), 0)]));
 /** Filas {track_id, day, plays, seconds} de una playlist: de Supabase (+ lo pendiente) o de este dispositivo. */
 export async function playRows(pid) {
   const pend = plays.queue.filter(x => x.p === pid).map(x => ({ track_id: x.t, day: x.d, plays: x.n, seconds: x.s }));

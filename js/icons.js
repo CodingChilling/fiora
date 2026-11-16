@@ -4,6 +4,8 @@ const I = {
   library: '<path d="M4 4v16"/><path d="M9 4v16"/><path d="M14 5l5 15"/>',
   list: '<path d="M4 6h11"/><path d="M4 12h11"/><path d="M4 18h7"/><path d="M19 10v8"/><circle cx="17" cy="18" r="2"/>',
   compass: '<circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/>',
+  minus: '<path d="M5 12h14"/>',
+  expand: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/>',
   play: '<path d="M7 4.5v15l12-7.5z" fill="currentColor"/>',
   pause: '<path d="M7 5v14M17 5v14" stroke-width="3.2"/>',

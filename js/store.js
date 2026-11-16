@@ -133,6 +133,7 @@ const statOf = id => S.stats[id] || (S.stats[id] = { plays: 0, last: 0 });
 /** Escucha real (más de 30 s o la mitad de la canción). */
 export function countPlay(id) {
   const s = statOf(id);
+  emit('play-counted', { id, plays: s.plays, last: s.last });   // lo que había antes de esta escucha (habits.js)
   s.plays++;
   s.last = Date.now();
   (s.h ||= [0, 0, 0, 0])[daypart()]++;
@@ -148,9 +149,9 @@ export function countPlay(id) {
   saveKV('hist');
 }
 /** La canción se saltó nada más empezar. */
-export function countSkip(id) { const s = statOf(id); s.skips = (s.skips || 0) + 1; saveKV('stats'); }
+export function countSkip(id) { const s = statOf(id); s.skips = (s.skips || 0) + 1; saveKV('stats'); emit('play-skipped', id); }
 /** La canción se escuchó hasta el final. */
-export function countDone(id) { const s = statOf(id); s.done = (s.done || 0) + 1; saveKV('stats'); }
+export function countDone(id) { const s = statOf(id); s.done = (s.done || 0) + 1; saveKV('stats'); emit('play-done', id); }
 /** Tras `a` se escuchó `b`: sirve para saber qué canciones van bien juntas. */
 export function countNext(a, b) {
   const m = S.trans[a] || (S.trans[a] = {});

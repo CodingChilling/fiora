@@ -16,7 +16,8 @@ Tu música, sin suscripciones. Una app web instalable (PWA) para escuchar tu pro
 - **Cola**: lo que añades a mano suena antes de seguir con lo que estabas escuchando; desliza una canción a la derecha para añadirla. Al acabar, continúa sola con canciones parecidas.
 - **Letras** sincronizadas (incrustadas en el archivo o de [LRCLIB](https://lrclib.net)) y carátulas.
 - **Para ti**: mezcla diaria, mezclas por ambiente y por hora del día, redescubre y radio a partir de una canción. Aprenden de lo que terminas, lo que saltas y lo que escuchas seguido; todo se calcula en tu dispositivo.
-- **Estadísticas**: panel con tus minutos por día, horas y días en que más escuchas, y tus artistas, canciones, álbumes, géneros y ambientes más oídos.
+- **Perfil**: tu identidad musical en un sitio: quién eres, tu criatura sonora, todas tus estadísticas (minutos por día, horas y días en que más escuchas, y tus artistas, canciones, álbumes, géneros y ambientes más oídos) y tu evolución. Los **Ajustes** están dentro de Perfil, en el engranaje de arriba a la derecha.
+- **Tu criatura sonora**: un animal, entre 15, que representa cómo escuchas, dibujado como una escultura 3D de miles de partículas que reaccionan al cursor, al dedo y al sonido. Con explicación basada en tus cifras, ADN musical, metamorfosis, bestiario y constelación de recuerdos. Más abajo, [Tu criatura sonora](#tu-criatura-sonora).
 - **Géneros y ambiente**: cada canción puede tener varios géneros y etiquetas de lo que transmite (alegre, melancólica, enérgica…).
 - **Modo desarrollador** (solo con la clave de API de Oracle del propietario del bucket): edita portada, título, artistas, álbum, géneros y ambiente desde la app y escríbelos en los archivos; borra canciones de la nube. Los géneros y el ambiente también se pueden etiquetar con IA.
 - **Explorar**: música con licencias abiertas de [Internet Archive](https://archive.org), [Openverse](https://openverse.org), [Wikimedia Commons](https://commons.wikimedia.org) y [Jamendo](https://www.jamendo.com), y emisoras de [Radio Browser](https://www.radio-browser.info), en tres vistas (Para ti · Música libre · Radios) con un buscador común, ambientes, géneros, ciudades con su hora local, Radio Roulette, Sorpréndeme, Fiora Atlas (globo y mapa), Universo musical, Radar de emisoras parecidas, Pasaporte musical, Viajes musicales, Degustación de radios, mezclador de descubrimiento, y emisoras favoritas y colecciones sincronizadas. Más abajo, [Explorar](#explorar).
@@ -164,6 +165,70 @@ Con el modo activado, el menú ⋯ de cada canción tiene «Editar metadatos».
 - **Géneros predefinidos**: el editor ofrece una lista de géneros habituales, y puedes añadir los tuyos en Ajustes.
 - **Etiquetado con IA**: elige el servicio, pega su clave de API y el modelo. Funciona con Claude (console.anthropic.com), con OpenAI (platform.openai.com; los modelos de GPT y Codex), con Gemini (claves de aistudio.google.com/api-keys), con los modelos abiertos de **Hugging Face** (Llama, Qwen, Mistral, DeepSeek…; token «Fine-grained» de huggingface.co/settings/tokens con el permiso «Make calls to Inference Providers») y con cualquier servicio que tenga una API compatible con la de OpenAI y admita llamadas desde el navegador. La app envía título, artistas, álbum y año, y recibe géneros y ambiente. La llamada sale directamente de tu navegador con tu clave, que se guarda solo en ese dispositivo y nunca se sincroniza. Cada uso puede tener coste en tu cuenta de ese servicio.
 
+## Tu criatura sonora
+
+Está en **Perfil**. Es una interpretación visual de hábitos musicales observables, no un perfil psicológico. Para tenerla en todos tus dispositivos hay que ejecutar una vez [`supabase/migrations/20261117120000_creature.sql`](supabase/migrations/20261117120000_creature.sql) en el SQL Editor (es idempotente); sin ella funciona igual, guardada solo en el dispositivo.
+
+**Los 15 animales**
+
+| Animal | Patrón | Indicadores principales |
+|---|---|---|
+| Búho · el noctámbulo | Música de noche | Parte de las escuchas entre las 21:00 y las 6:00; días con música de noche |
+| Alondra · el madrugador | Música por la mañana | Parte de las escuchas entre las 6:00 y las 12:00; días con música de mañana |
+| Lobo · el fiel | Vuelve a lo mismo | Escuchas de tus 5 artistas principales; de canciones ya conocidas; repeticiones en el día |
+| Zorro · el explorador | Descubre | Escuchas de canciones nuevas para ti; artistas nuevos |
+| Elefante · el nostálgico | Recupera | Reencuentros con canciones que llevaban más de 60 días sin sonar |
+| Tortuga · el maratoniano | Sesiones largas | Duración mediana de sesión; sesiones de una hora o más |
+| Liebre · el de los momentos | Ratos cortos y frecuentes | Sesiones de 15 minutos o menos; sesiones por día |
+| Colibrí · el inquieto | Cambia mucho | Canciones saltadas; cambios de artista entre canciones seguidas |
+| Camaleón · el versátil | Muchos estilos | Diversidad de géneros; días en que cambia el género principal |
+| Delfín · el navegante | Biblioteca y radio | Equilibrio de tiempo entre las dos; cambios dentro de una sesión |
+| Águila · el viajero | Radios del mundo | Países de las emisoras escuchadas; países nuevos |
+| Abeja · el curador | Organiza | Playlists creadas, canciones añadidas y cambios guardados por semana |
+| Ardilla · el coleccionista | Guarda | Canciones añadidas a la biblioteca y favoritas por semana |
+| Pingüino · el ritualista | Muy regular | Días con la misma franja principal; días con música |
+| Ballena · el inmersivo | Se sumerge | Canciones de 6 minutos o más; canciones seguidas del mismo álbum; escuchadas hasta el final |
+
+Cada animal se define en un solo sitio (`ANIMALS` en `js/creature.js`: textos, reglas, evidencia mínima, hechos de la explicación, colores, movimiento y hábitat) y su geometría en `js/creature-shapes.js`. Añadir uno no toca el motor.
+
+**Cómo se asigna** (reglas deterministas, sin IA)
+
+1. De los resúmenes diarios del período (7, 30 o 90 días, o todo el historial) se calculan indicadores. Casi todos son proporciones, para que escuchar más horas no dé más puntos.
+2. Cada regla de un animal compara un indicador con dos valores: desde cuál empieza a contar y en cuál cuenta del todo. Entre los dos, vale de 0 a 1.
+3. La puntuación del animal (0–100) es mitad la media ponderada de sus reglas y mitad su regla esencial más débil. Si falta el dato de una regla esencial o no hay evidencia mínima, el animal no participa.
+4. **Principal**: la puntuación más alta, si llega a 30. **Secundario**: el siguiente, solo si llega a 40 y al 60 % del principal.
+5. **Datos insuficientes**: con menos de 15 escuchas (o 45 minutos) en 3 días distintos, o si ningún animal llega al mínimo, no se asigna ninguno: «Tu criatura está tomando forma».
+6. **Metamorfosis**: la criatura se revisa como mucho una vez al día y solo cambia si otro animal la supera en 8 puntos durante 3 días distintos.
+
+La puntuación no es un porcentaje de afinidad; la app muestra su desglose regla a regla. «Tus 5 artistas principales» solo se usa si has escuchado al menos a 10 artistas. Los géneros solo cuentan con canciones etiquetadas. Los países salen de las emisoras, nunca del nombre de un artista.
+
+**Qué se guarda**
+
+- Un **resumen por día** con contadores: escuchas, segundos, franjas de 3 horas, canciones nuevas o repetidas, reencuentros, saltos, duración de las sesiones, géneros, segundos de radio por país y cambios en playlists. Sin canciones, sin artistas y sin horas exactas. Se conservan 400 días.
+- Una **entrada por mes** para el bestiario (animal, puntuación y cifras principales) y la criatura actual.
+- Tus preferencias de la experiencia.
+- En Supabase van a tres tablas con RLS (`fiora_habit_days`, `fiora_creature_log`, `fiora_creature_state`): solo su dueño las lee. Nunca van al bucket.
+- En **Ajustes → Tu criatura sonora** puedes desactivarla (deja de guardarse el resumen; las estadísticas siguen), quitar animaciones, hábitat o reacción al sonido, elegir el período principal y **eliminar sus datos** sin tocar tus estadísticas.
+
+**La figura 3D**
+
+- **Geometrías originales de Fiora**, sin modelos de terceros: cada animal es un volumen hecho con elipsoides y conos redondeados unidos con suavidad (campo de distancia). Las partículas se reparten sobre su superficie y su interior.
+- **Three.js** (MIT), copiado en `vendor/`. Se carga solo al abrir Perfil o la criatura. Una sola geometría con buffers; entre 3.600 y 15.000 partículas según el dispositivo, y menos si va lento.
+- **Interacción**: las partículas cercanas al cursor o al dedo se apartan (o se acercan, en modo atracción) y vuelven con inercia. Arrastrar gira, la rueda o el pellizco acercan, y hay botones para todo.
+- **Sonido**: reacciona al volumen real solo con canciones descargadas en la app (se analiza el archivo en el dispositivo). Con emisoras o canciones en streaming el navegador no deja analizar el audio, así que la animación es ambiental y la app lo dice.
+- **Datos en las partículas**, con leyenda: colores secundarios por género, puntos periféricos por variedad, destellos por canciones nuevas y un anillo por fuente (biblioteca y radio).
+- **Accesibilidad**: respeta «reducir movimiento», se puede pausar, y sin WebGL muestra una silueta estática con la misma información.
+- **Compartir**: crea una imagen (o una animación de 4 s donde el navegador lo permite) en el dispositivo, sin subir nada. Tú eliges si lleva alias, secundario o alguna cifra; por defecto, ninguna.
+
+**Limitaciones**
+
+- Los indicadores de sesiones, descubrimiento, reencuentros y radio empiezan a contar desde que existe el resumen diario. De lo anterior solo se usan los totales, y solo en «Todo el historial».
+- Entre dispositivos, de cada contador del día se conserva el valor más alto: si escuchas el mismo día en dos dispositivos, ese día puede quedar corto.
+- La constelación no incluye «artista nuevo descubierto» ni «canción recuperada» con nombre, porque el resumen no guarda qué canciones son.
+- La animación exportable depende de `MediaRecorder`; donde no existe, solo hay imagen.
+
+Pruebas en [`tests/profile`](tests/profile/README.md).
+
 ## Explorar
 
 Una sola sección del menú con tres vistas: **Para ti** (lo más visual: ambientes, canciones y radios destacadas, géneros, destinos y experiencias), **Música libre** (los catálogos de siempre y novedades, géneros y recomendaciones) y **Radios** (tus emisoras y colecciones, descubrimiento del día, destacadas, tendencias, ciudades, países y géneros). El buscador de arriba consulta a la vez los catálogos de música y el directorio de radios y agrupa los resultados (canciones, álbumes, artistas, emisoras, países, etiquetas); si una fuente falla, las demás siguen y la que falla ofrece reintentar. La búsqueda se conserva al cambiar de vista.
@@ -236,9 +301,15 @@ Y abre `http://localhost:8000`.
 | `js/cloud.js` | Oracle Cloud Object Storage (uno o varios buckets) |
 | `js/flac.js` | Conversión sin pérdida de WAV a FLAC |
 | `js/playlists-data.js` | Playlists: modelo, sincronización con Supabase (cola de pendientes, reintentos), imágenes pendientes de subir, escuchas por playlist |
+| `js/profile-ui.js` | Perfil y la experiencia «Tu criatura sonora» (pestañas, controles, exportar, panel de Ajustes) |
+| `js/habits.js` | Resumen diario de hábitos, historial de criaturas y preferencias; sincronización con Supabase |
+| `js/creature.js` | Motor de la criatura: indicadores, los 15 animales, puntuaciones, explicaciones, ADN y metamorfosis |
+| `js/creature-data.js` | Une los datos de Fiora con el motor; criatura oficial, bestiario y recuerdos |
+| `js/creature-shapes.js` | Geometrías 3D de los 15 animales y reparto de partículas |
+| `js/creature3d.js` | Escena 3D de partículas con Three.js: física, gestos, hábitats, metamorfosis y constelación |
 | `js/playlist-ui.js` | Playlists: vista, editor por categorías, carrusel y visor, capítulos, filtros, reordenar, recomendaciones, estadísticas, modos |
 | `js/images.js` | Imágenes de las playlists: validación, miniaturas, colores con contraste, Supabase Storage, caché y fotos solo locales |
-| `supabase/migrations/` | Migraciones para Supabase: playlists y Explorar (tablas, RLS, funciones, bucket) |
+| `supabase/migrations/` | Migraciones para Supabase: playlists, Explorar, playlists compartidas y criatura sonora (tablas, RLS, funciones, bucket) |
 | `js/tagwrite.js` | Escritura de metadatos dentro de MP3, FLAC y M4A |
 | `js/vault.js` | Cifrado de las claves de IA con una clave del dispositivo no exportable |
 | `js/groups.js`, `js/merge.js` | Grupo de cada bucket (para compartir playlists) y fusión de cambios hechos a la vez |
@@ -256,4 +327,4 @@ Y abre `http://localhost:8000`.
 | `js/db.js`, `js/store.js` | Almacenamiento en IndexedDB |
 | `sw.js`, `manifest.webmanifest` | Modo sin conexión e instalación |
 
-Las etiquetas se leen con [jsmediatags](https://github.com/aadsm/jsmediatags) (licencia BSD-3-Clause, en `vendor/`). Las fronteras del mapa son de [Natural Earth](https://www.naturalearthdata.com) 1:110m (dominio público), convertidas con `world-atlas`, `topojson-client` e `i18n-iso-countries` solo al generar `data/world.json`; la app no carga ninguna librería externa.
+Las etiquetas se leen con [jsmediatags](https://github.com/aadsm/jsmediatags) (licencia BSD-3-Clause, en `vendor/`). Las fronteras del mapa son de [Natural Earth](https://www.naturalearthdata.com) 1:110m (dominio público), convertidas con `world-atlas`, `topojson-client` e `i18n-iso-countries` solo al generar `data/world.json`. La figura 3D usa [Three.js](https://threejs.org) 0.180 (licencia MIT, en `vendor/`, con su licencia en `vendor/three.LICENSE`). La app no carga nada desde servidores externos.

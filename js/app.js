@@ -14,6 +14,8 @@ import { initPlaylists } from './playlist-ui.js';
 import { initExplore } from './explore-ui.js';
 import * as rdata from './radio-data.js';
 import * as groups from './groups.js';
+import * as habits from './habits.js';
+import { initProfile } from './profile-ui.js';
 import * as account from './account.js';
 import * as src from './sources.js';
 import { getLyrics } from './lyrics.js';
@@ -204,8 +206,8 @@ const watchSentinels = root => $$('.sentinel', root).forEach(s => more.observe(s
 
 // ---------------------------------------------------------------- navegación
 const view = $('#view');
-const NAV = [['inicio', 'Inicio', 'home'], ['biblioteca', 'Biblioteca', 'library'], ['playlists', 'Playlists', 'list'], ['explorar', 'Explorar', 'compass'], ['ajustes', 'Ajustes', 'settings']];
-const SECTION = { estadisticas: 'ajustes', repetidas: 'ajustes', album: 'biblioteca', artista: 'biblioteca', genero: 'biblioteca', ambiente: 'biblioteca', playlist: 'playlists', favoritos: 'playlists', mix: 'inicio', archivo: 'explorar' };
+const NAV = [['inicio', 'Inicio', 'home'], ['biblioteca', 'Biblioteca', 'library'], ['playlists', 'Playlists', 'list'], ['explorar', 'Explorar', 'compass'], ['perfil', 'Perfil', 'user']];
+const SECTION = { ajustes: 'perfil', estadisticas: 'perfil', repetidas: 'perfil', criatura: 'perfil', album: 'biblioteca', artista: 'biblioteca', genero: 'biblioteca', ambiente: 'biblioteca', playlist: 'playlists', favoritos: 'playlists', mix: 'inicio', archivo: 'explorar' };
 $('#nav-links').innerHTML = NAV.map(([id, label, ic]) => `<a href="#/${id}" data-nav="${id}">${icon(ic)}<span>${label}</span></a>`).join('');
 
 function show(html) {
@@ -221,6 +223,7 @@ async function route() {
   const section = SECTION[name] || (ROUTES[name] ? name : 'inicio');
   $$('#nav-links a').forEach(a => a.classList.toggle('on', a.dataset.nav === section));
   lists = [];
+  if (!['perfil', 'criatura', 'estadisticas'].includes(name)) PF.leave();   // la escena 3D solo vive en Perfil y en la criatura
   const same = hash === lastHash;
   if (lastHash?.startsWith('biblioteca')) scrollMem.set(lastHash, view.scrollTop);
   const keep = same ? view.scrollTop : 0;
@@ -709,7 +712,9 @@ async function viewArchive(id) {
     ${tracks.length ? rows(tracks, { numbered: true, hideAlbum: true }) : empty('disc', 'Sin pistas reproducibles', 'Este elemento no tiene archivos MP3.')}`);
 }
 async function saveToLibrary(tracks) {
-  for (const t of tracks) if (!inLibrary(t)) await saveTrack({ ...t, addedAt: Date.now() });
+  let n = 0;
+  for (const t of tracks) if (!inLibrary(t)) { await saveTrack({ ...t, addedAt: Date.now() }); n++; }
+  if (n) emit('library-added', n);
   emit('library');
 }
 
@@ -810,7 +815,7 @@ async function viewSettings() {
            <label class="field">${icon('cloud')}<input name="url" type="url" placeholder="https://xxxxxxxx.supabase.co" autocomplete="off" required></label>
            <label class="field">${icon('lock')}<input name="key" placeholder="Clave pública (anon o publishable)" autocomplete="off" required></label>
            <div class="actions"><button class="btn primary">Guardar</button></div></form>`;
-  show(`<div class="head"><h1>Ajustes</h1></div>
+  show(`<div class="head"><a class="icon-btn" href="#/perfil" aria-label="Volver al perfil">${icon('back')}</a><h1>Ajustes</h1></div>
     <div class="panel"><h2>Cuenta</h2>${accountPanel}</div>
     <div class="panel"><h2>Nube</h2>${cloudPanel}</div>
     <div class="panel"><h2>Este dispositivo</h2>
@@ -851,10 +856,10 @@ async function viewSettings() {
             ${aiKey ? '<button type="button" class="btn ghost danger" data-act="ai-forget">Quitar clave</button>' : ''}</div>
           ${prov.site ? `<small class="muted">La clave se crea en ${prov.site}.${prov.help ? ` ${esc(prov.help)}` : ''}</small>` : '<small class="muted">Vale cualquier servicio con API compatible con la de OpenAI (OpenRouter, Groq, Mistral, un modelo local…), siempre que admita llamadas desde el navegador.</small>'}</form>
         ${aiReady ? `<div class="actions" style="margin-top:14px"><button class="btn" data-act="ai-tag-all" ${untagged ? '' : 'disabled'}>${icon('spark')}${untagged ? `Etiquetar ${plural(untagged, 'canción', 'canciones')} sin etiquetar` : 'Todas las canciones están etiquetadas'}</button></div>` : ''}` : ''}</div>
+    ${PF.settingsPanel()}
     <div class="panel"><h2>Tus escuchas</h2>
-      <div class="stat-row"><div class="stat"><b>${sum.plays}</b><small>reproducciones</small></div><div class="stat"><b>${sum.hours.toFixed(1)} h</b><small>escuchadas</small></div><div class="stat wide"><b title="${esc(sum.topArtists[0]?.[0] || '')}">${esc(sum.topArtists[0]?.[0] || '—')}</b><small>artista más escuchado</small></div></div>
-      <div class="actions" style="margin-top:14px"><a class="btn primary" href="#/estadisticas">${icon('chart')}Ver todas tus estadísticas</a></div>
-      <p style="margin:14px 0 0">Las recomendaciones aprenden de lo que terminas, a qué hora escuchas cada cosa y qué canciones pones seguidas.</p></div>
+      <p>Tus estadísticas y tu criatura sonora están en tu perfil. Las recomendaciones aprenden de lo que terminas, a qué hora escuchas cada cosa y qué canciones pones seguidas.</p>
+      <div class="actions"><a class="btn" href="#/perfil">${icon('chart')}Ver mis estadísticas en Perfil</a></div></div>
     <p class="muted" style="text-align:center">Fiora · Letras de LRCLIB · Música libre de Internet Archive, Openverse, Wikimedia Commons y Jamendo · Radios de Radio Browser</p>`);
   loadShares();
 }
@@ -1003,20 +1008,15 @@ function bars(list, unit = '') {
   return `<ol class="hbars">${list.map(([label, value, sub]) =>
     `<li><span class="hb-label" title="${esc(label)}"><b>${esc(label)}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</span><span class="hb-track"><i style="width:${((value / max) * 100).toFixed(1)}%"></i></span><span class="hb-val">${num(value)}${unit}</span></li>`).join('')}</ol>`;
 }
-function viewStats() {
-  const d = recs.dashboard();
-  if (!d.plays) {
-    return show(`<div class="head"><a class="icon-btn" href="#/ajustes" aria-label="Volver">${icon('back')}</a><h1>Tus estadísticas</h1></div>
-      ${empty('chart', 'Aún no hay escuchas', 'Pon música un rato y aquí verás cuánto escuchas, cuándo y qué.')}`);
-  }
+/** Todas las estadísticas de escucha (mosaicos y gráficos). Se muestran dentro de Perfil. */
+function statsBody(d) {
   const fmtDay = x => x.date.toLocaleDateString('es', { day: 'numeric', month: 'short' });
   const tile = (value, label, sub = '') => `<div class="stat"><b title="${esc(String(value))}">${esc(String(value))}</b><small>${label}</small>${sub ? `<small class="stat-sub">${sub}</small>` : ''}</div>`;
   const WEEK = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
   const PARTS = ['Madrugada', 'Mañana', 'Tarde', 'Noche'];
   const peakHour = d.hoursOfDay.indexOf(Math.max(...d.hoursOfDay));
   const since = '<p class="chart-note">Este gráfico se empieza a llenar desde hoy: las escuchas anteriores no guardaban la fecha.</p>';
-  show(`<div class="head"><a class="icon-btn" href="#/ajustes" aria-label="Volver">${icon('back')}</a><h1>Tus estadísticas</h1></div>
-    <div class="stat-row tiles">
+  return `<div class="stat-row tiles">
       ${tile(num(d.plays), 'reproducciones')}
       ${tile(`${d.hours.toLocaleString('es', { maximumFractionDigits: 1 })} h`, 'de música')}
       ${tile(num(d.heard), 'canciones distintas', `de ${num(d.total)} en tu biblioteca`)}
@@ -1044,8 +1044,10 @@ function viewStats() {
       ${d.topGenres.length ? `<section class="panel"><h2>Géneros</h2><p>Escuchas de canciones de cada género.</p>${bars(d.topGenres)}</section>` : ''}
       ${d.topMoods.length ? `<section class="panel"><h2>Lo que transmite</h2><p>Escuchas por ambiente.</p>${bars(d.topMoods.map(([m, n]) => [m[0].toUpperCase() + m.slice(1), n]))}</section>` : ''}
     </div>
-    <p class="muted" style="text-align:center">Todo se calcula en tu dispositivo a partir de tus escuchas.</p>`);
+    <p class="muted" style="text-align:center">Todo se calcula en tu dispositivo a partir de tus escuchas.</p>`;
 }
+// La antigua pantalla de estadísticas ahora es una sección de Perfil.
+const viewStats = () => PF.viewProfile('stats');
 // Etiqueta flotante de los gráficos: aparece al pasar el ratón, tocar o enfocar una columna.
 const tip = Object.assign(document.createElement('div'), { id: 'tip', hidden: true });
 document.body.append(tip);
@@ -1368,9 +1370,10 @@ function exploreChip() {
   return `<span class="sync-chip ${cls}" role="status" data-xsync>${icon(cls === 'ok' ? 'cloud' : 'sync')}<span>${esc(txt)}</span></span>`;
 }
 // Al cambiar los grupos (alguien entra o sale, o se cambia la clave) se vuelven a mirar las compartidas.
+on('habits-sync', () => { if (location.hash.startsWith('#/ajustes')) refresh(); });
 on('groups', () => { pldata.pullShared(); if (location.hash.startsWith('#/ajustes')) refresh(); });
 on('explore-sync', () => { for (const el of $$('[data-xsync]')) el.outerHTML = exploreChip(); });
-const ROUTES = { inicio: viewHome, biblioteca: viewLibrary, album: viewAlbum, artista: viewArtist, playlists: () => PL.viewList(), playlist: id => PL.viewPlaylist(id), favoritos: () => PL.viewPlaylist('favoritos'), mix: viewMix, estadisticas: viewStats, genero: n => viewTag('genero', n), ambiente: n => viewTag('ambiente', n), explorar: (...a) => EX.view(...a), archivo: viewArchive, ajustes: viewSettings, repetidas: viewDuplicates };
+const ROUTES = { inicio: viewHome, biblioteca: viewLibrary, album: viewAlbum, artista: viewArtist, playlists: () => PL.viewList(), playlist: id => PL.viewPlaylist(id), favoritos: () => PL.viewPlaylist('favoritos'), mix: viewMix, estadisticas: viewStats, genero: n => viewTag('genero', n), ambiente: n => viewTag('ambiente', n), explorar: (...a) => EX.view(...a), archivo: viewArchive, ajustes: viewSettings, repetidas: viewDuplicates, perfil: () => PF.viewProfile(), criatura: (...a) => PF.viewCreature(...a) };
 
 // ------------------------------------------------------- menú de una canción
 function trackMenu(t, o = {}, i = -1) {
@@ -1640,6 +1643,7 @@ const PL = initPlaylists({
   esc, enc, plural, totalTime, toast, openSheet, sheet, confirmDlg, menu, ask, show, rows, cover, empty, refresh, playable, num,
   columns, bars, allTracks, needsDownload, downloadMany, setHTML, watch: watchSentinels, saveKV, ACTIONS,
 });
+const PF = initProfile({ esc, plural, toast, openSheet, sheet, confirmDlg, show, empty, refresh: () => refresh(), num, statsBody, ACTIONS });
 const EX = initExplore({
   esc, enc, plural, toast, openSheet, sheet, menu, show, rows, cover, empty, setHTML, watch: watchSentinels, ACTIONS, playable,
   saveToLibrary, trackMenu: t => trackMenu(t, {}), confirmDlg, ask, PL, go: h => go(h), refresh: () => refresh(), saveKV,
@@ -1778,6 +1782,7 @@ async function runImport(files) {
   const t = toast('Preparando…', 0);
   const r = await lib.importFiles(files, (i, n, name) => t.set(`Añadiendo ${i} de ${n}: ${name}`));
   if (!r.total) return t.done('No se encontraron archivos de audio');
+  if (r.added) emit('library-added', r.added);
   t.done([`${plural(r.added, 'canción añadida', 'canciones añadidas')}`, r.skipped && `${r.skipped} ya estaban`, r.failed && `${r.failed} con error (¿sin espacio?)`].filter(Boolean).join(' · '), 5000);
 }
 for (const id of ['#pick-files', '#pick-folder']) {
@@ -2055,6 +2060,7 @@ async function start() {
   }
   const linked = await account.init();   // puede venir de un enlace de correo de Supabase
   await pldata.init();
+  await habits.init();                  // resúmenes diarios para la criatura sonora
   await groups.init();                  // grupos de los buckets (playlists compartidas)
   await rdata.init();                    // Explorar: favoritas, colecciones, pasaporte y preferencias                   // playlists: datos nuevos, cola pendiente y sincronización con Supabase
   addEventListener('hashchange', route);
