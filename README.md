@@ -17,6 +17,7 @@ Tu música, sin suscripciones. Una app web instalable (PWA) para escuchar tu pro
 - **Letras** sincronizadas (incrustadas en el archivo o de [LRCLIB](https://lrclib.net)) y carátulas.
 - **Para ti**: mezcla diaria, mezclas por ambiente y por hora del día, redescubre y radio a partir de una canción. Aprenden de lo que terminas, lo que saltas y lo que escuchas seguido; todo se calcula en tu dispositivo.
 - **Perfil**: tu identidad musical en un sitio: quién eres, tu criatura sonora, todas tus estadísticas (minutos por día, horas y días en que más escuchas, y tus artistas, canciones, álbumes, géneros y ambientes más oídos) y tu evolución. Los **Ajustes** están dentro de Perfil, en el engranaje de arriba a la derecha.
+- **Estadísticas por pestañas** (en Perfil): además del resumen de siempre, **Tiempo** (calendario de calor del año, reloj de 24 horas, rachas, récords e hitos, sesiones y comparación con la semana anterior), **Gustos** (décadas y año medio de tu música, ambiente por franja del día, río de géneros y concentración por artista), **Biblioteca** (cuánto has explorado, favoritas olvidadas con «Reproducir todas», canciones que nunca o siempre saltas y crecimiento) y **Conexiones** (red de canciones que pones seguidas y mapa de radios). **Resumen del mes** en tarjetas deslizables, exportable como imagen. Todo se calcula en el dispositivo con datos que ya existían; no se registra nada nuevo. Las escuchas por canción no se guardan por mes, así que la canción y el artista del resumen son «de siempre», y se dice.
 - **Tu criatura sonora**: un animal, entre 15, que representa cómo escuchas, dibujado como una escultura 3D de miles de partículas que reaccionan al cursor, al dedo y al sonido. Con explicación basada en tus cifras, ADN musical, metamorfosis, bestiario y constelación de recuerdos. Más abajo, [Tu criatura sonora](#tu-criatura-sonora).
 - **Géneros y ambiente**: cada canción puede tener varios géneros y etiquetas de lo que transmite (alegre, melancólica, enérgica…).
 - **Modo desarrollador** (solo con la clave de API de Oracle del propietario del bucket): edita portada, título, artistas, álbum, géneros y ambiente desde la app y escríbelos en los archivos; borra canciones de la nube. Los géneros y el ambiente también se pueden etiquetar con IA.
@@ -302,6 +303,7 @@ Y abre `http://localhost:8000`.
 | `js/flac.js` | Conversión sin pérdida de WAV a FLAC |
 | `js/playlists-data.js` | Playlists: modelo, sincronización con Supabase (cola de pendientes, reintentos), imágenes pendientes de subir, escuchas por playlist |
 | `js/profile-ui.js` | Perfil y la experiencia «Tu criatura sonora» (pestañas, controles, exportar, panel de Ajustes) |
+| `js/stats-extra.js`, `js/stats-ui.js` | Estadísticas por pestañas de Perfil y resumen del mes: cálculos y gráficos (HTML y SVG propios) |
 | `js/habits.js` | Resumen diario de hábitos, historial de criaturas y preferencias; sincronización con Supabase |
 | `js/creature.js` | Motor de la criatura: indicadores, los 15 animales, puntuaciones, explicaciones, ADN y metamorfosis |
 | `js/creature-data.js` | Une los datos de Fiora con el motor; criatura oficial, bestiario y recuerdos |

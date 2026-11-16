@@ -1342,3 +1342,93 @@ body.dnd, body.dnd * { cursor: grabbing !important; }
 }
 @media (prefers-reduced-motion: reduce) { .cr-canvas { cursor: default; } }
 .cr-title small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---------- Estadísticas por pestañas ---------- */
+.sx-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 28px 0 10px; }
+.sx-head h2 { margin: 0; flex: 1; }
+.sx-tabs { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin: 0 -16px 14px; padding: 2px 16px; }
+.sx-tabs button { flex: none; padding: 8px 15px; border-radius: 999px; font-weight: 650; font-size: 14px; color: var(--muted); background: var(--surface); }
+.sx-tabs button.on { background: var(--text); color: var(--bg); }
+.sx-panel h2 { margin-top: 0; }
+.sx-sub { margin: 18px 0 8px; font-size: 16px; }
+.stat .up { color: #3fae6b; } .stat .down { color: var(--danger); }
+.heat-scroll { overflow-x: auto; scrollbar-width: thin; padding-bottom: 4px; }
+.heat { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 12px); grid-auto-columns: 12px; gap: 3px; width: max-content; margin-left: auto; }
+.heat i, .heat-scale i { display: block; width: 12px; height: 12px; border-radius: 3px; background: var(--surface-2); }
+.heat i.hx { background: none; }
+.heat i.h1, .heat-scale i.h1 { background: color-mix(in srgb, var(--chart) 30%, var(--surface-2)); }
+.heat i.h2, .heat-scale i.h2 { background: color-mix(in srgb, var(--chart) 55%, var(--surface-2)); }
+.heat i.h3, .heat-scale i.h3 { background: color-mix(in srgb, var(--chart) 80%, var(--surface-2)); }
+.heat i.h4, .heat-scale i.h4 { background: var(--chart); }
+.heat i[data-day]:hover, .heat i:focus-visible { outline: 2px solid var(--text); outline-offset: 1px; }
+.heat-legend { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); margin-top: 8px; flex-wrap: wrap; }
+.heat-scale { display: inline-flex; align-items: center; gap: 3px; }
+.clock { max-width: 260px; margin: 0 auto; }
+.clock svg { width: 100%; display: block; }
+.clock path { fill: color-mix(in srgb, var(--chart) 55%, var(--surface-2)); }
+.clock path.peak { fill: var(--chart); }
+.clock path:hover, .clock path:focus-visible { fill: var(--accent); outline: none; }
+.clock text { text-anchor: middle; fill: var(--muted); font-size: 9px; }
+.clock .clock-big { font-size: 20px; font-weight: 800; fill: var(--text); }
+.mood-grid { display: grid; grid-template-columns: minmax(74px, auto) repeat(var(--n), minmax(0, 1fr)); gap: 4px; align-items: center; font-size: 12px; }
+.mood-grid b { font-weight: 600; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; }
+.mood-grid b { min-width: 0; }
+.mood-grid b.mg-row { text-align: left; }
+.mood-grid i { display: block; height: 34px; border-radius: 6px; background: color-mix(in srgb, var(--chart) calc(var(--v) * 100%), var(--surface-2)); }
+.mood-grid i:focus-visible, .mood-grid i:hover { outline: 2px solid var(--text); }
+.river, .growth { width: 100%; height: 170px; display: block; border-radius: 10px; background: var(--surface-2); }
+.growth { height: 150px; }
+.growth polyline { fill: none; stroke-width: 3; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.g-lib { stroke: var(--chart); } .g-fav { stroke: var(--accent-2); }
+.sx-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 10px; font-size: 13px; color: var(--muted); }
+.sx-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sx-legend i { width: 10px; height: 10px; border-radius: 3px; display: block; }
+.sx-legend i.g-lib { background: var(--chart); } .sx-legend i.g-fav { background: var(--accent-2); }
+.treemap { position: relative; height: 240px; border-radius: 10px; overflow: hidden; }
+.treemap div { position: absolute; padding: 6px 8px; overflow: hidden; border: 1.5px solid var(--surface); border-radius: 6px; color: #fff; font-size: 12.5px; font-weight: 650;
+  background: color-mix(in srgb, var(--chart) calc(35% + var(--k) * 65%), #2a2637); }
+.treemap div.rest { background: var(--surface-2); color: var(--muted); }
+.treemap div span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ring-row { display: grid; gap: 16px; align-items: center; }
+.sx-ring { width: 150px; margin: 0 auto; display: block; }
+.sx-ring circle { fill: none; stroke-width: 12; }
+.ring-bg { stroke: var(--surface-2); } .ring-fg { stroke: var(--chart); stroke-linecap: round; }
+.sx-ring text { text-anchor: middle; font-size: 24px; font-weight: 800; fill: var(--text); }
+@media (min-width: 640px) { .ring-row { grid-template-columns: 170px minmax(0, 1fr); } }
+.sx-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.sx-list li { display: flex; align-items: center; gap: 10px; }
+.sx-list li > span { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.sx-list b, .sx-list small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sx-list small { color: var(--muted); }
+.sx-list em { font-style: normal; font-weight: 700; font-variant-numeric: tabular-nums; }
+.net-wrap { display: grid; gap: 14px; align-items: start; }
+.net { width: 100%; max-width: 360px; margin: 0 auto; display: block; }
+.net line { stroke: var(--muted); opacity: .45; stroke-linecap: round; }
+.net line.on { stroke: var(--accent); opacity: .95; } .net line.dim { opacity: .12; }
+.net-node { cursor: pointer; }
+.net-node text { text-anchor: middle; font-size: 11px; font-weight: 700; fill: #fff; pointer-events: none; }
+.net-node.on circle { stroke: var(--text); stroke-width: 3; }
+.net-node:focus-visible { outline: none; } .net-node:focus-visible circle { stroke: var(--accent); stroke-width: 3; }
+.net-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.net-list button { width: 100%; display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 10px; min-width: 0; }
+.net-list button.on { background: var(--surface-2); }
+.net-list i { flex: none; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-style: normal; font-size: 11px; font-weight: 700; color: #fff; }
+.net-list span { min-width: 0; display: flex; flex-direction: column; }
+.net-list b, .net-list small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.net-list small { color: var(--muted); }
+@media (min-width: 760px) { .net-wrap { grid-template-columns: minmax(0, 360px) minmax(0, 1fr); } }
+.sx-map { position: relative; height: 240px; border-radius: 10px; overflow: hidden; background: var(--surface-2); }
+.sx-countries { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.sx-countries li { display: flex; flex-direction: column; padding: 8px 10px; border-radius: 10px; background: var(--surface-2); min-width: 0; }
+.sx-countries small { color: var(--muted); }
+.recap-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.recap-head h3 { flex: 1; margin: 0; }
+.recap-cards { display: flex; gap: 12px; overflow-x: auto; scroll-snap-type: x mandatory; padding: 4px 2px 12px; scrollbar-width: thin; }
+.recap-card { --rc: #ff8f63; flex: none; width: min(78vw, 300px); min-height: 300px; scroll-snap-align: center; border-radius: 20px; padding: 22px; display: flex; flex-direction: column; gap: 8px; color: #f3efe8; position: relative;
+  background: radial-gradient(120% 90% at 20% 10%, color-mix(in srgb, var(--rc) 40%, transparent), transparent 70%), linear-gradient(160deg, #241a2e, #0b0a12); }
+.recap-card small { text-transform: uppercase; letter-spacing: .08em; font-weight: 700; font-size: 12px; color: #a39db3; }
+.recap-card b { font-size: clamp(28px, 8vw, 40px); line-height: 1.05; margin-top: auto; color: var(--rc); overflow-wrap: anywhere; }
+.recap-card span { font-size: 16px; }
+.recap-card em { font-style: normal; font-size: 13px; color: #a39db3; }
+.recap-card i { position: absolute; top: 20px; right: 20px; font-style: normal; font-size: 12px; color: #a39db3; }
+@media (min-width: 900px) { .sx-tabs { margin: 0 0 14px; padding: 2px 0; } }

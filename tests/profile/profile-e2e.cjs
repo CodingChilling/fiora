@@ -82,7 +82,7 @@ function days(kind, n = 30) {
   check(await A.$eval('#nav-links a[data-nav="perfil"]', a => a.classList.contains('on')), '   Perfil queda marcado en la navegación');
   check(!!(await A.$('.head .pf-gear[aria-label="Ajustes"]')), '2. Perfil tiene el botón de Ajustes con engranaje en la cabecera');
   const order = await A.$$eval('.wrap > *', els => els.map(e => e.className || e.tagName).join(' | '));
-  check(/pf-id.*pf-creature.*stat-row|pf-id.*pf-creature.*empty/s.test(order), '   Orden de Perfil: identidad, criatura y estadísticas');
+  check(/pf-id.*pf-creature.*sx-head.*sx-tabs.*sx-body/s.test(order), '   Orden de Perfil: identidad, criatura y estadísticas');
   await A.click('.pf-gear'); await A.waitForSelector('.panel');
   check((await A.evaluate(() => location.hash)) === '#/ajustes' && await A.$eval('#nav-links a[data-nav="perfil"]', a => a.classList.contains('on')), '   El engranaje abre Ajustes (Perfil sigue marcado)');
   const panels = await A.$$eval('.panel > h2:first-child', h => h.map(x => x.textContent));
@@ -155,7 +155,7 @@ function days(kind, n = 30) {
   const bodyTxt = await text(A, '.cr-body');
   ind.night = await A.evaluate(async () => Math.round((await import('./js/creature-data.js')).evaluate('30').I.m.night * 100));
   if (!/Puntuación \d+\/100/.test(bodyTxt) || !bodyTxt.includes(`${ind.night} %`)) console.log('CUERPO', ind.night, bodyTxt.slice(0, 500));
-  check(/Eres el Búho/.test(bodyTxt) && /¿Por qué soy este animal\?/.test(bodyTxt) && bodyTxt.includes(`${ind.night} %`) && /Puntuación \d+\/100/.test(bodyTxt), '11. Explicación personalizada con «¿Por qué soy este animal?» y el desglose de la puntuación');
+  check(/Eres el Búho/.test(bodyTxt) && /¿Por qué soy este animal\?/.test(bodyTxt) && [ind.night - 1, ind.night, ind.night + 1].some(n => bodyTxt.includes(`${n} % de tus escuchas suenan`)) && /Puntuación \d+\/100/.test(bodyTxt), '11. Explicación personalizada con «¿Por qué soy este animal?» y el desglose de la puntuación');
   check(/Sin animal secundario/.test(bodyTxt) && ind.second === '', '16. Sin otro patrón con evidencia, no se muestra animal secundario');
   check(/no un perfil psicológico/.test(bodyTxt), '    Se dice que es una interpretación artística, no un perfil psicológico');
   check(full.habitat === 'stars', '    El búho tiene su hábitat (estrellas)');

@@ -12,6 +12,7 @@ import * as recs from './recs.js';
 import * as db from './db.js';
 import { P } from './player.js';
 import { icon } from './icons.js';
+import { initStats } from './stats-ui.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -195,9 +196,9 @@ export function initProfile(c) {
     show(`<div class="head"><h1>Perfil</h1><a class="icon-btn pf-gear" href="#/ajustes" aria-label="Ajustes" title="Ajustes">${icon('settings')}</a></div>
       ${identity(d)}
       ${creatureCard(cur)}
-      <h2 id="pf-stats">Mis estadísticas</h2>
-      ${d.plays ? statsBody(d) : empty('chart', 'Aún no hay escuchas', 'Pon música un rato y aquí verás cuánto escuchas, cuándo y qué.')}
+      ${ST.section(d)}
       ${evolutionCards(cur)}`);
+    ST.after();
     if (section === 'stats') $('#pf-stats')?.scrollIntoView();
     if (habits.enabled()) mount('card', cur.a).then(ctl => ctl?.setData(layers(cur.ev)));
   }
@@ -361,6 +362,7 @@ export function initProfile(c) {
     document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 4000);
     toast('Guardada en tus descargas');
   }
+  const ST = initStats({ ...c, deliver });
   function openShare() {
     const cur = current(X.period), a = C.animal(cur.a), b = C.animal(cur.b);
     if (!a) return toast('Tu criatura todavía está tomando forma');

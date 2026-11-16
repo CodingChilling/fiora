@@ -1059,9 +1059,9 @@ function showTip(el) {
   tip.style.left = `${Math.max(8, Math.min(innerWidth - w - 8, r.left + r.width / 2 - w / 2))}px`;
   tip.style.top = `${Math.max(8, r.top - tip.offsetHeight - 8)}px`;
 }
-view.addEventListener('pointerover', e => showTip(e.target.closest('.col')));
-view.addEventListener('pointerdown', e => showTip(e.target.closest('.col')));
-view.addEventListener('focusin', e => showTip(e.target.closest('.col')));
+view.addEventListener('pointerover', e => showTip(e.target.closest('[data-tip]')));
+view.addEventListener('pointerdown', e => showTip(e.target.closest('[data-tip]')));
+view.addEventListener('focusin', e => showTip(e.target.closest('[data-tip]')));
 view.addEventListener('pointerleave', () => showTip(null));
 view.addEventListener('scroll', () => showTip(null), { passive: true });
 
@@ -1643,7 +1643,7 @@ const PL = initPlaylists({
   esc, enc, plural, totalTime, toast, openSheet, sheet, confirmDlg, menu, ask, show, rows, cover, empty, refresh, playable, num,
   columns, bars, allTracks, needsDownload, downloadMany, setHTML, watch: watchSentinels, saveKV, ACTIONS,
 });
-const PF = initProfile({ esc, plural, toast, openSheet, sheet, confirmDlg, show, empty, refresh: () => refresh(), num, statsBody, ACTIONS });
+const PF = initProfile({ esc, plural, toast, openSheet, sheet, confirmDlg, show, empty, refresh: () => refresh(), num, statsBody, bars, rows, playable, ACTIONS });
 const EX = initExplore({
   esc, enc, plural, toast, openSheet, sheet, menu, show, rows, cover, empty, setHTML, watch: watchSentinels, ACTIONS, playable,
   saveToLibrary, trackMenu: t => trackMenu(t, {}), confirmDlg, ask, PL, go: h => go(h), refresh: () => refresh(), saveKV,
