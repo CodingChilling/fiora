@@ -92,3 +92,53 @@ export async function find(queries) {
   }
   return null;
 }
+
+/** Nombre de artista que no sirve para buscar («Artista desconocido», vacío…). */
+export const unknownArtist = a => !norm(a) || /^(artista desconocido|unknown artist|desconocido|various artists|varios artistas|va)$/.test(norm(a));
+
+/**
+ * Portada de otro disco del mismo artista en MusicBrainz, cuando la del disco de la canción no
+ * existe. Prefiere álbumes a singles. Devuelve {blob, id, title} o null.
+ */
+export async function artistCover(artist) {
+  if (unknownArtist(artist)) return null;
+  const d = await mb(`release-group/?query=${encodeURIComponent(`artist:${q(artist)}`)}&fmt=json&limit=15`);
+  const groups = (d?.['release-groups'] || []).filter(g => (g.score ?? 100) >= MIN_SCORE && sameArtist(g['artist-credit'], artist) && norm(g['artist-credit']?.[0]?.name || g['artist-credit']?.[0]?.artist?.name) === norm(artist));
+  const rank = g => (g['primary-type'] === 'Album' ? 0 : g['primary-type'] === 'EP' ? 1 : 2);
+  for (const g of groups.sort((a, b) => rank(a) - rank(b)).slice(0, 5)) {
+    const blob = await frontCover(g.id);
+    if (blob) return { blob, id: g.id, title: g.title };
+  }
+  return null;
+}
+
+/**
+ * Portada generada en el dispositivo (sin ningún servicio) para las canciones de las que no se
+ * conoce ni el disco ni el artista: un degradado con el título y el artista. Siempre da una imagen.
+ */
+export async function generated({ title = '', artist = '' }) {
+  const size = 600, c = document.createElement('canvas');
+  c.width = c.height = size;
+  const g = c.getContext('2d');
+  let h = 0;
+  for (const ch of `${artist}|${title}`) h = (h * 31 + ch.codePointAt(0)) >>> 0;
+  const hue = h % 360, hue2 = (hue + 40 + (h >> 9) % 80) % 360;
+  const grad = g.createLinearGradient(0, 0, size, size);
+  grad.addColorStop(0, `hsl(${hue} 55% 42%)`); grad.addColorStop(1, `hsl(${hue2} 60% 22%)`);
+  g.fillStyle = grad; g.fillRect(0, 0, size, size);
+  g.fillStyle = 'rgba(255,255,255,0.10)';
+  g.beginPath(); g.arc(size * 0.78, size * 0.26, size * 0.32, 0, Math.PI * 2); g.fill();
+  const lines = (text, font, y, max = 2) => {
+    g.font = font; const words = String(text).split(/\s+/).filter(Boolean); const out = []; let line = '';
+    for (const w of words) { const t = line ? `${line} ${w}` : w; if (g.measureText(t).width > size - 96 && line) { out.push(line); line = w; } else line = t; }
+    if (line) out.push(line);
+    return out.slice(0, max).map((l, i, a) => (i === max - 1 && out.length > max ? `${l}…` : l)).map((l, i) => [l, y + i * parseInt(font.match(/(\d+)px/)[1], 10) * 1.15]);
+  };
+  g.fillStyle = '#fff'; g.textBaseline = 'alphabetic';
+  const tl = lines(title || 'Sin título', '700 58px system-ui, sans-serif', size - 150);
+  const shift = (tl.length - 1) * 66;
+  for (const [l, y] of tl) g.fillText(l, 48, y - shift);
+  g.fillStyle = 'rgba(255,255,255,0.78)';
+  for (const [l, y] of lines(unknownArtist(artist) ? '' : artist, '500 32px system-ui, sans-serif', size - 64, 1)) g.fillText(l, 48, y);
+  return new Promise(r => c.toBlob(b => r(b), 'image/jpeg', 0.9));
+}

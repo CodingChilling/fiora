@@ -13,7 +13,7 @@ Qué comprueba:
 - La IA falla: no se consulta nada ni se marca ninguna canción.
 - Las canciones del mismo disco comparten portada y una sola búsqueda.
 - Coincidencias estrictas: no vale otro artista ni «MOTOMAMI +» por «MOTOMAMI».
-- Sin portada o sin reconocer: la canción queda como estaba.
+- Ninguna canción queda sin portada. Si su disco no tiene portada, recibe la de otra canción del mismo álbum, la de otra del mismo artista (de la biblioteca o de MusicBrainz) o, sin artista conocido, una generada.
 - Como mucho una consulta por segundo a MusicBrainz.
 - Las portadas se suben a `_fiora/portadas/`.
 - El MP3 (APIC) y el FLAC (PICTURE) de la nube llevan la portada dentro y conservan el resto de etiquetas.
@@ -27,4 +27,4 @@ Necesita ffmpeg, la app en :8765, el emulador de Supabase en :8766 (con una base
 cd tests/covers && NODE_PATH=/opt/node-tools/node_modules node covers-e2e.cjs
 ```
 
-Resultado: 25 comprobaciones correctas.
+Resultado: 30 comprobaciones correctas.

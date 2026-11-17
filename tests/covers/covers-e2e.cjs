@@ -34,9 +34,15 @@ const FILES = {
   'Bad Bunny/YHLQMDLG/Bad Bunny - Yo Perreo Sola.mp3': song('b.mp3', { title: 'Yo Perreo Sola', artist: 'Bad Bunny' }, 350),
   'Rosalía/MOTOMAMI/Rosalía - Saoko.flac': song('c.flac', { title: 'Saoko', artist: 'Rosalía', album: 'Motomami' }, 400),
   'Varios/Track 01.flac': song('d.flac', { title: 'Track 01' }, 450),
+  'Rosalía/Demos 2019/Rosalía - Maqueta B.flac': song('e.flac', { title: 'Maqueta B', artist: 'Rosalía', album: 'Demos 2019' }, 500),
 };
 ff('-f', 'lavfi', '-i', 'color=c=0xd2501e:s=600x600', '-frames:v', '1', path.join(TMP, 'portada.jpg'));
 const JPG = fs.readFileSync(path.join(TMP, 'portada.jpg'));
+// Otra canción del mismo álbum que ya trae su portada dentro del archivo
+song('f0.flac', { title: 'Maqueta A', artist: 'Rosalía', album: 'Demos 2019' }, 550);
+ff('-f', 'lavfi', '-i', 'color=c=0x1e8cd2:s=300x300', '-frames:v', '1', path.join(TMP, 'demo.jpg'));
+ff('-i', path.join(TMP, 'f0.flac'), '-i', path.join(TMP, 'demo.jpg'), '-map', '0', '-map', '1', '-c', 'copy', '-disposition:v', 'attached_pic', path.join(TMP, 'f.flac'));
+FILES['Rosalía/Demos 2019/Rosalía - Maqueta A.flac'] = fs.readFileSync(path.join(TMP, 'f.flac'));
 
 // --- lo que contestarían la IA y MusicBrainz
 const KNOWN = {
@@ -73,13 +79,16 @@ const GROUPS = [
     const u = new URL(route.request().url());
     mbCalls.push({ at: Date.now(), path: u.pathname, query: u.searchParams.get('query') || '' });
     const qy = u.searchParams.get('query') || '';
-    const groups = u.pathname.includes('release-group') ? GROUPS.filter(g => qy.toLowerCase().includes(`"${g.title.toLowerCase().replace(/[+]/g, '\\+')}"`)) : [];
+    const byArtist = /^artist:/.test(qy);    // otros discos del artista
+    const groups = !u.pathname.includes('release-group') ? [] : byArtist
+      ? (/"Otro"/.test(qy) ? [{ id: 'rg-otro', title: 'Disco de Otro', 'primary-type': 'Album', score: 100, 'artist-credit': [{ name: 'Otro', artist: { name: 'Otro' } }] }] : [])
+      : GROUPS.filter(g => qy.toLowerCase().includes(`"${g.title.toLowerCase().replace(/[+]/g, '\\+')}"`));
     route.fulfill({ contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify(u.pathname.includes('recording') ? { recordings: [] } : { 'release-groups': groups }) });
   });
   await ctx.route('https://coverartarchive.org/**', route => {
     const u = new URL(route.request().url());
     caaCalls.push(u.pathname);
-    if (/rg-(yhlq|moto)\/front-500$/.test(u.pathname)) return route.fulfill({ contentType: 'image/jpeg', headers: { 'Access-Control-Allow-Origin': '*' }, body: JPG });
+    if (/rg-(yhlq|moto|otro)\/front-500$/.test(u.pathname)) return route.fulfill({ contentType: 'image/jpeg', headers: { 'Access-Control-Allow-Origin': '*' }, body: JPG });
     route.fulfill({ status: 404, headers: { 'Access-Control-Allow-Origin': '*' }, body: '' });
   });
   const page = await ctx.newPage();
@@ -87,7 +96,7 @@ const GROUPS = [
   // El emulador de Oracle es http y la app solo admite imágenes https (como el Oracle real): eso no es un error de la app.
   page.on('console', m => { if (m.type() === 'error' && !/Failed to load resource|img-src[\s\S]*|localhost:8769/.test(m.text())) errs.push(`consola: ${m.text()}`); });
   const until = async (fn, arg, ms = 20000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await page.evaluate(fn, arg).catch(() => false)) return true; await page.waitForTimeout(200); } return false; };
-  const tracks = () => page.evaluate(async () => [...(await import('./js/store.js')).S.tracks.values()].map(t => ({ title: t.title, coverId: t.coverId || '', tried: !!t.coverTried, cloud: t.cloudName || '' })));
+  const tracks = () => page.evaluate(async () => [...(await import('./js/store.js')).S.tracks.values()].map(t => ({ title: t.title, coverId: t.coverId || '', tried: !!t.coverTried, source: t.coverSource || '', cloud: t.cloudName || '' })));
 
   // --- cuenta, bucket con su clave de API, modo desarrollador y la IA de los géneros
   await page.goto(APP + '#/ajustes'); await page.waitForSelector('[data-form="login"]');
@@ -98,7 +107,7 @@ const GROUPS = [
   if (await page.$('details.more summary')) await page.click('details.more summary');
   await page.fill('[data-form="par"] [name=name]', 'Mi música'); await page.fill('[data-form="par"] [name=url]', OWNER_PAR);
   await page.click('[data-form="par"] button');
-  await until(async () => (await import('./js/store.js')).S.tracks.size >= 7, null, 30000);
+  await until(async () => (await import('./js/store.js')).S.tracks.size >= 9, null, 30000);
   await page.goto(APP + '#/ajustes');
   await page.click('details.key-steps summary');
   await page.fill('[data-form="oci"] textarea', fs.readFileSync(path.join(KEYS, 'config.txt'), 'utf8'));
@@ -131,7 +140,7 @@ const GROUPS = [
   await page.waitForSelector('#sheet[open]'); await page.click('#sheet[open] button:has-text("Buscar portadas")');
   await until(() => /se detuvo/.test(document.querySelector('#toasts').innerText));
   all = await tracks();
-  check(all.every(t => !t.coverId && !t.tried) && !mbCalls.length, '3. Si la IA falla, se avisa, no se consulta MusicBrainz y no se marca ninguna canción');
+  check(all.filter(t => t.title !== 'Maqueta A').every(t => !t.coverId && !t.tried) && !mbCalls.length, '3. Si la IA falla, se avisa, no se consulta MusicBrainz y no se marca ninguna canción');
   aiFail = false; aiCalls.length = 0;
 
   // --- búsqueda de verdad
@@ -147,8 +156,13 @@ const GROUPS = [
   check(finished, '   termina escribiendo los archivos');
   check(by('Safaera').coverId && by('Safaera').coverId === by('Yo Perreo Sola').coverId, '5. «Safaera» y «Yo Perreo Sola» (mismo disco) reciben la misma portada');
   check(by('Saoko').coverId && by('Saoko').coverId !== by('Safaera').coverId, '   «Saoko» recibe la de MOTOMAMI (el archivo decía «Motomami»)');
-  check(!by('Despechá').coverId && by('Despechá').tried, '6. Si el disco no tiene portada en el Cover Art Archive, la canción se queda como estaba (y no se vuelve a buscar)');
-  check(!by('Track 01').coverId && by('Track 01').tried, '   Si la IA no la reconoce, tampoco se inventa nada');
+  check(by('Saoko').source === 'exact' && by('Safaera').source === 'exact', '   (portadas de su propio disco)');
+  check(all.every(t => t.coverId), '6. Ninguna canción se queda sin portada');
+  check(by('Maqueta B').source === 'album' && by('Maqueta B').coverId[0] === 'u', '   «Maqueta B» (disco que no está en MusicBrainz) recibe la de «Maqueta A», del mismo álbum');
+  check(by('Despechá').source === 'artist' && by('Despechá').coverId === by('Saoko').coverId, '   «Despechá» (MOTOMAMI + no tiene portada) recibe una de Rosalía de tu biblioteca');
+  check(by('Tití').source === 'artist' && by('Tití').coverId === by('Safaera').coverId, '   «Tití» (la IA no la reconoce) recibe una de Bad Bunny de tu biblioteca');
+  check(by('Única').source === 'artist' && caaCalls.includes('/release-group/rg-otro/front-500') && mbCalls.some(c => c.query === 'artist:"Otro"'), '   «Única» (artista sin otras canciones) recibe la de otro disco del artista en MusicBrainz');
+  check(by('Track 01').source === 'generated' && !mbCalls.some(c => /artist:"Artista desconocido"/.test(c.query)), '   «Track 01» (sin artista ni disco) recibe una portada generada, sin buscar «Artista desconocido»');
   check(!caaCalls.includes('/release-group/rg-falso/front-500'), '   Un disco con el mismo título pero de otro artista no se acepta');
   check(aiCalls.length === 1 && JSON.parse(aiCalls[0].messages.find(m => m.role === 'user').content).canciones.length === without, `7. Una sola llamada a la IA para las ${without} canciones (por lotes de 20)`);
   const yhlqSearches = mbCalls.filter(c => /releasegroup:"YHLQMDLG"/.test(c.query)).length;
@@ -160,17 +174,17 @@ const GROUPS = [
   // --- en la nube: imagen para los demás dispositivos y archivos reescritos con la portada dentro
   const log = await (await fetch(ORACLE + '/__log')).json();
   const covers = log.objects.filter(([n]) => n.startsWith('_fiora/portadas/'));
-  check(covers.length === 2, `8. Las 2 portadas se suben a la nube (_fiora/portadas) para los demás dispositivos`);
+  check(covers.length === 5, `8. Las portadas nuevas se suben a la nube (_fiora/portadas) para los demás dispositivos: ${covers.length} (2 de su disco, la copiada del álbum, la del artista y la generada)`);
   const get = async n => Buffer.from(await (await fetch(OWNER_PAR + n.split('/').map(encodeURIComponent).join('/'))).arrayBuffer());
   const mp3 = await get('Bad Bunny/YHLQMDLG/Bad Bunny - Safaera.mp3'), flac = await get('Rosalía/MOTOMAMI/Rosalía - Saoko.flac'), plain = await get('Varios/Track 01.flac');
   const jpegIn = buf => buf.includes(Buffer.from([0xff, 0xd8, 0xff]));
   check(mp3.includes(Buffer.from('APIC')) && jpegIn(mp3) && mp3.length > FILES['Bad Bunny/YHLQMDLG/Bad Bunny - Safaera.mp3'].length, '9. El MP3 de la nube lleva ahora la portada dentro (APIC)');
   const flacPicture = buf => { let o = 4; while (o < buf.length) { const h = buf[o], len = buf.readUIntBE(o + 1, 3); if ((h & 0x7f) === 6) return true; if (h & 0x80) break; o += 4 + len; } return false; };
   check(flacPicture(flac) && jpegIn(flac), '   El FLAC de la nube lleva la portada dentro (bloque PICTURE)');
-  check(plain.equals(FILES['Varios/Track 01.flac']), '   El archivo sin portada encontrada no se toca');
+  check(flacPicture(plain) && jpegIn(plain), '   La portada generada también se escribe en el archivo de la nube');
   const back = await page.evaluate(async () => { const { S } = await import('./js/store.js'), c = await import('./js/cloud.js'); const t = [...S.tracks.values()].find(x => x.title === 'Safaera'); const g = await c.fileTags(t, true); return { title: g?.title, artist: g?.artist, pic: !!g?.picture }; });
   check(back.title === 'Safaera' && back.artist === 'Bad Bunny', '   y conserva el resto de sus metadatos');
-  check(await page.evaluate(async () => { const { S, fileOutdated } = await import('./js/store.js'); return [...S.tracks.values()].filter(t => t.coverId).every(t => !fileOutdated(t)); }), '   No quedan cambios pendientes de escribir');
+  check(await page.evaluate(async () => { const { S, fileOutdated } = await import('./js/store.js'); const c = await import('./js/cloud.js'); return [...S.tracks.values()].filter(t => t.coverId && c.canWriteFile(t)).every(t => !fileOutdated(t)); }), '   No quedan cambios pendientes de escribir en los archivos que lo admiten (los WAV no guardan portada dentro: la ven la app y tus dispositivos)');
 
   // --- se ve en la app y no se vuelve a pedir
   await page.goto(APP + '#/biblioteca/canciones'); await page.waitForSelector('.row');
@@ -180,7 +194,7 @@ const GROUPS = [
   await page.goto(APP + '#/ajustes'); await page.waitForSelector('[data-act="ai-covers"]');
   const btn2 = await page.innerText('[data-act="ai-covers"]');
   const left = (await tracks()).filter(t => !t.coverId && !t.tried).length;
-  check(left === 0 && /No quedan canciones sin portada/.test(btn2), `   Las que no se encontraron no se vuelven a pedir (y pagar): «${btn2.trim()}»`);
+  check(left === 0 && /No quedan canciones sin portada/.test(btn2), `   No queda ninguna por buscar: «${btn2.trim()}»`);
 
   // --- otro dispositivo ve las portadas
   const ctx2 = await b.newContext();

@@ -891,7 +891,7 @@ async function viewSettings() {
           ${prov.site ? `<small class="muted">La clave se crea en ${prov.site}.${prov.help ? ` ${esc(prov.help)}` : ''}</small>` : '<small class="muted">Vale cualquier servicio con API compatible con la de OpenAI (OpenRouter, Groq, Mistral, un modelo local…), siempre que admita llamadas desde el navegador.</small>'}</form>
         ${aiReady ? `<div class="actions" style="margin-top:14px"><button class="btn" data-act="ai-tag-all" ${untagged ? '' : 'disabled'}>${icon('spark')}${untagged ? `Etiquetar ${plural(untagged, 'canción', 'canciones')} sin etiquetar` : 'Todas las canciones están etiquetadas'}</button>
           <button class="btn" data-act="ai-covers" ${coverless ? '' : 'disabled'}>${icon('disc')}${coverless ? `Buscar portada de ${plural(coverless, 'canción', 'canciones')} sin portada` : 'No quedan canciones sin portada por buscar'}</button></div>
-          <small class="muted">Portadas: la IA identifica el álbum o single de cada canción y la imagen se descarga de MusicBrainz (Cover Art Archive), gratuito y sin clave. Solo se aceptan coincidencias exactas de título y artista; las que no se encuentran se quedan como estaban. Las portadas se escriben en el archivo y se suben a la nube junto con los metadatos.</small>` : ''}` : ''}</div>
+          <small class="muted">Portadas: la IA identifica el álbum o single de cada canción y la imagen se descarga de MusicBrainz (Cover Art Archive), gratuito y sin clave. Si el disco no tiene portada, se usa la de otra canción del mismo álbum o del mismo artista (de tu biblioteca o de MusicBrainz) y, si no se sabe nada del artista, se genera una con el título: ninguna se queda sin portada. Las portadas se escriben en el archivo y se suben a la nube junto con los metadatos.</small>` : ''}` : ''}</div>
     ${PF.settingsPanel()}
     <div class="panel"><h2>Tus escuchas</h2>
       <p>Tus estadísticas y tu criatura sonora están en tu perfil. Las recomendaciones aprenden de lo que terminas, a qué hora escuchas cada cosa y qué canciones pones seguidas.</p>
@@ -1175,8 +1175,8 @@ view.addEventListener('scroll', () => showTip(null), { passive: true });
 
 // ------------------------------------------------- modo desarrollador
 const needsTags = t => !t.aiTagged && !(t.moods || []).length;
-// Canciones de la biblioteca sin portada a las que aún no se les ha buscado una.
-const needsCover = t => !t.coverId && !t.coverUrl && !t.coverTried;
+// Canciones de la biblioteca sin portada (ninguna se queda así tras buscarlas).
+const needsCover = t => !t.coverId && !t.coverUrl;
 const quoteList = list => (list || []).map(a => (String(a).includes(',') ? `"${a}"` : a)).join(', ');
 /** Configuración de IA de este dispositivo: un proveedor activo y una clave y un modelo por proveedor. */
 function aiConf() {
@@ -1348,16 +1348,45 @@ async function tagMany(tracks) {
 }
 
 /**
- * Busca la portada de las canciones que no tienen: la IA identifica su álbum o single (por lotes) y la
- * imagen sale de MusicBrainz. Las canciones del mismo disco comparten portada y una sola búsqueda.
- * Después se escribe en los archivos y se sube a la nube con el resto de metadatos editados.
+ * Pone portada a las canciones que no tienen. Ninguna se queda sin portada:
+ *   1. la de su disco: la IA identifica el álbum o single y la imagen sale de MusicBrainz;
+ *   2. si no existe, la de otra canción del mismo álbum que ya tenga en la biblioteca;
+ *   3. si no, la de otra canción del mismo artista en la biblioteca;
+ *   4. si no, la de otro disco del artista en MusicBrainz;
+ *   5. y si ni del artista se sabe nada, una generada en el dispositivo con el título y el artista.
+ * Las canciones del mismo disco comparten portada y una sola búsqueda. Después se escriben en los
+ * archivos y se suben a la nube con el resto de metadatos editados.
  */
 async function findCovers(tracks) {
   const note = toast('Preparando…', 0);
   let opts;
   try { opts = await aiOptions(); } catch (e) { return note.done(e.message, 8000); }
-  const byKey = new Map(), changed = [];
+  const byKey = new Map(), byArtist = new Map(), copies = new Map(), misses = [], changed = [];
+  const count = { exact: 0, album: 0, artist: 0, generated: 0 };
   let stopped = '', notUploaded = 0;
+  // Guarda una imagen como portada nueva (y la sube para los demás dispositivos).
+  const store = async (blob, seed) => {
+    const small = await shrinkCover(blob, 600);
+    if (!small) return null;
+    const cid = 'u' + hash(`${seed}|${Date.now()}|${Math.random()}`);
+    await db.put('covers', cid, small);
+    const up = cloud.configured() ? await cloud.uploadCover(cid, small).catch(() => false) : false;
+    if (cloud.configured() && !up) notUploaded++;
+    return cid;
+  };
+  // Portada que ya tiene otra canción: las leídas de un archivo solo están en este dispositivo,
+  // así que se copian como portada nueva (y se suben) para que la vean también los demás.
+  const reuse = async src => {
+    if (src[0] === 'u') return src;
+    if (!copies.has(src)) copies.set(src, db.get('covers', src).then(b => (b ? store(b, src) : null)).catch(() => null));
+    return copies.get(src);
+  };
+  const apply = async (t, cid, kind) => {
+    await setEdit(t, { coverId: cid, coverUrl: '', coverTried: true, coverSource: kind });
+    count[kind]++; changed.push(t);
+  };
+
+  // 1. La portada de su disco
   for (let i = 0; i < tracks.length && !stopped; i += ai.BATCH) {
     const chunk = tracks.slice(i, i + ai.BATCH);
     note.set(`Identificando con IA: ${i + 1}–${i + chunk.length} de ${tracks.length}…`);
@@ -1367,33 +1396,59 @@ async function findCovers(tracks) {
       const t = chunk[k], id = ids[k], artist = albumArtistOf(t) || artistsOf(t)[0] || '';
       const key = id ? `${covers.norm(id.album)}|${covers.norm(id.artist)}` : `f|${covers.norm(t.album) || covers.norm(t.title)}|${covers.norm(artist)}`;
       note.set(`Buscando portadas: ${i + k + 1} de ${tracks.length} · ${t.title}`);
-      let hit = byKey.get(key);
-      if (hit === undefined) {
+      let cid = byKey.get(key);
+      if (cid === undefined) {
         let res = null;
         try { res = await covers.find([id && { ...id, title: t.title }, { album: t.album, artist, title: t.title }]); }
         catch (e) { stopped = e.message; break; }
-        hit = null;
-        const small = res && await shrinkCover(res.blob, 600);
-        if (small) {
-          const cid = 'u' + hash(`${res.id}|${t.id}|${Date.now()}`);
-          await db.put('covers', cid, small);
-          const up = cloud.configured() ? await cloud.uploadCover(cid, small).catch(() => false) : false;
-          if (cloud.configured() && !up) notUploaded++;
-          hit = { cid };
-        }
-        byKey.set(key, hit);
+        cid = res ? await store(res.blob, res.id) : null;
+        byKey.set(key, cid);
       }
-      // coverTried evita volver a pedir (y pagar) las que no se encuentran
-      await setEdit(t, hit ? { coverId: hit.cid, coverUrl: '', coverTried: true } : { coverTried: true });
-      if (hit) changed.push(t);
+      if (cid) await apply(t, cid, 'exact');
+      else misses.push({ t, artist: id?.artist || artist });
     }
   }
+
+  // 2–5. Las que no tienen portada de su disco (si la búsqueda se cortó, se dejan para la próxima vez)
+  if (!stopped) {
+    for (let n = 0; n < misses.length; n++) {
+      const { t, artist } = misses[n];
+      note.set(`Portadas alternativas: ${n + 1} de ${misses.length} · ${t.title}`);
+      const lib_ = allTracks().filter(o => o.id !== t.id && o.coverId);
+      const sib = t.album && lib_.find(o => lib.albumKey(o) === lib.albumKey(t));
+      if (sib) { const cid = await reuse(sib.coverId); if (cid) { await apply(t, cid, 'album'); continue; } }
+      if (!covers.unknownArtist(artist)) {
+        const a = covers.norm(artist);
+        const same = lib_.filter(o => covers.norm(albumArtistOf(o)) === a || artistsOf(o).some(x => covers.norm(x) === a));
+        if (same.length) {
+          const freq = new Map();
+          for (const o of same) freq.set(o.coverId, (freq.get(o.coverId) || 0) + 1);
+          const best = [...freq].sort((x, y) => y[1] - x[1])[0][0];
+          const cid = await reuse(best);
+          if (cid) { await apply(t, cid, 'artist'); continue; }
+        }
+        if (!byArtist.has(a)) {
+          let res = null;
+          try { res = await covers.artistCover(artist); } catch (e) { stopped = e.message; break; }
+          byArtist.set(a, res ? await store(res.blob, res.id) : null);
+        }
+        if (byArtist.get(a)) { await apply(t, byArtist.get(a), 'artist'); continue; }
+      }
+      const img = await covers.generated({ title: t.title, artist: covers.unknownArtist(artist) ? '' : artist });
+      const cid = img && await store(img, `gen|${t.id}`);
+      if (cid) await apply(t, cid, 'generated');
+    }
+  }
+
   emit('library');
   if (P.current && changed.some(t => t.id === P.current.id)) { renderMini(); renderNow(); }
-  const msg = [`${plural(changed.length, 'portada encontrada', 'portadas encontradas')}`,
-    !stopped && changed.length < tracks.length && `${tracks.length - changed.length} sin encontrar`,
-    notUploaded && `${notUploaded} no se pudieron subir a la nube`, stopped && `se detuvo: ${stopped}`].filter(Boolean).join(' · ');
-  note.done(msg, 8000);
+  const left = tracks.length - changed.length;
+  const msg = [`${plural(count.exact, 'portada encontrada', 'portadas encontradas')}`,
+    count.album && `${count.album} del mismo álbum`, count.artist && `${count.artist} del mismo artista`,
+    count.generated && `${plural(count.generated, 'generada', 'generadas')} (sin datos del disco ni del artista)`,
+    notUploaded && `${notUploaded} no se pudieron subir a la nube`,
+    stopped && `se detuvo: ${stopped}${left ? ` (${left} sin portada todavía; vuelve a intentarlo más tarde)` : ''}`].filter(Boolean).join(' · ');
+  note.done(msg, 9000);
   // Se escriben en los archivos (con los demás metadatos editados) y se suben a la nube.
   const files = changed.map(x => S.tracks.get(x.id) || x).filter(x => fileOutdated(x) && cloud.canWriteFile(x));
   if (files.length) await writeFiles(files);
@@ -1776,7 +1831,7 @@ const ACTIONS = {
     const list = allTracks().filter(needsCover);
     const A = aiConf(), service = ai.PROVIDERS[A.provider].name;
     if (!list.length || !(await confirmDlg(`¿Buscar la portada de ${plural(list.length, 'canción', 'canciones')}?`,
-      `Se enviarán el título, los artistas, el álbum y el año de cada canción a ${service} con tu clave (puede tener un coste en tu cuenta), y el nombre del disco y del artista a MusicBrainz para descargar la portada. Las encontradas se escriben en los archivos y se suben a la nube.`, 'Buscar portadas'))) return;
+      `Se enviarán el título, los artistas, el álbum y el año de cada canción a ${service} con tu clave (puede tener un coste en tu cuenta), y el nombre del disco y del artista a MusicBrainz para descargar la portada. Si no hay portada del disco, se usa una del mismo álbum o artista, o se genera una. Se escriben en los archivos y se suben a la nube.`, 'Buscar portadas'))) return;
     findCovers(list);
   },
   async 'ai-tag-all'() {
