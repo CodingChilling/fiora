@@ -108,22 +108,34 @@ export function buildGraph(ctx, source) {
 }
 
 // ------------------------------------------------------------------ motor
-let el = null, ctx = null, graph = null, meters = null;
+let el = null, el2 = null, ctx = null, graph = null, meters = null;
 const corsOk = new Map();                 // servidor o bucket → ¿permite CORS?
 const st = { last: null, route: 'original' };
 
-/** Elemento <audio> de la ruta espacial (se crea la primera vez que hace falta). */
+/**
+ * Elemento <audio> de la ruta espacial (se crea la primera vez que hace falta). Hay un segundo
+ * elemento, `partner()`, conectado al mismo efecto: solo se usa para solapar dos canciones en una
+ * mezcla cruzada. Cada uno se conecta a Web Audio una sola vez.
+ */
 export function element() {
   if (el || !supported()) return el;
   try {
-    el = new Audio(); el.preload = 'auto';
+    const a = new Audio(), b = new Audio(); a.preload = b.preload = 'auto';
     ctx = new (AC())({ latencyHint: 'playback' });
-    graph = buildGraph(ctx, ctx.createMediaElementSource(el));
+    const input = ctx.createGain();
+    ctx.createMediaElementSource(a).connect(input);
+    ctx.createMediaElementSource(b).connect(input);
+    graph = buildGraph(ctx, input);
     graph.out.connect(ctx.destination);
     graph.set(settings(), true);
-  } catch (e) { console.warn('Audio espacial no disponible', e); el = null; ctx = null; graph = null; }
+    el = a; el2 = b;
+  } catch (e) { console.warn('Audio espacial no disponible', e); el = el2 = null; ctx = null; graph = null; }
   return el;
 }
+/** El otro elemento de la ruta espacial (para las mezclas cruzadas). */
+export const partner = () => (element() ? el2 : null);
+/** ¿Es uno de los elementos de la ruta espacial? */
+export const owns = a => !!a && (a === el || a === el2);
 export const hasElement = () => !!el;
 /** Aplica los ajustes guardados al grafo (con suavizado). */
 export function apply() { if (graph) graph.set(settings()); }
@@ -154,8 +166,9 @@ const note = (track, route, reason) => { st.last = { title: track?.title || '', 
 /**
  * ¿Esta canción puede ir por la ruta espacial? Solo canciones de la biblioteca, con el 8D activado
  * y con una fuente que Web Audio pueda leer. Ante cualquier duda, no: suena el original.
+ * `target` es el elemento espacial que la cargará (el principal o, en una mezcla cruzada, `partner()`).
  */
-export async function routeFor(track, src) {
+export async function routeFor(track, src, target = null) {
   const s = settings();
   if (!track || track.radio) return note(track, 'original', 'radio');
   if (!S.tracks.has(track.id)) return note(track, 'original', 'explorar');
@@ -164,8 +177,8 @@ export async function routeFor(track, src) {
   const local = /^blob:|^data:/.test(src) || new URL(src, location.href).origin === location.origin;
   if (!local && !(await allowsCors(src))) return note(track, 'original', 'cors');
   if (!(await running())) return note(track, 'original', 'contexto');
-  el.crossOrigin = local ? null : 'anonymous';
-  if (local) el.removeAttribute('crossorigin');
+  const a = owns(target) ? target : el;
+  if (local) a.removeAttribute('crossorigin'); else a.crossOrigin = 'anonymous';
   graph.set(s);
   return note(track, 'spatial', 'ok');
 }

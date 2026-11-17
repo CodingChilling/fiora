@@ -16,6 +16,7 @@ import * as rdata from './radio-data.js';
 import * as groups from './groups.js';
 import * as habits from './habits.js';
 import * as spatial from './spatial.js';
+import * as fades from './fades.js';
 import { initProfile } from './profile-ui.js';
 import * as account from './account.js';
 import * as src from './sources.js';
@@ -42,7 +43,9 @@ const totalTime = tracks => {
   return min >= 60 ? `${Math.floor(min / 60)} h ${min % 60} min` : `${min} min`;
 };
 const inLibrary = t => S.tracks.has(t.id);
-const playable = t => !!(t.radio || t.hasBlob || t.url || (t.cloudName && cloud.configured()));
+// Sin conexión solo se puede escuchar lo descargado en este dispositivo.
+const playable = t => (navigator.onLine ? !!(t.radio || t.hasBlob || t.url || (t.cloudName && cloud.configured())) : !!t.hasBlob);
+const notPlayable = () => (navigator.onLine ? 'Esta canción no está descargada y no hay nube conectada' : 'Sin conexión: esta canción no está descargada en este dispositivo');
 // El modo desarrollador cambia la música del bucket: solo funciona con la clave de API de Oracle
 // guardada en este dispositivo y con permiso sobre algún bucket conectado.
 const devReady = () => cloud.ownedBuckets().length > 0;
@@ -151,6 +154,7 @@ function rowHTML(t, i, o) {
     ${where}
     ${o.dup ? (i === 0 ? '<span class="keep-tag">Se conserva</span>' : '<button class="chip" data-act="dup-keep">Conservar</button>') : ''}
     ${!o.dup && !t.radio && inLibrary(t) ? `<button class="icon-btn fav ${isFav(t.id) ? 'on' : ''}" data-act="fav" aria-label="Me gusta">${icon('heart')}</button>` : ''}
+    ${o.auto ? `<button class="icon-btn q-promote" data-act="q-promote" aria-label="Añadir «${esc(t.title)}» a tu cola" data-tip="Añadir a tu cola">${icon('plus')}</button>` : ''}
     ${o.dup ? '' : `<span class="dur">${fmt(t.duration)}</span>`}
     <button class="icon-btn" data-act="more" aria-label="Más opciones">${icon('more')}</button>
   </li>`;
@@ -230,6 +234,7 @@ async function route() {
   const keep = same ? view.scrollTop : 0;
   lastHash = hash;
   await fn(...args);
+  offlineNote(name);
   // La biblioteca vuelve a donde estabas (al volver de un álbum, de un artista o de otra pestaña).
   const now = location.hash.replace(/^#\/?/, '');
   lastHash = now;
@@ -237,6 +242,29 @@ async function route() {
   if (target) fillTo(target);
   view.scrollTop = target;
 }
+// Sin conexión: aviso en las pantallas que dependen de internet (la app sigue funcionando con lo descargado).
+const NEEDS_NET = {
+  explorar: 'Sin conexión: la música libre y las radios necesitan internet. Tus canciones descargadas siguen en la Biblioteca.',
+  archivo: 'Sin conexión: este álbum se escucha desde internet. Vuelve a intentarlo cuando tengas conexión.',
+};
+function offlineNote(name) {
+  $('.offline-note', view)?.remove();
+  if (navigator.onLine || !NEEDS_NET[name]) return;
+  const p = document.createElement('p');
+  p.className = 'offline-note note-box'; p.setAttribute('role', 'status'); p.textContent = NEEDS_NET[name];
+  ($('.wrap', view) || view).prepend(p);
+}
+function netState(announce) {
+  const off = !navigator.onLine;
+  document.body.classList.toggle('offline', off);
+  $('#netbar').hidden = !off;
+  if (!announce) return;
+  toast(off ? 'Sin conexión: puedes seguir escuchando lo descargado en este dispositivo' : 'Conexión recuperada');
+  refresh();                                       // las canciones no descargadas se marcan (o desmarcan) como no disponibles
+  if (!now.hidden && nowMode === 'queue') renderNowPane();
+}
+addEventListener('online', () => netState(true));
+addEventListener('offline', () => netState(true));
 let refreshTimer = null;
 const refresh = () => { clearTimeout(refreshTimer); refreshTimer = setTimeout(route, 120); };
 const empty = (ic, title, text, actions = '') =>
@@ -826,6 +854,7 @@ async function viewSettings() {
     <div class="panel" id="ajustes-audio"><h2>Audio y reproducción</h2>
       <label class="switch"><input type="checkbox" data-toggle="autoplay" ${S.settings.autoplay === false ? '' : 'checked'}><span><b>Reproducción automática</b>
         <small>Cuando se acaba lo que estás escuchando, sigue con canciones parecidas de tu biblioteca.</small></span></label>
+      ${fadesPanel()}
       ${spatialPanel()}</div>
     <div class="panel"><h2>Modo desarrollador</h2>
       ${keyPanel}
@@ -869,6 +898,41 @@ async function viewSettings() {
 // Audio espacial (8D): toda su configuración vive aquí; no hay controles en ninguna otra pantalla.
 const SPATIAL_WHY = { ok: 'se está procesando con el efecto', apagado: 'audio original (el efecto está desactivado)', radio: 'audio original: las emisoras nunca se procesan', explorar: 'audio original: no es una canción de tu biblioteca',
   cors: 'audio original: el servidor de esta canción no permite procesarla', contexto: 'audio original: el navegador no dejó iniciar el procesamiento', error: 'audio original: esta canción no se pudo procesar', 'sin-webaudio': 'audio original: este navegador no admite el procesamiento' };
+// Fundidos y transiciones entre canciones (todo apagado por defecto).
+const secs = v => `${String(+v.toFixed(1)).replace('.', ',')} s`;
+const fxSecsText = (k, v) => (k === 'cross' ? `Las dos canciones suenan a la vez durante ${secs(v)}.` : v ? `${k === 'fadeIn' ? 'Sube' : 'Baja'} el volumen durante ${secs(v)}.` : 'Sin fundido.');
+function fadesPanel() {
+  const f = fades.settings(), ok = fades.volumeControl(), dis = ok ? '' : 'disabled';
+  const range = (k, label, min, max, step) => `<label class="lbl">${label} <b data-fx-val="${k}">${secs(f[k])}</b>
+      <input type="range" class="sp-range" data-fx="${k}" min="${min}" max="${max}" step="${step}" value="${f[k]}" style="--p:${((f[k] - min) / (max - min)) * 100}%" ${dis} ${k === 'cross' && f.mode !== 'cross' ? 'disabled' : ''} aria-label="${label}">
+      <small data-fx-text="${k}">${fxSecsText(k, f[k])}</small></label>`;
+  return `<h2 style="margin-top:22px">Transiciones y fundidos</h2>
+      <p>Cómo empieza, termina y pasa de una canción a otra. Se aplica a las canciones; las emisoras de radio solo usan el fundido al pausar.</p>
+      ${ok ? '' : '<p class="note-box">Este navegador no deja que la página cambie el volumen (pasa en iPhone y iPad), así que los fundidos y la mezcla cruzada no se pueden aplicar aquí. Tus ajustes se guardan para tus otros dispositivos.</p>'}
+      <div class="sp-controls" data-fx-box>
+        <label class="lbl">Transición entre canciones<span class="field"><select data-fx="mode" ${dis}>
+          <option value="normal" ${f.mode === 'normal' ? 'selected' : ''}>Una tras otra</option>
+          <option value="cross" ${f.mode === 'cross' ? 'selected' : ''}>Mezcla cruzada</option></select></span>
+          <small>${f.mode === 'cross' ? 'El final de cada canción se funde con el principio de la siguiente.' : 'Cada canción empieza cuando acaba la anterior (con los fundidos de abajo, si los pones).'}</small></label>
+        ${range('cross', 'Duración de la mezcla', 1, 12, 0.5)}
+        ${range('fadeIn', 'Fundido de entrada', 0, 10, 0.5)}
+        ${range('fadeOut', 'Fundido de salida', 0, 10, 0.5)}
+      </div>
+      <label class="switch${ok ? '' : ' disabled'}"><input type="checkbox" data-fx="pause" ${f.pause ? 'checked' : ''} ${dis}><span><b>Suavizar pausa y reanudación</b>
+        <small>Un fundido corto al pausar y al volver a reproducir, en vez de un corte.</small></span></label>
+      <label class="switch${ok ? '' : ' disabled'}"><input type="checkbox" data-fx="manual" ${f.manual ? 'checked' : ''} ${dis}><span><b>Mezclar también al saltar de canción</b>
+        <small>Al pulsar siguiente o anterior, o al elegir otra canción, la que suena se desvanece en vez de cortarse${f.mode === 'cross' ? ` (con un solape de hasta ${fades.MANUAL_MAX} s)` : ' (durante 1 s)'}.</small></span></label>
+      <p class="muted" style="margin:10px 0 0">Las canciones muy cortas usan fundidos proporcionales: nunca pasan más del 40 % de su duración fundiéndose.</p>
+      <div class="actions" style="margin-top:12px"><button class="btn" data-act="fx-reset">${icon('sync')}Restaurar transiciones</button></div>`;
+}
+async function setFx(patch) {
+  S.settings.fx = fades.settings({ ...fades.settings(), ...patch });
+  S.settings.fxAt = Date.now();
+  await saveKV('settings', false);
+  emit('dirty');
+}
+on('fx-changed', () => { if (location.hash.startsWith('#/ajustes')) refresh(); });
+
 function spatialPanel() {
   const sp = spatial.settings(), ok = spatial.supported(), st = spatial.status(), off = ok && sp.on ? '' : 'disabled';
   return `<h2 style="margin-top:22px">Audio espacial (8D)</h2>
@@ -1418,6 +1482,8 @@ function trackMenu(t, o = {}, i = -1) {
   const lib_ = inLibrary(t);
   const remote = t.cloudName || t.url;
   menu(head, [
+    o.queue && !o.user && player.isAuto(i) && { icon: 'queue', label: 'Reproducir a continuación', fn: () => { player.promote([i], true); toast('Sonará a continuación'); } },
+    o.queue && !o.user && player.isAuto(i) && { icon: 'plus', label: 'Añadir a tu cola', fn: () => { player.promote([i]); toast('Añadida a tu cola'); } },
     o.queue && (o.user || P.fromUser || i !== P.index) && { icon: 'x', label: 'Quitar de la cola', fn: () => player.removeFromQueue(i, !!o.user) },
     !o.queue && { icon: 'queue', label: 'Reproducir a continuación', fn: () => { player.enqueue([t], true); toast('Sonará a continuación'); } },
     !o.queue && { icon: 'plus', label: 'Añadir a la cola', fn: () => { player.enqueue([t]); toast('Añadida a tu cola'); } },
@@ -1462,7 +1528,7 @@ const rowInfo = el => {
 const firstList = () => lists[0]?.tracks || [];
 function playInOrder(tracks) {
   const l = tracks.filter(playable);
-  if (!l.length) return toast('Estas canciones no están descargadas y no hay nube conectada');
+  if (!l.length) return toast(navigator.onLine ? 'Estas canciones no están descargadas y no hay nube conectada' : 'Sin conexión: ninguna de estas canciones está descargada en este dispositivo');
   if (P.shuffle) player.toggleShuffle();
   player.playQueue(l);
 }
@@ -1471,7 +1537,7 @@ const ACTIONS = {
   play(el) {
     const r = rowInfo(el);
     if (!r?.track) return;
-    if (!playable(r.track)) return toast('Esta canción no está descargada y no hay nube conectada');
+    if (!playable(r.track)) return toast(notPlayable());
     if (r.key === 'q') player.jump(r.i);
     else if (r.key === 'u') player.jumpUser(r.i);
     else if (r.track.radio) player.playQueue([r.track]);
@@ -1511,6 +1577,11 @@ const ACTIONS = {
     go(`#/album/${enc(el.dataset.key)}`);
   },
   'clear-user-queue'() { player.clearUserQueue(); },
+  'q-promote'(el) { const r = rowInfo(el); if (r && r.key === 'q' && player.promote([r.i])) toast(`«${r.track.title}» añadida a tu cola`); },
+  'q-promote-all'() {
+    const n = player.promote(P.queue.map((_, i) => i));
+    if (n) toast(`${plural(n, 'canción pasada', 'canciones pasadas')} a tu cola`);
+  },
   'cloud-sync'() { cloudSync(); },
   'cloud-upload-all'() { if (cloud.uploadTarget()) uploadMany(allTracks().filter(t => t.hasBlob && !t.cloudName && !t.url)); },
   async 'bucket-remove'(el) {
@@ -1610,6 +1681,7 @@ const ACTIONS = {
     if (name === null) return;
     try { await groups.setName(g.id, name); toast('Nombre guardado'); } catch (e) { toast(e.message, 6000); }
   },
+  async 'fx-reset'() { await setFx({ ...fades.DEFAULTS }); toast('Transiciones restauradas'); refresh(); },
   async 'sp-reset'() { await setSpatial({ mode: spatial.DEFAULTS.mode, intensity: spatial.DEFAULTS.intensity, speed: spatial.DEFAULTS.speed }); toast('Ajustes de audio espacial restaurados'); refresh(); },
   async 'share-revoke'(el) {
     const b = cloud.buckets().find(x => x.id === el.dataset.bid);
@@ -1778,40 +1850,88 @@ document.addEventListener('submit', async e => {
 });
 
 // --------------------------------------- deslizar una canción para añadirla a la cola
+// En las listas, hacia la derecha: a tu cola. En la cola del reproductor solo se deslizan las de la
+// reproducción automática, que pasan a tu cola (las demás ya están en ella o en la lista que suena).
 let swipe = null, swallowClick = false;
+const SWIPE_ADD = 80;
 const endSwipe = add => {
   if (!swipe) return;
-  const { row, track, active } = swipe;
+  const { row, track, active, auto } = swipe;
   swipe = null;
   row.classList.remove('swiping', 'armed');
   row.style.removeProperty('--dx');
   if (!active) return;
   swallowClick = true; setTimeout(() => { swallowClick = false; }, 350);
-  if (add) { player.enqueue([track]); toast(`«${track.title}» añadida a tu cola`); }
+  if (!add) return;
+  if (auto >= 0) { if (player.promote([auto])) toast(`«${track.title}» añadida a tu cola`); }
+  else { player.enqueue([track]); toast(`«${track.title}» añadida a tu cola`); }
 };
-view.addEventListener('pointerdown', e => {
-  if (e.pointerType !== 'touch' || e.target.closest('[data-drag]')) return;
-  const row = e.target.closest('.row');
-  const info = row && rowInfo(row);
-  if (!info?.track || info.track.radio || !playable(info.track)) return;
-  swipe = { row, track: info.track, x: e.clientX, y: e.clientY, dx: 0, active: false };
+for (const box of [view, $('#now')]) {
+  box.addEventListener('pointerdown', e => {
+    if (e.pointerType !== 'touch' || e.target.closest('[data-drag]')) return;
+    const row = e.target.closest('.row');
+    const info = row && rowInfo(row);
+    if (!info?.track || info.track.radio || !playable(info.track) || info.key === 'u') return;
+    const auto = info.key === 'q' ? info.i : -1;
+    if (auto >= 0 && !player.isAuto(auto)) return;
+    swipe = { row, track: info.track, auto, x: e.clientX, y: e.clientY, dx: 0, active: false };
+  });
+  box.addEventListener('pointermove', e => {
+    if (!swipe) return;
+    if (document.body.classList.contains('dnd')) { endSwipe(false); return; }   // se está arrastrando la canción a otro sitio
+    const dx = e.clientX - swipe.x, dy = e.clientY - swipe.y;
+    if (!swipe.active) {
+      if (dx > 14 && dx > Math.abs(dy) * 1.5) { swipe.active = true; swipe.row.classList.add('swiping'); }
+      else if (Math.abs(dy) > 14 || dx < -14) { swipe = null; return; }
+      else return;
+    }
+    swipe.dx = Math.max(0, Math.min(dx, 150));
+    swipe.row.style.setProperty('--dx', `${swipe.dx}px`);
+    swipe.row.classList.toggle('armed', swipe.dx >= SWIPE_ADD);
+  });
+  box.addEventListener('pointerup', () => endSwipe(swipe?.dx >= SWIPE_ADD));
+  box.addEventListener('pointercancel', () => endSwipe(false));
+}
+document.addEventListener('click', e => { if (swallowClick) { e.stopPropagation(); e.preventDefault(); swallowClick = false; } }, true);
+
+// ------------------------- deslizar la canción que suena: a la izquierda, la siguiente; a la derecha, la anterior
+// Funciona en el mini reproductor y en la carátula de la pantalla «Reproduciendo». Las radios en directo no.
+let nowSwipe = null;
+const SWIPE_SKIP = 70;
+document.addEventListener('pointerdown', e => {
+  if (e.pointerType === 'mouse') return;
+  const el = e.target.closest('[data-swipe-now]');
+  if (!el || !P.current || P.current.radio) return;
+  nowSwipe = { el, id: e.pointerId, x: e.clientX, y: e.clientY, dx: 0, active: false };
 });
-view.addEventListener('pointermove', e => {
-  if (!swipe) return;
-  if (document.body.classList.contains('dnd')) { endSwipe(false); return; }   // se está arrastrando la canción a otro sitio
-  const dx = e.clientX - swipe.x, dy = e.clientY - swipe.y;
-  if (!swipe.active) {
-    if (dx > 14 && dx > Math.abs(dy) * 1.5) { swipe.active = true; swipe.row.classList.add('swiping'); }
-    else if (Math.abs(dy) > 14 || dx < -14) { swipe = null; return; }
+document.addEventListener('pointermove', e => {
+  const s = nowSwipe;
+  if (!s || e.pointerId !== s.id) return;
+  const dx = e.clientX - s.x, dy = e.clientY - s.y;
+  if (!s.active) {
+    if (Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy) * 1.5) { s.active = true; s.el.classList.remove('snap'); s.el.classList.add('now-swiping'); }
+    else if (Math.abs(dy) > 12) { nowSwipe = null; return; }
     else return;
   }
-  swipe.dx = Math.max(0, Math.min(dx, 150));
-  swipe.row.style.setProperty('--dx', `${swipe.dx}px`);
-  swipe.row.classList.toggle('armed', swipe.dx >= 80);
+  s.dx = Math.max(-170, Math.min(170, dx));
+  s.el.style.setProperty('--sx', `${s.dx}px`);
+  s.el.style.setProperty('--so', String(1 - Math.min(0.45, Math.abs(s.dx) / 400)));
+  s.el.classList.toggle('armed', Math.abs(s.dx) >= SWIPE_SKIP);
 });
-view.addEventListener('pointerup', () => endSwipe(swipe?.dx >= 80));
-view.addEventListener('pointercancel', () => endSwipe(false));
-document.addEventListener('click', e => { if (swallowClick) { e.stopPropagation(); e.preventDefault(); swallowClick = false; } }, true);
+function endNowSwipe(go) {
+  const s = nowSwipe;
+  nowSwipe = null;
+  if (!s?.active) return;
+  swallowClick = true; setTimeout(() => { swallowClick = false; }, 350);
+  const skip = go && Math.abs(s.dx) >= SWIPE_SKIP;
+  s.el.classList.remove('now-swiping', 'armed');
+  s.el.classList.add('snap');
+  s.el.style.removeProperty('--sx'); s.el.style.removeProperty('--so');
+  if (!skip) return;
+  if (s.dx < 0) player.next(); else player.prev();
+}
+document.addEventListener('pointerup', e => { if (nowSwipe && e.pointerId === nowSwipe.id) endNowSwipe(true); });
+document.addEventListener('pointercancel', e => { if (nowSwipe && e.pointerId === nowSwipe.id) endNowSwipe(false); });
 
 // ------------------------------------------------------- importar archivos
 async function runImport(files) {
@@ -1848,7 +1968,7 @@ function renderMini() {
   mini.hidden = !t;
   if (!t) return;
   setHTML(mini, `<div class="line"><i></i></div><div class="bar">
-    <button class="open" data-act="open-now" aria-label="Abrir reproductor">${cover(t)}<span class="row-text"><b>${esc(t.title)}</b><small>${artistLinks(t)}</small></span></button>
+    <button class="open" data-act="open-now" data-swipe-now aria-label="Abrir reproductor">${cover(t)}<span class="row-text"><b>${esc(t.title)}</b><small>${artistLinks(t)}</small></span></button>
     <div class="desk center"><div class="ctl">
         <button class="icon-btn js-shuffle" data-act="shuffle" aria-label="Aleatorio">${icon('shuffle')}</button>
         <button class="icon-btn" data-act="prev" aria-label="Anterior">${icon('prev')}</button>
@@ -1858,7 +1978,7 @@ function renderMini() {
       <div class="seek"><span class="js-cur">0:00</span><input type="range" class="js-seek" min="0" max="1000" value="0" aria-label="Posición"><span class="js-dur"></span></div></div>
     <div class="desk right">
       ${inLibrary(t) ? `<button class="icon-btn fav js-fav" data-act="now-fav" aria-label="Me gusta">${icon('heart')}</button>` : ''}
-      <input type="range" class="vol js-vol" min="0" max="100" value="${Math.round(P.audio.volume * 100)}" style="--p:${Math.round(P.audio.volume * 100)}%" aria-label="Volumen"></div>
+      <input type="range" class="vol js-vol" min="0" max="100" value="${Math.round(player.volume() * 100)}" style="--p:${Math.round(player.volume() * 100)}%" aria-label="Volumen"></div>
     <button class="icon-btn play mob js-play" data-act="toggle" aria-label="Reproducir o pausar"></button>
     <button class="icon-btn mob" data-act="next" aria-label="Siguiente">${icon('next')}</button></div>`);
   syncState(); syncTime();
@@ -1903,7 +2023,7 @@ function renderNow() {
       <div class="seg">${modes.map(([m, l]) => `<button data-act="now-mode" data-mode="${m}">${l}</button>`).join('')}</div>
       <button class="icon-btn" data-act="now-more" aria-label="Más opciones">${icon('more')}</button></div>
     <div class="body"><div class="left">
-      <div class="stage">${cover(t)}</div>
+      <div class="stage" data-swipe-now>${cover(t)}</div>
       <div class="meta"><div><b>${esc(t.title)}</b><span>${artistLinks(t)}${t.album && inLibrary(t) ? ` · ${albumLink(t)}` : ''}</span>
         ${[...(t.genres || []), ...(t.moods || [])].length ? `<span class="tags">${esc([...(t.genres || []).slice(0, 2), ...(t.moods || []).slice(0, 3)].join(' · '))}</span>` : ''}</div>
         ${inLibrary(t) ? `<button class="icon-btn fav js-fav" data-act="now-fav" aria-label="Me gusta">${icon('heart')}</button>` : ''}</div>
@@ -1936,12 +2056,15 @@ async function renderNowPane() {
     const t = P.current, from = P.index + 1;
     const upcoming = P.queue.slice(from, from + 300);
     const inAuto = P.autoFrom >= 0 && P.autoFrom <= from;
+    const hasAuto = P.autoFrom >= 0 && P.autoFrom < P.queue.length && from + upcoming.length > P.autoFrom;
+    const autoAll = '<button class="chip" data-act="q-promote-all">Añadir todas a tu cola</button>';
     setHTML(pane, `<h2 style="margin-top:0">Sonando</h2>
       ${t ? `<div class="row is-playing"><span class="row-main">${cover(t)}<span class="row-text"><b>${esc(t.title)}</b><small>${esc(t.artist || '')}</small></span></span></div>` : ''}
       ${P.user.length ? `<div class="qhead"><h2>A continuación en tu cola</h2><button class="chip" data-act="clear-user-queue">Vaciar</button></div>
         <ol class="rows" data-list="u">${P.user.map((x, i) => rowHTML(x, i, { queue: true, user: true })).join('')}</ol>` : ''}
-      ${upcoming.length ? `<h2>${inAuto ? 'Reproducción automática' : P.user.length ? 'Después, de lo que estabas escuchando' : 'A continuación'}</h2>
-        <ol class="rows" data-list="q">${upcoming.map((x, k) => (from + k === P.autoFrom && !inAuto ? '<li class="qdivider">Reproducción automática · canciones parecidas</li>' : '') + rowHTML(x, from + k, { queue: true })).join('')}</ol>` : ''}
+      ${upcoming.length ? `<div class="qhead"><h2>${inAuto ? 'Reproducción automática' : P.user.length ? 'Después, de lo que estabas escuchando' : 'A continuación'}</h2>${inAuto ? autoAll : ''}</div>
+        <ol class="rows" data-list="q">${upcoming.map((x, k) => (from + k === P.autoFrom && !inAuto ? `<li class="qdivider"><span>Reproducción automática · canciones parecidas</span>${autoAll}</li>` : '') + rowHTML(x, from + k, { queue: true, auto: player.isAuto(from + k) })).join('')}</ol>` : ''}
+      ${hasAuto ? '<p class="muted small">Desliza una canción de la reproducción automática hacia la derecha (o pulsa +) para pasarla a tu cola.</p>' : ''}
       ${!P.user.length && !upcoming.length ? '<p class="muted">No hay nada más en la cola. Desliza una canción hacia la derecha o usa su menú ⋯ para añadirla.</p>' : ''}`);
     pane.scrollTop = 0;
     return;
@@ -2028,6 +2151,16 @@ document.addEventListener('change', e => {
   seeking = false;
   if (Number.isFinite(P.audio.duration)) player.seek((e.target.value / 1000) * P.audio.duration);
 });
+// Transiciones: los deslizadores se aplican mientras se mueven (y se guardan al soltarlos).
+document.addEventListener('input', e => {
+  const k = e.target.dataset?.fx;
+  if (!['cross', 'fadeIn', 'fadeOut'].includes(k)) return;
+  const v = +e.target.value, [lo, hi] = fades.LIMITS[k];
+  e.target.style.setProperty('--p', `${((v - lo) / (hi - lo)) * 100}%`);
+  S.settings.fx = fades.settings({ ...fades.settings(), [k]: v });
+  const out = $(`[data-fx-val="${k}"]`); if (out) out.textContent = secs(v);
+  const txt = $(`[data-fx-text="${k}"]`); if (txt) txt.textContent = fxSecsText(k, v);
+});
 // Audio espacial: los deslizadores actúan mientras se mueven; el resto, al cambiar.
 document.addEventListener('input', e => {
   const k = e.target.dataset?.sp;
@@ -2040,6 +2173,12 @@ document.addEventListener('input', e => {
   const sp = $('[data-sp-speed]'); if (sp) sp.textContent = spatialSpeedText(spatial.settings());
 });
 document.addEventListener('change', async e => {
+  const fxk = e.target.dataset?.fx;
+  if (fxk) {
+    await setFx({ [fxk]: e.target.type === 'checkbox' ? e.target.checked : fxk === 'mode' ? e.target.value : +e.target.value });
+    if (fxk === 'mode') refresh();
+    return;
+  }
   const spk = e.target.dataset?.sp;
   if (spk) {
     await setSpatial({ [spk]: spk === 'on' ? e.target.checked : spk === 'mode' ? e.target.value : +e.target.value });
@@ -2106,6 +2245,7 @@ async function start() {
     return;
   }
   if (typeof S.settings.volume === 'number') player.applyVolume(S.settings.volume);
+  netState(false);
   cloud.migrate();
   await sealAiKeys().catch(e => console.warn('No se pudieron cifrar las claves de IA', e));
   if (devOn()) {

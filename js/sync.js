@@ -19,6 +19,7 @@ export function snapshot(withPrefs = false) {
       genrePresets: { v: s.genrePresets || [], at: s.genrePresetsAt || 0 },
       volume: { v: typeof s.volume === 'number' ? s.volume : 1, at: s.volAt || 0 },
       spatial: { v: s.spatial || null, at: s.spatialAt || 0 },      // audio espacial (8D): activado, modo, intensidad y velocidad
+      fx: { v: s.fx || null, at: s.fxAt || 0 },                      // fundidos y transiciones entre canciones
     };
   }
   return data;
@@ -95,6 +96,7 @@ export async function merge(remote) {
     if (p.genrePresets && p.genrePresets.at > (s.genrePresetsAt || 0)) { s.genrePresets = p.genrePresets.v || []; s.genrePresetsAt = p.genrePresets.at; }
     if (p.volume && p.volume.at > (s.volAt || 0)) { s.volume = p.volume.v; s.volAt = p.volume.at; emit('volume', s.volume); }
     if (p.spatial && p.spatial.v && p.spatial.at > (s.spatialAt || 0)) { s.spatial = p.spatial.v; s.spatialAt = p.spatial.at; emit('spatial-changed'); }
+    if (p.fx && p.fx.v && p.fx.at > (s.fxAt || 0)) { s.fx = p.fx.v; s.fxAt = p.fx.at; emit('fx-changed'); }
     await saveKV('settings', false);
   }
   if (changed) {

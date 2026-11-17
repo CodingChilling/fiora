@@ -5,7 +5,7 @@ Tu música, sin suscripciones. Una app web instalable (PWA) para escuchar tu pro
 - **Tu biblioteca**: importa archivos o carpetas enteras (MP3, FLAC, M4A, OGG, WAV…). Lee título, artista, álbum, carátula y letra de las etiquetas.
 - **Biblioteca cómoda**: búsqueda y pestañas siempre a mano al desplazarte (pulsa `/` para buscar, `Esc` para borrar); la búsqueda también muestra los artistas y álbumes que coinciden; canciones agrupadas por letra (con índice lateral para saltar) o por fecha; filtros rápidos de un toque; orden para canciones, álbumes y artistas; botón de reproducir en cada álbum y artista; géneros y ambientes como tarjetas con sus carátulas; y al volver de un álbum o artista sigues donde estabas.
 - **Filtros**: en Biblioteca → Canciones, filtra por dónde están (sin conexión, nube, solo en el dispositivo, música libre), me gusta, géneros, lo que transmite, época, escuchas y fecha en que se añadieron, y ordena por título, artista, álbum, escuchas, año o duración. La búsqueda no distingue tildes.
-- **Sin conexión**: la música importada o descargada se guarda en el dispositivo y la app se abre sin internet.
+- **Sin conexión**: la música importada o descargada se guarda en el dispositivo y la app se abre sin internet (ver [Reproducción](#reproducción-sin-conexión-gestos-cola-y-transiciones)).
 - **Descargas**: baja una canción, un álbum o una playlist entera dentro de la app, o guarda el archivo en la carpeta de descargas del móvil u ordenador.
 - **Nube personal**: conecta uno o varios buckets de Oracle Cloud Object Storage y escucha tu música desde cualquier dispositivo. En el bucket solo hay música: playlists, favoritos y estadísticas van a tu cuenta.
 - **Compartir tu música con pocas personas**: un enlace de solo lectura para cada una (como mucho 5 a la vez), con caducidad y revocable. Escuchan tus canciones; sus playlists son suyas y nadie ve las de nadie, salvo las que cada uno decida compartir. Más abajo, [Compartir tu música](#compartir-tu-música).
@@ -276,6 +276,33 @@ Un efecto opcional que mueve el sonido mientras escuchas. Está apagado por defe
 
 Pruebas en [`tests/audio`](tests/audio/README.md).
 
+## Reproducción: sin conexión, gestos, cola y transiciones
+
+**Sin conexión.** La app entera se guarda al instalarse (también la escena 3D de la criatura y el mapa de radios), así que se abre sin internet. Una píldora arriba avisa «Sin conexión · solo lo descargado». Las canciones que no están descargadas aparecen atenuadas y, al tocarlas, se explica por qué no suenan; al pasar de canción se saltan. Explorar avisa de que la música libre y las radios necesitan internet, y las letras dicen que no hay conexión. Los cambios (playlists, favoritos, ajustes) se guardan en el dispositivo y se suben al volver. Si la red «parece» funcionar pero no carga nada, a los 3,5 s se usa la copia guardada.
+
+**Deslizar la canción que suena.** En el mini reproductor del móvil o en la carátula de «Reproduciendo»: a la izquierda, la siguiente; a la derecha, la anterior. Un gesto corto o vertical no hace nada. Con una radio en directo, tampoco.
+
+**Reproducción automática → tu cola.** Cuando se acaba lo que escuchas y siguen canciones parecidas, en la Cola cada una lleva un botón **+** (o se desliza a la derecha) para pasarla a tu cola. El menú ⋯ ofrece también «Reproducir a continuación», y hay un botón «Añadir todas a tu cola». La canción sale de la reproducción automática, así que no suena dos veces.
+
+**Transiciones y fundidos** (Perfil → Ajustes → Audio y reproducción). Todo viene apagado.
+
+| Opción | Qué hace |
+| --- | --- |
+| Transición entre canciones | «Una tras otra» o «Mezcla cruzada» (de 1 a 12 s): el final de una canción suena a la vez que el principio de la siguiente, con curvas de potencia constante |
+| Fundido de entrada / de salida | De 0 a 10 s al empezar y al acabar cada canción. Dependen de la posición: al buscar o volver atrás, el volumen siempre es el correcto |
+| Suavizar pausa y reanudación | Un fundido de 0,35 s en vez de un corte |
+| Mezclar también al saltar de canción | Al pulsar siguiente o anterior, la que suena se desvanece (hasta 3 s con mezcla cruzada, 1 s si no) |
+
+- Los fundidos multiplican el volumen que elijas, nunca lo cambian. En canciones cortas, entrada y salida juntas ocupan como mucho el 40 % de la canción.
+- No hay mezcla si no hay nada detrás, con «repetir una» ni con radios (las radios solo usan el fundido de pausa).
+- Funciona con el audio espacial: los dos elementos espaciales pasan por el mismo efecto.
+- Se guarda en el dispositivo y, con sesión, en tu cuenta (sin tablas nuevas).
+- **iPhone y iPad no dejan que una página cambie el volumen**: allí los fundidos y la mezcla no se aplican (se avisa en Ajustes) y la reproducción sigue como siempre.
+
+**Límites.** Probado solo en Chromium (escritorio y móvil emulado). Sin probar en Firefox, Safari, iOS y Android reales, ni con la pantalla apagada en el móvil: los fundidos usan un temporizador que algunos navegadores ralentizan en segundo plano (la mezcla también se comprueba con cada avance de la canción).
+
+Pruebas en [`tests/playback`](tests/playback/README.md).
+
 ## Explorar
 
 Una sola sección del menú con tres vistas: **Para ti** (lo más visual: ambientes, canciones y radios destacadas, géneros, destinos y experiencias), **Música libre** (los catálogos de siempre y novedades, géneros y recomendaciones) y **Radios** (tus emisoras y colecciones, descubrimiento del día, destacadas, tendencias, ciudades, países y géneros). El buscador de arriba consulta a la vez los catálogos de música y el directorio de radios y agrupa los resultados (canciones, álbumes, artistas, emisoras, países, etiquetas); si una fuente falla, las demás siguen y la que falla ofrece reintentar. La búsqueda se conserva al cambiar de vista.
@@ -345,6 +372,7 @@ Y abre `http://localhost:8000`.
 | `js/app.js` | Pantallas, menús y navegación |
 | `js/player.js` | Reproductor, cola y controles del sistema; elige entre la ruta normal y la espacial |
 | `js/spatial.js` | Audio espacial (8D): grafo de Web Audio, modos, comprobación de compatibilidad |
+| `js/fades.js` | Fundidos y mezcla cruzada: ajustes, curvas y volumen de cada momento |
 | `js/library.js`, `js/tags.js` | Importación y lectura de etiquetas |
 | `js/cloud.js` | Oracle Cloud Object Storage (uno o varios buckets) |
 | `js/flac.js` | Conversión sin pérdida de WAV a FLAC |

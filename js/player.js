@@ -1,28 +1,132 @@
-// Reproductor: una sola etiqueta <audio>, cola, aleatorio, repetición y Media Session.
+// Reproductor: cola, aleatorio, repetición, fundidos, mezcla cruzada y Media Session.
 import * as db from './db.js';
 import { S, emit, countPlay, countSkip, countDone, countNext, saveTrack, saveKV } from './store.js';
 import { coverUrl } from './library.js';
 import { objectUrl, configured } from './cloud.js';
 import { songRadio } from './recs.js';
 import * as spatial from './spatial.js';
+import * as fades from './fades.js';
 
-// Dos elementos de audio y una sola fuente audible:
-//   · main    — el de siempre. Radios, música de Explorar, 8D apagado y todo lo que no se pueda procesar.
+// Elementos de audio, en dos rutas:
+//   · main    — la de siempre. Radios, música de Explorar, 8D apagado y todo lo que no se pueda procesar.
 //               Nunca se conecta a Web Audio, así que nada del audio espacial puede dejarlo en silencio.
-//   · spatial — el del audio espacial (spatial.js), solo para canciones de la biblioteca compatibles.
-// `audio` es el que está sonando en cada momento.
-const main = new Audio();
-main.preload = 'auto';
-let audio = main;
+//   · spatial — la del audio espacial (spatial.js), solo para canciones de la biblioteca compatibles.
+// Cada ruta tiene dos elementos. Normalmente suena uno solo; el segundo solo entra en una mezcla
+// cruzada, mientras la canción que se va se desvanece (`outgoing`).
+// `audio` es el que manda en cada momento (tiempo, duración, eventos).
+const mk = () => { const a = new Audio(); a.preload = 'auto'; return a; };
+const mains = [mk(), mk()];
+let audio = mains[0];
+const last = { main: mains[0], spatial: null };   // último elemento usado de cada ruta
+const outgoing = new Set();                       // canciones que se están despidiendo en una mezcla
+const urls = new Map();                           // elemento → dirección blob: que hay que liberar al vaciarlo
 let curSrc = '';          // dirección de lo que suena (para volver al original si la ruta espacial falla)
 let watchdog = null;
-/** Pasa a usar un elemento y deja el otro parado y vacío (nunca suenan dos a la vez). */
-function use(el) {
-  if (audio === el) return;
+let vol = 1;              // volumen elegido por el usuario; los fundidos lo multiplican, nunca lo cambian
+
+const kindOf = el => (spatial.owns(el) ? 'spatial' : 'main');
+const poolOf = kind => (kind === 'spatial' ? [spatial.element(), spatial.partner()].filter(Boolean) : mains);
+/** Elemento para la próxima canción: el de siempre de la ruta o, si se van a solapar, el otro. */
+function pick(kind, overlap) {
+  const pool = poolOf(kind);
+  if (!overlap) return pool.includes(last[kind]) ? last[kind] : pool[0];
+  return pool.find(e => e !== audio && !outgoing.has(e)) || pool.find(e => e !== audio) || pool[0];
+}
+/** Deja un elemento parado y vacío. */
+function stopEl(el) {
+  const f = fx.get(el);
+  if (f?.ramp) { const r = f.ramp; f.ramp = null; r.done(false); }
+  fx.delete(el); outgoing.delete(el);
+  el.pause(); el.removeAttribute('src'); el.load();
+  const u = urls.get(el);
+  if (u) { urls.delete(el); URL.revokeObjectURL(u); }
+}
+/** Este elemento pasa a ser el dueño de una dirección blob: (se libera cuando deje de usarla). */
+function own(el, src) {
+  if (!src?.startsWith('blob:')) return;
+  for (const [k, u] of urls) if (u === src && k !== el) urls.delete(k);   // pasa de un elemento a otro
+  const prev = urls.get(el);
+  urls.set(el, src);
+  if (prev && prev !== src) URL.revokeObjectURL(prev);
+}
+/**
+ * Pasa a usar un elemento. El anterior se para y se vacía; con `keep` segundos, en cambio, se
+ * desvanece durante ese tiempo mientras empieza el nuevo (mezcla cruzada). Un cambio sin mezcla
+ * corta también cualquier despedida que siguiera sonando.
+ */
+function use(el, keep = 0) {
+  if (outgoing.has(el)) stopEl(el);
   const old = audio;
   audio = el;
-  audio.volume = old.volume;
-  old.pause(); old.removeAttribute('src'); old.load();
+  last[kindOf(el)] = el;
+  if (keep <= 0) for (const o of [...outgoing]) stopEl(o);
+  if (old === el) return;
+  if (keep > 0 && !old.paused && old.getAttribute('src')) {
+    outgoing.add(old);
+    fadeTo(old, 0, keep).then(ok => { if (ok) stopEl(old); });
+    run();
+  } else stopEl(old);
+}
+
+// --- Fundidos ---------------------------------------------------------------
+// Cada elemento lleva su estado: `fin` (fundido de entrada propio de una mezcla; null: el de los
+// ajustes), `g` (ganancia de las rampas de pausa y despedida) y `ramp` (la rampa en curso).
+const fx = new Map();
+const fresh = (t, fin = null) => ({ fin, g: 1, ramp: null, radio: !!t?.radio });
+function gainOf(el) {
+  const f = fx.get(el);
+  if (!f || !fades.volumeControl()) return 1;
+  let g = f.g;
+  if (!f.radio) {
+    const s = fades.settings(), d = el.duration;
+    const { fin, fout } = fades.shape(s, d);
+    g *= fades.positional(el.currentTime || 0, d, f.fin ?? fin, fout);
+  }
+  return g;
+}
+function setVol(el) {
+  const v = Math.max(0, Math.min(1, vol * gainOf(el)));
+  if (el.volume !== v) el.volume = v;
+}
+/** Lleva la ganancia de rampa de un elemento a `to` en `secs` segundos. Devuelve false si otra rampa la sustituye. */
+function fadeTo(el, to, secs) {
+  let f = fx.get(el);
+  if (!f) { f = fresh(null); fx.set(el, f); }
+  if (f.ramp) { const r = f.ramp; f.ramp = null; r.done(false); }
+  return new Promise(done => {
+    if (!(secs > 0) || !fades.volumeControl()) { f.g = to; setVol(el); return done(true); }
+    f.ramp = { from: f.g, to, t0: performance.now(), dur: secs * 1000, done };
+    run();
+  });
+}
+let timer = null, crossedFor = -1;
+function tick() {
+  const now = performance.now();
+  for (const el of [audio, ...outgoing]) {
+    const f = fx.get(el);
+    if (f?.ramp) {
+      const r = f.ramp, p = (now - r.t0) / r.dur;
+      f.g = r.to >= r.from ? r.from + (r.to - r.from) * fades.rise(p) : r.to + (r.from - r.to) * fades.fall(p);
+      if (p >= 1) { f.g = r.to; f.ramp = null; r.done(true); }
+    }
+    if (fx.has(el)) setVol(el);
+  }
+  maybeCross();
+  if (audio.paused && !outgoing.size && ![...fx.values()].some(f => f.ramp)) { clearInterval(timer); timer = null; }
+}
+function run() { if (!timer) timer = setInterval(tick, 40); }
+
+/** ¿Hay algo detrás de lo que suena? (sin sacar nada de la cola) */
+const skipOffline = t => !navigator.onLine && !t.radio && !t.hasBlob;
+/** Mezcla cruzada automática: cuando a la canción le quedan los segundos del solape, empieza la siguiente. */
+function maybeCross() {
+  const t = P.now;
+  if (!t || t.radio || audio.paused || crossedFor === loadToken || P.repeat === 'one' || !fades.volumeControl()) return;
+  const X = fades.crossFor(fades.settings(), audio.duration);
+  if (!X || audio.duration - audio.currentTime > X || audio.currentTime < 1) return;
+  crossedFor = loadToken;
+  if (sess) sess.done = true;          // se ha escuchado hasta el final: cuenta como terminada
+  next(true, { cross: X });
 }
 
 // Hay dos colas, como en los reproductores habituales:
@@ -45,7 +149,6 @@ export const P = {
 };
 
 let original = null;     // orden original de la cola mientras el aleatorio está activo
-let blobUrl = null;
 let loadToken = 0;
 let counted = false;
 let errors = 0;
@@ -71,17 +174,29 @@ async function resolveSrc(t) {
   if (t.radio) return t.url;
   if (t.hasBlob) {
     const blob = await db.get('blobs', t.id);
-    if (blob) {
-      if (blobUrl) URL.revokeObjectURL(blobUrl);
-      return (blobUrl = URL.createObjectURL(blob));
-    }
+    if (blob) return URL.createObjectURL(blob);     // se libera al vaciar el elemento que la use (own/stopEl)
   }
   if (t.cloudName && configured()) return objectUrl(t.cloudName, t.bucketId);
   if (t.url) return t.url;
   throw new Error('Esta canción no está disponible en este dispositivo');
 }
 
-async function load(autoplay = true) {
+/**
+ * Segundos que se solapará la canción nueva con la que suena (0: cambio normal).
+ *   · opts.cross — mezcla cruzada automática al final de una canción.
+ *   · cambio a mano (siguiente, anterior, elegir otra) con «Mezclar al saltar de canción».
+ * Nunca con radios, ni si lo que suena está en pausa o el navegador no deja cambiar el volumen.
+ */
+function overlapFor(t, opts) {
+  const cur = fx.get(audio);
+  if (!t || t.radio || !cur || cur.radio || audio.paused || !audio.getAttribute('src') || !fades.volumeControl()) return 0;
+  if (opts.cross) return opts.cross;
+  const s = fades.settings();
+  if (opts.auto || !s.manual) return 0;
+  return s.mode === 'cross' ? Math.min(s.cross, fades.MANUAL_MAX) : 1;
+}
+
+async function load(autoplay = true, opts = {}) {
   const t = P.current;
   const token = ++loadToken;
   counted = false;
@@ -90,24 +205,32 @@ async function load(autoplay = true) {
   radioClock.id = null; radioClock.secs = 0;
   emit('track', t);
   let used = null;
-  if (!t) { clearTimeout(watchdog); use(main); curSrc = ''; audio.removeAttribute('src'); audio.load(); return; }
+  if (!t) { clearTimeout(watchdog); use(pick('main', 0)); curSrc = ''; audio.removeAttribute('src'); audio.load(); return; }
+  const overlap = overlapFor(t, opts);
   try {
     const src = await resolveSrc(t);
-    if (token !== loadToken) return;
+    if (token !== loadToken) { if (src.startsWith('blob:')) URL.revokeObjectURL(src); return; }
     // ¿Ruta espacial? Solo canciones de la biblioteca con el 8D activado y fuente compatible.
-    if (spatial.settings().on && !t.radio) prepareSpatial();
-    const spatialRoute = await spatial.routeFor(t, src).catch(() => false);
-    if (token !== loadToken) return;
+    const target = spatial.settings().on && !t.radio && prepareSpatial() ? pick('spatial', overlap) : null;
+    const spatialRoute = await spatial.routeFor(t, src, target).catch(() => false);
+    if (token !== loadToken) { if (src.startsWith('blob:')) URL.revokeObjectURL(src); return; }
     clearTimeout(watchdog);
-    use(spatialRoute ? spatial.element() : main);
+    const el = pick(spatialRoute ? 'spatial' : 'main', overlap);
+    use(el, el === audio ? 0 : overlap);
+    fx.set(el, fresh(t, overlap || null));       // en una mezcla, la nueva entra durante el mismo solape
+    own(el, src);
     curSrc = src;
-    used = audio;
-    audio.src = src;
-    if (autoplay) await audio.play();
+    used = el;
+    setVol(el);
+    el.src = src;
+    run();
+    if (autoplay) await el.play();
     if (spatialRoute) guard(token);
   } catch (e) {
     if (token !== loadToken || e?.name === 'AbortError') return;
     if (used && used !== audio) return;      // falló la ruta espacial y la canción ya sigue por la normal
+    // El navegador no deja arrancar un segundo elemento sin un toque: se repite sin solapar.
+    if (overlap && e?.name === 'NotAllowedError') return load(autoplay, { ...opts, cross: 0, auto: true });
     onError(e);
   }
   updateMediaSession(t);
@@ -118,19 +241,24 @@ function guard(token) {
   clearTimeout(watchdog);
   const at = audio.currentTime;
   watchdog = setTimeout(() => {
-    if (token !== loadToken || audio === main || audio.paused) return;
+    if (token !== loadToken || kindOf(audio) === 'main' || audio.paused) return;
     if (!spatial.contextRunning() || (audio.currentTime <= at && audio.readyState >= 2)) fallback('contexto');
   }, 1800);
 }
 /** La ruta espacial ha fallado: suena el original, en el mismo punto y sin avisos. La preferencia no cambia. */
 function fallback(reason) {
-  if (audio === main || !curSrc) return false;
+  if (kindOf(audio) === 'main' || !curSrc) return false;
   const t = P.current, pos = audio.currentTime || 0, wasPlaying = !audio.paused || audio.readyState < 2;
+  const f = fx.get(audio);
   spatial.failed(t, curSrc, reason);
-  use(main);
-  main.src = curSrc;
-  if (pos > 0.5) main.addEventListener('loadedmetadata', () => { try { main.currentTime = pos; } catch { /* sin búsqueda */ } }, { once: true });
-  if (wasPlaying) main.play().catch(onError);
+  const m = pick('main', 0);
+  own(m, curSrc);                       // la dirección pasa al elemento normal antes de vaciar el espacial
+  use(m);
+  fx.set(m, f || fresh(t));
+  setVol(m);
+  m.src = curSrc;
+  if (pos > 0.5) m.addEventListener('loadedmetadata', () => { try { m.currentTime = pos; } catch { /* sin búsqueda */ } }, { once: true });
+  if (wasPlaying) m.play().catch(onError);
   return true;
 }
 /**
@@ -139,23 +267,26 @@ function fallback(reason) {
  */
 export async function reroute() {
   const t = P.current;
-  if (!t || t.radio || !audio.src || audio !== main) return;
+  if (!t || t.radio || !audio.src || kindOf(audio) !== 'main') return;
   const token = loadToken, pos = audio.currentTime || 0, wasPlaying = !audio.paused;
-  prepareSpatial();
-  if (!(await spatial.routeFor(t, curSrc).catch(() => false)) || token !== loadToken || audio !== main) return;
+  if (!prepareSpatial()) return;
+  const el = pick('spatial', 0);
+  if (!(await spatial.routeFor(t, curSrc, el).catch(() => false)) || token !== loadToken || kindOf(audio) !== 'main') return;
   let src = curSrc;
   try { src = await resolveSrc(t); } catch { return; }
-  if (token !== loadToken) return;
-  const el = spatial.element();
+  if (token !== loadToken) { if (src !== curSrc && src.startsWith('blob:')) URL.revokeObjectURL(src); return; }
+  const f = fx.get(audio);
   use(el);
-  curSrc = src; el.src = src;
+  fx.set(el, f || fresh(t));
+  own(el, src);
+  curSrc = src; setVol(el); el.src = src;
   el.addEventListener('loadedmetadata', () => { try { el.currentTime = pos; } catch { /* sin búsqueda */ } }, { once: true });
   if (wasPlaying) { try { await el.play(); guard(token); } catch (e) { if (e?.name !== 'AbortError') fallback('error'); } }
   emit('state');
 }
 
 function onError(e) {
-  if (audio !== main && fallback('error')) return;      // el fallo era de la ruta espacial: se sigue con el original
+  if (kindOf(audio) !== 'main' && fallback('error')) return;      // el fallo era de la ruta espacial: se sigue con el original
   const t = P.current;
   if (sess) sess.error = true;
   if (t?.radio) {
@@ -177,7 +308,7 @@ function extend() {
   const seed = P.queue[P.index];
   if (S.settings.autoplay === false || !seed || seed.radio || !S.tracks.has(seed.id)) return false;
   const have = new Set(P.queue.map(t => t.id));
-  const more = songRadio(seed, 30).slice(1).filter(t => !have.has(t.id) && canPlay(t)).slice(0, 20);
+  const more = songRadio(seed, 30).slice(1).filter(t => !have.has(t.id) && canPlay(t) && !skipOffline(t)).slice(0, 20);
   if (!more.length) return false;
   if (P.autoFrom < 0) P.autoFrom = P.queue.length;
   P.queue.push(...more);
@@ -186,10 +317,10 @@ function extend() {
   return true;
 }
 
-function playContext(i) {
+function playContext(i, opts = {}) {
   P.index = i; P.now = P.queue[i] || null; P.fromUser = false;
-  errors = 0;
-  load();
+  if (!opts.auto) errors = 0;
+  load(true, opts);
 }
 
 /** Sustituye la lista en reproducción y empieza desde `start`. La cola del usuario se conserva. */
@@ -220,28 +351,55 @@ export function jump(i) {
 }
 
 /** Reproduce ya una canción de la cola del usuario (y la saca de ella). */
-export function jumpUser(i) {
+export function jumpUser(i, opts = {}) {
   if (i < 0 || i >= P.user.length) return;
   P.now = P.user.splice(i, 1)[0]; P.fromUser = true;
-  errors = 0;
+  if (!opts.auto) errors = 0;
   emit('queue');
-  load();
+  load(true, opts);
 }
 
 export function toggle() {
   if (!P.current) return;
   if (!audio.src) return load();
-  audio.paused ? audio.play().catch(onError) : audio.pause();
+  audio.paused || pausing ? resume() : pause();
 }
 
-export function next(auto = false) {
+// Pausa y reanudación, con un fundido corto si está activado en los ajustes.
+let pausing = 0;
+export function pause() {
+  for (const o of [...outgoing]) stopEl(o);         // una mezcla a medias se resuelve: queda la canción nueva
+  if (audio.paused) return;
+  const el = audio, tok = ++pausing;
+  if (!fades.settings().pause || !fades.volumeControl()) { pausing = 0; return el.pause(); }
+  fadeTo(el, 0, fades.PAUSE_SECS).then(ok => { if (ok && tok === pausing && el === audio) { pausing = 0; el.pause(); } });
+}
+export function resume() {
+  const el = audio, soft = fades.settings().pause && fades.volumeControl();
+  pausing = 0;
+  if (!fx.has(el)) fx.set(el, fresh(P.current));
+  if (!soft) { fadeTo(el, 1, 0); return el.play().catch(onError); }
+  if (el.paused) { fx.get(el).g = 0; setVol(el); }
+  fadeTo(el, 1, fades.PAUSE_SECS);
+  return el.play().catch(onError);
+}
+
+/**
+ * Pasa a la siguiente. `auto`: porque la canción acabó (o empieza su mezcla cruzada, `opts.cross`).
+ * Sin conexión se saltan las canciones que no están descargadas.
+ */
+export function next(auto = false, opts = {}) {
   if (!P.now) return;
-  if (auto && P.repeat === 'one') { audio.currentTime = 0; audio.play(); return; }
-  if (P.user.length) return jumpUser(0);            // primero, lo que el usuario puso en cola
-  if (P.index < P.queue.length - 1) return playContext(P.index + 1);
-  if (P.repeat === 'all') return playContext(0);
-  if (extend()) return playContext(P.index + 1);    // continuación automática
-  if (!auto) return playContext(0);
+  if (auto && P.repeat === 'one' && !opts.cross) { audio.currentTime = 0; audio.play(); return; }
+  const o = { ...opts, auto };
+  const ok = t => !skipOffline(t);
+  const u = P.user.findIndex(ok);
+  if (u >= 0) return jumpUser(u, o);                 // primero, lo que el usuario puso en cola
+  for (let i = P.index + 1; i < P.queue.length; i++) if (ok(P.queue[i])) return playContext(i, o);
+  if (P.repeat === 'all') { const i = P.queue.findIndex(ok); if (i >= 0) return playContext(i, o); }
+  if (extend()) return playContext(P.index + 1, o);  // continuación automática
+  if (opts.cross) return;                            // no hay nada detrás: la canción termina sola
+  if (!auto) { const i = P.queue.findIndex(ok); if (i >= 0) return playContext(i, o); }
   P.fromUser = false;
   audio.pause(); emit('state');
 }
@@ -249,7 +407,7 @@ export function next(auto = false) {
 export function prev() {
   if (audio.currentTime > 4) { audio.currentTime = 0; return; }
   if (P.fromUser) return playContext(P.index);       // vuelve a la lista donde se quedó
-  if (P.index > 0) return playContext(P.index - 1);
+  for (let i = P.index - 1; i >= 0; i--) if (!skipOffline(P.queue[i])) return playContext(i);
   audio.currentTime = 0;
 }
 
@@ -284,6 +442,23 @@ export function enqueue(tracks, playNext = false) {
   emit('queue');
 }
 
+/** ¿Esta posición de la lista en reproducción es de la continuación automática (aún por sonar)? */
+export const isAuto = i => P.autoFrom >= 0 && i >= P.autoFrom && i > P.index && i < P.queue.length;
+/**
+ * Pasa canciones de la reproducción automática a la cola del usuario (al final, o delante de todo
+ * con `playNext`). Salen de la continuación automática para que no suenen dos veces.
+ */
+export function promote(indexes, playNext = false) {
+  const picked = [...new Set(indexes)].filter(isAuto).sort((a, b) => a - b);
+  if (!picked.length) return 0;
+  const tracks = picked.map(i => P.queue[i]);
+  for (const i of picked.slice().reverse()) P.queue.splice(i, 1);
+  if (original) original = original.filter(t => !tracks.includes(t));
+  if (playNext) P.user.unshift(...tracks); else P.user.push(...tracks);
+  emit('queue');
+  return tracks.length;
+}
+
 /** Quita una canción de la cola del usuario (`user`) o de la lista en reproducción. */
 export function removeFromQueue(i, user = false) {
   if (user) { if (i >= 0 && i < P.user.length) P.user.splice(i, 1); emit('queue'); return; }
@@ -305,10 +480,15 @@ export function forget(ids) {
 export function clearUserQueue() { P.user = []; emit('queue'); }
 
 /** Pone el volumen sin guardarlo (al arrancar o al recibirlo de la cuenta). */
-export function applyVolume(v) { audio.volume = Math.max(0, Math.min(1, v)); }
+export function applyVolume(v) {
+  vol = Math.max(0, Math.min(1, Number.isFinite(+v) ? +v : 1));
+  for (const el of [audio, ...outgoing]) setVol(el);
+}
+/** Volumen elegido (sin los fundidos del momento). */
+export const volume = () => vol;
 export function setVolume(v) {
-  audio.volume = Math.max(0, Math.min(1, v));
-  S.settings.volume = audio.volume;
+  applyVolume(v);
+  S.settings.volume = vol;
   S.settings.volAt = Date.now();
   saveKV('settings', false);
   emit('dirty');
@@ -318,7 +498,7 @@ export function setVolume(v) {
 const handlers = [];
 const listen = (name, fn) => handlers.push([name, fn]);
 listen('ended', () => { if (sess) sess.done = true; next(true); });
-listen('play', () => { errors = 0; emit('state'); });
+listen('play', () => { errors = 0; run(); emit('state'); });
 listen('pause', () => emit('state'));
 listen('waiting', () => emit('state'));
 listen('playing', () => emit('state'));
@@ -351,6 +531,7 @@ listen('timeupdate', () => {
     radioClock.id = t.id; radioClock.last = now;
     emit('radio-time', { track: t, secs: radioClock.secs });
   }
+  tick();                                  // fundidos y mezcla cruzada (también si el temporizador va lento en segundo plano)
   emit('time');
   if ('mediaSession' in navigator && Number.isFinite(audio.duration) && audio.duration > 0) {
     try {
@@ -360,13 +541,17 @@ listen('timeupdate', () => {
 });
 
 /** Engancha los eventos a un elemento; solo cuenta el que está sonando. */
-function bind(el) { for (const [name, fn] of handlers) el.addEventListener(name, () => { if (el === audio) fn(); }); }
-bind(main);
+function bind(el) {
+  for (const [name, fn] of handlers) el.addEventListener(name, () => { if (el === audio) fn(); });
+  // La canción que se despide en una mezcla se vacía al acabar (o si falla): ya no manda.
+  for (const name of ['ended', 'error']) el.addEventListener(name, () => { if (outgoing.has(el)) stopEl(el); });
+}
+mains.forEach(bind);
 let boundSpatial = false;
-/** El elemento espacial se crea la primera vez que hace falta: entonces se le enganchan los mismos eventos. */
+/** Los elementos espaciales se crean la primera vez que hacen falta: entonces se les enganchan los mismos eventos. */
 export function prepareSpatial() {
   const el = spatial.element();
-  if (el && !boundSpatial) { boundSpatial = true; bind(el); }
+  if (el && !boundSpatial) { boundSpatial = true; bind(el); bind(spatial.partner()); }
   return el;
 }
 
@@ -382,12 +567,18 @@ async function updateMediaSession(t) {
 if ('mediaSession' in navigator) {
   const ms = navigator.mediaSession;
   const set = (a, fn) => { try { ms.setActionHandler(a, fn); } catch { /* acción no admitida */ } };
-  set('play', () => audio.play());
-  set('pause', () => audio.pause());
+  set('play', () => { if (P.current) audio.getAttribute('src') ? resume() : load(); });
+  set('pause', pause);
   set('previoustrack', prev);
   set('nexttrack', () => next(false));
   set('seekto', d => seek(d.seekTime));
 }
 
-/** Los dos elementos de audio (para las pruebas: nunca deben sonar a la vez). */
-export const elements = () => ({ main, spatial: spatial.hasElement() ? spatial.element() : null });
+/**
+ * Elementos de audio, para las pruebas: el último usado de cada ruta, todos, y los que se están
+ * despidiendo en una mezcla (fuera de una mezcla nunca suenan dos a la vez).
+ */
+export const elements = () => ({
+  main: last.main, spatial: spatial.hasElement() ? last.spatial || spatial.element() : null,
+  all: [...mains, ...(spatial.hasElement() ? [spatial.element(), spatial.partner()] : [])], outgoing: [...outgoing],
+});
