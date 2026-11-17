@@ -413,9 +413,10 @@ export function create(canvas, opts = {}) {
     points.visible = !n; if (extras) extras.visible = !n;
     if (!n) { placeCamera(); return kick(); }
     const r = rng(n * 31 + 5); starPts = [];
-    for (let i = 0; i < n; i++) { const a = (i / n) * 6.2832 + (r() - 0.5) * 0.5, d = 0.75 + r() * 0.75; starPts.push(new THREE.Vector3(d * Math.cos(a) * 1.25, d * Math.sin(a) * 0.8 + (r() - 0.5) * 0.2, (r() - 0.5) * 0.9)); }
+    // en un óvalo compacto alrededor del centro (más juntas que la figura, que mide 1 de radio)
+    for (let i = 0; i < n; i++) { const a = (i / n) * 6.2832 + (r() - 0.5) * 0.4, d = 0.42 + r() * 0.36; starPts.push(new THREE.Vector3(d * Math.cos(a) * 1.15, d * Math.sin(a) * 0.75 + (r() - 0.5) * 0.12, (r() - 0.5) * 0.4)); }
     const p = new Float32Array(n * 3), sd = new Float32Array(n), sz = new Float32Array(n);
-    starPts.forEach((v, i) => { p.set([v.x, v.y, v.z], i * 3); sd[i] = r(); sz[i] = i === selected ? 46 : 26; });
+    starPts.forEach((v, i) => { p.set([v.x, v.y, v.z], i * 3); sd[i] = r(); sz[i] = i === selected ? 34 : 24; });
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(p, 3)); g.setAttribute('aSeed', new THREE.BufferAttribute(sd, 1)); g.setAttribute('aSize', new THREE.BufferAttribute(sz, 1));
     stars = new THREE.Points(g, new THREE.ShaderMaterial({ uniforms: { uTime: U.uTime, uPixel: U.uPixel, uTwinkle: { value: 0.35 }, uWaveAmp: { value: 0 }, uVel: { value: new THREE.Vector3() }, uTravel: { value: 0 }, uColor: { value: new THREE.Color('#ffffff') }, uOpacity: { value: 1 } },

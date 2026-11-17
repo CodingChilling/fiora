@@ -278,7 +278,16 @@ function days(kind, n = 30) {
   const nStars = (await dbg(A)).stars, listed = await A.$$eval('.cr-stars button', x => x.length);
   check(nStars >= 4 && nStars === listed, `    Constelación musical: ${nStars} recuerdos como estrellas y como lista accesible`);
   const pts = await A.evaluate(() => globalThis.__fioraCreature().starScreen());
+  const spread = await A.evaluate(p => { const r = document.querySelector('.cr-canvas').getBoundingClientRect(); const xs = p.map(q => q.x), ys = p.map(q => q.y); return { w: (Math.max(...xs) - Math.min(...xs)) / r.width, h: (Math.max(...ys) - Math.min(...ys)) / r.height }; }, pts);
+  check(spread.w < 0.6 && spread.h < 0.6, `    Las estrellas están agrupadas en el centro (ocupan ${Math.round(spread.w * 100)} % × ${Math.round(spread.h * 100)} % de la escena)`);
+  const tools = await A.$$eval('.cr-tools [data-act="cr-ctl"]', b => b.map(x => x.dataset.c));
+  check(!tools.some(c => ['left', 'right', 'up', 'down', 'in', 'out', 'reset', 'mode', 'tool'].includes(c)) && tools.includes('anim'), `    En la constelación solo quedan los botones que hacen algo (${tools.join(', ')})`);
+  await A.evaluate(() => { document.querySelector('.cr-canvas').dataset.mark = '1'; document.querySelector('.cr-tabs').dataset.mark = '1'; });
   await A.mouse.click(pts[1].x, pts[1].y); await A.waitForSelector('[data-cr-memory]');
+  check(await A.evaluate(() => document.querySelector('.cr-canvas')?.dataset.mark === '1' && document.querySelector('.cr-tabs')?.dataset.mark === '1' && location.hash === '#/criatura/constelacion'),
+    '    Tocar una estrella la resalta y muestra su tarjeta sin entrar en ella ni recargar la escena');
+  const camAfter = await A.evaluate(() => globalThis.__fioraCreature().debug().zoom);
+  check(camAfter <= 1, '    y la cámara no se acerca');
   const memTxt = await text(A, '[data-cr-memory]');
   const mem1 = await A.evaluate(async () => (await import('./js/creature-data.js')).memories()[1]);
   check(memTxt.includes(mem1.title), `    Tocar una estrella abre su tarjeta con datos reales: ${mem1.kind} · ${mem1.title}`);

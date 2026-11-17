@@ -168,7 +168,7 @@ const sql = async q => (await fetch(API + '/__sql', { method: 'POST', body: q })
   // --- límite de enlaces
   const more = await ev(O, async url => { const oci = await import('./js/oci.js'); const r = []; for (const w of ['Bea', 'Carla', 'Dani', 'Eva', 'Fran']) { try { await oci.createShare(url, w, 30); r.push('ok'); } catch (e) { r.push(e.message); } } return r; }, OWNER_PAR);
   check(more.slice(0, 4).every(x => x === 'ok') && /revoca/.test(more[4]), `como mucho 5 enlaces vigentes a la vez (${more[4]})`);
-  await O.goto(APP + '#/ajustes');
+  await O.goto(APP + '#/inicio'); await O.goto(APP + '#/ajustes');   // (si ya estaba en Ajustes, ir a la misma dirección no la vuelve a pintar)
   await until(O, () => document.querySelector('[data-shares]')?.innerText.includes('Eva'), null, 8000);
   check(await until(O, () => document.querySelector('[data-form="share"] button')?.disabled, null, 8000), 'con 5 enlaces el botón de crear otro queda desactivado');
 

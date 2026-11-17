@@ -204,13 +204,18 @@ export function initProfile(c) {
   }
 
   // -------------------------------------------------- experiencia completa
-  const tools = () => {
+  // Solo los controles que hacen algo en la pantalla actual: en la constelación no hay figura que
+  // girar, acercar ni deformar; y la herramienta «girar con un dedo» solo existe en pantallas táctiles.
+  const touchScreen = () => matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
+  const curTab = () => (location.hash.split('/')[2] || '');
+  const tools = (tab = curTab()) => {
     const p = habits.prefs(), b = (c2, ic, label, on2 = false) => `<button class="icon-btn${on2 ? ' on' : ''}" data-act="cr-ctl" data-c="${c2}" aria-label="${label}" title="${label}" aria-pressed="${on2}">${icon(ic)}</button>`;
+    const figure = tab !== 'constelacion';
     return `<div class="cr-tools" role="toolbar" aria-label="Controles de la figura">
-      ${b('left', 'chevL', 'Girar a la izquierda')}${b('right', 'chevR', 'Girar a la derecha')}${b('up', 'up', 'Inclinar hacia arriba')}${b('down', 'chevD', 'Inclinar hacia abajo')}
+      ${figure ? `${b('left', 'chevL', 'Girar a la izquierda')}${b('right', 'chevR', 'Girar a la derecha')}${b('up', 'up', 'Inclinar hacia arriba')}${b('down', 'chevD', 'Inclinar hacia abajo')}
       ${b('in', 'plus', 'Acercar')}${b('out', 'minus', 'Alejar')}${b('reset', 'sync', 'Restablecer la vista')}
       ${b('mode', 'spark', p.mode === 'attract' ? 'Las partículas se acercan: cambiar a repeler' : 'Las partículas se apartan: cambiar a atraer', p.mode === 'attract')}
-      ${b('tool', 'grip', 'En pantallas táctiles: girar con un dedo en lugar de mover partículas', X.tool === 'rotate')}
+      ${touchScreen() ? b('tool', 'grip', 'Girar con un dedo en lugar de mover partículas', X.tool === 'rotate') : ''}` : ''}
       ${b('anim', p.anim ? 'pause' : 'play', p.anim ? 'Pausar las animaciones' : 'Reanudar las animaciones', !p.anim)}
       ${b('hab', 'wave', p.habitat ? 'Quitar el hábitat' : 'Mostrar el hábitat', p.habitat)}
       ${document.fullscreenEnabled ? b('fs', 'expand', 'Pantalla completa') : ''}</div>`;
@@ -306,7 +311,7 @@ export function initProfile(c) {
           <div class="cr-title"><small>Tu criatura sonora</small><b data-cr-name>${a ? esc(a.name) : 'Tomando forma'}</b></div>
           <label class="field sm"><select data-cr-period aria-label="Período analizado">${Object.entries(C.PERIODS).map(([k, v]) => `<option value="${k}" ${k === (X.period || cur.ev.period) ? 'selected' : ''}>${v}</option>`).join('')}</select></label></div>
         <span class="cr-loading">Formando la figura…</span>
-        ${tools()}
+        ${tools(tab)}
       </div>
       <div class="cr-panel"><nav class="cr-tabs" aria-label="Secciones">${TABS.map(([id, label]) => `<a href="#/criatura${id ? `/${id}` : ''}" class="${id === tab ? 'on' : ''}" ${id === tab ? 'aria-current="page"' : ''}>${label}</a>`).join('')}</nav>
         <div class="cr-body" data-cr-tab="${tab || 'criatura'}">${body}</div></div></div>`);
@@ -326,7 +331,13 @@ export function initProfile(c) {
     if (tab === 'constelacion') ctl.setConstellation(CD.memories().length, X.star); else ctl.setConstellation(0);
     prepareSound();
   }
-  function pickStar(i) { X.star = i; refresh(); }
+  /** Elige una estrella: se resalta y aparece su tarjeta, sin recargar la escena ni mover la cámara. */
+  function pickStar(i) {
+    X.star = i;
+    scene?.ctl?.setConstellation(CD.memories().length, i);
+    const body = $('[data-cr-tab="constelacion"]');
+    if (body) body.innerHTML = tabConstellation(); else refresh();
+  }
 
   // ------------------------------------------------------------- exportar
   function wrapText(g, text, x, y, maxW, lh) {
@@ -421,7 +432,7 @@ export function initProfile(c) {
       scene.id = to.id; await ctl.setAnimal(to.id, to.look, { morph: true });
       X.preview = to.id === current(X.period).a ? '' : to.id;
     },
-    'cr-star'(el) { X.star = +el.dataset.i; refresh(); },
+    'cr-star'(el) { pickStar(+el.dataset.i); },
     'cr-share'() { openShare(); },
     'cr-enable'() { habits.setPrefs({ off: false }); toast('Criatura sonora activada'); refresh(); },
     async 'cr-erase'() {

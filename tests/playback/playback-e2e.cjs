@@ -247,6 +247,30 @@ const RADIO = { id: 'radio:prueba-1', uuid: 'prueba-1', radio: true, title: 'Rad
   check(!s.out.length && s.title === 'Cinco', '    Con «repetir una» tampoco se mezcla con la siguiente');
   await A.evaluate(async () => { (await import('./js/player.js')).cycleRepeat(); });
 
+  // cambiar de lista cuando a la canción que suena le quedan menos segundos que la mezcla
+  await A.evaluate(async () => { const pl = await import('./js/player.js'); pl.cycleRepeat(); pl.cycleRepeat(); });   // repetir una: no se mezcla
+  await playTitles(A, ['Cinco']); await sounding(A, 'Cinco');
+  await seek(A, -2.5); await A.waitForTimeout(300);
+  await A.evaluate(async () => {
+    const { S } = await import('./js/store.js'), pl = await import('./js/player.js'), all = [...S.tracks.values()];
+    // Una escritura larga en los audios guardados retrasa ~0,8 s la carga de la canción nueva (como un móvil lento).
+    const idb = await new Promise(r => { const q = indexedDB.open('fiora'); q.onsuccess = () => r(q.result); });
+    const tx = idb.transaction('blobs', 'readwrite'), store = tx.objectStore('blobs'), t0 = performance.now();
+    const spin = () => { store.get('__nada__').onsuccess = () => { if (performance.now() - t0 < 800) spin(); }; };
+    spin();
+    pl.cycleRepeat();                                            // repetir apagado justo cuando quedan 2 s…
+    pl.playQueue(['Uno', 'Dos'].map(n => all.find(x => x.title === n)));   // …y en ese momento eliges otra lista
+  });
+  // espera a que «Uno» esté de verdad en el elemento que suena (no la anterior en sus últimos segundos)
+  await until(A, async () => { const pl = await import('./js/player.js'); return pl.P.current?.title === 'Uno' && !pl.P.audio.paused && pl.P.audio.currentTime > 0.1 && pl.P.audio.currentTime < 4; }, null, 8000);
+  await A.waitForTimeout(600);
+  s = await st(A);
+  check(s.title === 'Uno' && !s.out.length && s.sounding === 1, '    Si eliges otra lista mientras la canción anterior está en sus últimos segundos, empieza la elegida (sin saltarla ni mezclar con la anterior)');
+  await seek(A, -6);
+  const own = await until(A, async () => { const pl = await import('./js/player.js'); return pl.P.current?.title === 'Dos' && pl.elements().outgoing.length === 1; }, null, 8000);
+  check(own, '    y su propia mezcla con la siguiente sigue funcionando');
+  await until(A, async () => (await import('./js/player.js')).elements().outgoing.length === 0, null, 6000);
+
   // saltos manuales
   await playTitles(A, ['Uno', 'Dos', 'Tres']); await sounding(A, 'Uno');
   await A.waitForTimeout(500);

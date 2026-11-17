@@ -13,4 +13,4 @@ Necesita los servidores de prueba (ver `tests/playlists/README.md`): la app en :
 cd tests/playback && NODE_PATH=/opt/node-tools/node_modules node playback-e2e.cjs
 ```
 
-Resultado: 54 comprobaciones correctas, dos ejecuciones seguidas.
+Resultado: 56 comprobaciones correctas, varias ejecuciones seguidas. Incluye la carrera de cambiar de lista mientras la canción anterior está en sus últimos segundos (se provoca retrasando la carga con una escritura larga en IndexedDB).

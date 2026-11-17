@@ -2,6 +2,7 @@
 import { fileOutdated, S, load, on, emit, isFav, toggleFav, allTracks, livePlaylists, savePlaylist, saveKV, saveTrack, collator, artistsOf, albumArtistOf, setEdit, MOODS, daypart, genreOptions } from './store.js';
 import * as db from './db.js';
 import * as ai from './ai.js';
+import * as covers from './covers.js';
 import { splitArtists, shrinkCover, hash } from './tags.js';
 import * as lib from './library.js';
 import * as player from './player.js';
@@ -762,6 +763,7 @@ async function viewSettings() {
   const aiReady = aiIsReady();
   const presets = S.settings.genrePresets || [];
   const untagged = tracks.filter(needsTags).length;
+  const coverless = tracks.filter(needsCover).length;
   const pendingFiles = dev ? tracks.filter(fileOutdated) : [];
   const writable = pendingFiles.filter(cloud.canWriteFile);
   const dups = dev ? lib.findDuplicates(dupKeep) : [], extra = dups.reduce((n, g) => n + g.tracks.length - 1, 0);
@@ -887,7 +889,9 @@ async function viewSettings() {
             ${A.provider !== 'anthropic' ? '<button type="button" class="btn" data-act="ai-models">Ver modelos disponibles</button>' : ''}
             ${aiKey ? '<button type="button" class="btn ghost danger" data-act="ai-forget">Quitar clave</button>' : ''}</div>
           ${prov.site ? `<small class="muted">La clave se crea en ${prov.site}.${prov.help ? ` ${esc(prov.help)}` : ''}</small>` : '<small class="muted">Vale cualquier servicio con API compatible con la de OpenAI (OpenRouter, Groq, Mistral, un modelo local…), siempre que admita llamadas desde el navegador.</small>'}</form>
-        ${aiReady ? `<div class="actions" style="margin-top:14px"><button class="btn" data-act="ai-tag-all" ${untagged ? '' : 'disabled'}>${icon('spark')}${untagged ? `Etiquetar ${plural(untagged, 'canción', 'canciones')} sin etiquetar` : 'Todas las canciones están etiquetadas'}</button></div>` : ''}` : ''}</div>
+        ${aiReady ? `<div class="actions" style="margin-top:14px"><button class="btn" data-act="ai-tag-all" ${untagged ? '' : 'disabled'}>${icon('spark')}${untagged ? `Etiquetar ${plural(untagged, 'canción', 'canciones')} sin etiquetar` : 'Todas las canciones están etiquetadas'}</button>
+          <button class="btn" data-act="ai-covers" ${coverless ? '' : 'disabled'}>${icon('disc')}${coverless ? `Buscar portada de ${plural(coverless, 'canción', 'canciones')} sin portada` : 'No quedan canciones sin portada por buscar'}</button></div>
+          <small class="muted">Portadas: la IA identifica el álbum o single de cada canción y la imagen se descarga de MusicBrainz (Cover Art Archive), gratuito y sin clave. Solo se aceptan coincidencias exactas de título y artista; las que no se encuentran se quedan como estaban. Las portadas se escriben en el archivo y se suben a la nube junto con los metadatos.</small>` : ''}` : ''}</div>
     ${PF.settingsPanel()}
     <div class="panel"><h2>Tus escuchas</h2>
       <p>Tus estadísticas y tu criatura sonora están en tu perfil. Las recomendaciones aprenden de lo que terminas, a qué hora escuchas cada cosa y qué canciones pones seguidas.</p>
@@ -977,14 +981,18 @@ function groupsPanel() {
 }
 // Enlaces de solo lectura de cada bucket propio (se piden a Oracle después de pintar Ajustes).
 const fmtDay = ms => new Date(ms).toLocaleDateString('es', { day: 'numeric', month: 'long', year: 'numeric' });
+// Solo vale la lectura más reciente: si una anterior (p. ej. de antes de crear un enlace) contesta
+// más tarde, no debe pisar la lista nueva.
+let sharesRun = 0;
 async function loadShares() {
+  const run = ++sharesRun;
   for (const ul of $$('[data-shares]')) {
     const b = cloud.buckets().find(x => x.id === ul.dataset.shares);
     if (!b) continue;
-    const form = $(`[data-form="share"][data-bid="${CSS.escape(b.id)}"]`);
     try {
       const list = await oci.listShares(b.url);
-      if (!ul.isConnected) return;
+      if (!ul.isConnected || run !== sharesRun) return;
+      const form = $(`[data-form="share"][data-bid="${CSS.escape(b.id)}"]`);
       const active = oci.activeShares(list).length;
       setHTML(ul, list.length ? list.map(p => {
         const live = p.expires > Date.now();
@@ -996,7 +1004,7 @@ async function loadShares() {
         $('button', form).title = active >= oci.MAX_SHARES ? `Ya hay ${oci.MAX_SHARES} enlaces vigentes` : '';
       }
     } catch (e) {
-      if (ul.isConnected) setHTML(ul, `<li class="muted">No se pudieron leer los enlaces: ${esc(e.message)}</li>`);
+      if (ul.isConnected && run === sharesRun) setHTML(ul, `<li class="muted">No se pudieron leer los enlaces: ${esc(e.message)}</li>`);
     }
   }
 }
@@ -1167,6 +1175,8 @@ view.addEventListener('scroll', () => showTip(null), { passive: true });
 
 // ------------------------------------------------- modo desarrollador
 const needsTags = t => !t.aiTagged && !(t.moods || []).length;
+// Canciones de la biblioteca sin portada a las que aún no se les ha buscado una.
+const needsCover = t => !t.coverId && !t.coverUrl && !t.coverTried;
 const quoteList = list => (list || []).map(a => (String(a).includes(',') ? `"${a}"` : a)).join(', ');
 /** Configuración de IA de este dispositivo: un proveedor activo y una clave y un modelo por proveedor. */
 function aiConf() {
@@ -1337,6 +1347,58 @@ async function tagMany(tracks) {
   if (files.length) offerWrite(files);
 }
 
+/**
+ * Busca la portada de las canciones que no tienen: la IA identifica su álbum o single (por lotes) y la
+ * imagen sale de MusicBrainz. Las canciones del mismo disco comparten portada y una sola búsqueda.
+ * Después se escribe en los archivos y se sube a la nube con el resto de metadatos editados.
+ */
+async function findCovers(tracks) {
+  const note = toast('Preparando…', 0);
+  let opts;
+  try { opts = await aiOptions(); } catch (e) { return note.done(e.message, 8000); }
+  const byKey = new Map(), changed = [];
+  let stopped = '', notUploaded = 0;
+  for (let i = 0; i < tracks.length && !stopped; i += ai.BATCH) {
+    const chunk = tracks.slice(i, i + ai.BATCH);
+    note.set(`Identificando con IA: ${i + 1}–${i + chunk.length} de ${tracks.length}…`);
+    let ids;
+    try { ids = await ai.identifyReleases(chunk, opts); } catch (e) { stopped = e.message; break; }
+    for (let k = 0; k < chunk.length; k++) {
+      const t = chunk[k], id = ids[k], artist = albumArtistOf(t) || artistsOf(t)[0] || '';
+      const key = id ? `${covers.norm(id.album)}|${covers.norm(id.artist)}` : `f|${covers.norm(t.album) || covers.norm(t.title)}|${covers.norm(artist)}`;
+      note.set(`Buscando portadas: ${i + k + 1} de ${tracks.length} · ${t.title}`);
+      let hit = byKey.get(key);
+      if (hit === undefined) {
+        let res = null;
+        try { res = await covers.find([id && { ...id, title: t.title }, { album: t.album, artist, title: t.title }]); }
+        catch (e) { stopped = e.message; break; }
+        hit = null;
+        const small = res && await shrinkCover(res.blob, 600);
+        if (small) {
+          const cid = 'u' + hash(`${res.id}|${t.id}|${Date.now()}`);
+          await db.put('covers', cid, small);
+          const up = cloud.configured() ? await cloud.uploadCover(cid, small).catch(() => false) : false;
+          if (cloud.configured() && !up) notUploaded++;
+          hit = { cid };
+        }
+        byKey.set(key, hit);
+      }
+      // coverTried evita volver a pedir (y pagar) las que no se encuentran
+      await setEdit(t, hit ? { coverId: hit.cid, coverUrl: '', coverTried: true } : { coverTried: true });
+      if (hit) changed.push(t);
+    }
+  }
+  emit('library');
+  if (P.current && changed.some(t => t.id === P.current.id)) { renderMini(); renderNow(); }
+  const msg = [`${plural(changed.length, 'portada encontrada', 'portadas encontradas')}`,
+    !stopped && changed.length < tracks.length && `${tracks.length - changed.length} sin encontrar`,
+    notUploaded && `${notUploaded} no se pudieron subir a la nube`, stopped && `se detuvo: ${stopped}`].filter(Boolean).join(' · ');
+  note.done(msg, 8000);
+  // Se escriben en los archivos (con los demás metadatos editados) y se suben a la nube.
+  const files = changed.map(x => S.tracks.get(x.id) || x).filter(x => fileOutdated(x) && cloud.canWriteFile(x));
+  if (files.length) await writeFiles(files);
+}
+
 // ----------------------------- actualizar los metadatos de todos los archivos de la nube
 let bulk = null;        // { stop } mientras se revisa o se actualiza
 let lastReport = null;  // resultado de la última vez, para poder consultarlo
@@ -1490,6 +1552,7 @@ function trackMenu(t, o = {}, i = -1) {
     !lib_ && { icon: 'library', label: 'Añadir a mi biblioteca', fn: async () => { await saveToLibrary([t]); toast('Añadida a tu biblioteca'); } },
     lib_ && { icon: 'list', label: 'Añadir a playlist…', fn: () => addToPlaylist([t]) },
     lib_ && devOn() && { icon: 'edit', label: 'Editar metadatos', fn: () => editTrack(t) },
+    lib_ && devOn() && aiIsReady() && !t.coverId && !t.coverUrl && { icon: 'disc', label: 'Buscar portada', fn: () => findCovers([t]) },
     lib_ && { icon: 'heart', label: isFav(t.id) ? 'Quitar de favoritas' : 'Me gusta', fn: () => toggleFav(t.id) },
     lib_ && { icon: 'spark', label: 'Radio de esta canción', fn: () => { player.playQueue(recs.songRadio(t)); toast('Mezcla creada a partir de la canción'); } },
     lib_ && t.album && { icon: 'disc', label: 'Ir al álbum', fn: () => go(`#/album/${enc(lib.albumKey(t))}`) },
@@ -1707,6 +1770,14 @@ const ACTIONS = {
     S.settings.genrePresets = (S.settings.genrePresets || []).filter(g => g !== el.dataset.g);
     S.settings.genrePresetsAt = Date.now();
     await saveKV('settings', false); emit('dirty'); refresh();
+  },
+  async 'ai-covers'() {
+    if (!devOn()) return;
+    const list = allTracks().filter(needsCover);
+    const A = aiConf(), service = ai.PROVIDERS[A.provider].name;
+    if (!list.length || !(await confirmDlg(`¿Buscar la portada de ${plural(list.length, 'canción', 'canciones')}?`,
+      `Se enviarán el título, los artistas, el álbum y el año de cada canción a ${service} con tu clave (puede tener un coste en tu cuenta), y el nombre del disco y del artista a MusicBrainz para descargar la portada. Las encontradas se escriben en los archivos y se suben a la nube.`, 'Buscar portadas'))) return;
+    findCovers(list);
   },
   async 'ai-tag-all'() {
     if (!devOn()) return;

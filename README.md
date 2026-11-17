@@ -166,6 +166,11 @@ Con el modo activado, el menú ⋯ de cada canción tiene «Editar metadatos».
 - **Borrar de la nube**: el menú ⋯ de una canción de la nube tiene «Borrar también de la nube», y las copias repetidas que están en la nube se borran de su bucket. Oracle no permite borrar con la URL del bucket (*«Pre-authenticated requests can't be used to delete buckets or objects»*), así que se borra con la API de Oracle y la clave. Las versiones anteriores, sin clave, dejaban el archivo vacío; «Borrar los archivos que quedaron vacíos» los limpia.
 - **Géneros predefinidos**: el editor ofrece una lista de géneros habituales, y puedes añadir los tuyos en Ajustes.
 - **Etiquetado con IA**: elige el servicio, pega su clave de API y el modelo. Funciona con Claude (console.anthropic.com), con OpenAI (platform.openai.com; los modelos de GPT y Codex), con Gemini (claves de aistudio.google.com/api-keys), con los modelos abiertos de **Hugging Face** (Llama, Qwen, Mistral, DeepSeek…; token «Fine-grained» de huggingface.co/settings/tokens con el permiso «Make calls to Inference Providers») y con cualquier servicio que tenga una API compatible con la de OpenAI y admita llamadas desde el navegador. La app envía título, artistas, álbum y año, y recibe géneros y ambiente. La llamada sale directamente de tu navegador con tu clave, que se guarda solo en ese dispositivo y nunca se sincroniza. Cada uso puede tener coste en tu cuenta de ese servicio.
+- **Buscar portadas que faltan**: con la misma IA (servicio, clave y modelo de los géneros), en **Ajustes → Modo desarrollador → «Buscar portada de N canciones sin portada»** o en el menú ⋯ de una canción sin portada → «Buscar portada». Un modelo de lenguaje no puede dar imágenes fiables, así que el trabajo se reparte en dos partes:
+  1. **La IA identifica** el álbum o single de cada canción, con su título y artista oficiales, por lotes de 20. Así corrige nombres de archivo y etiquetas incompletas («Track 01», «YHLQMDLG (Deluxe)», carpetas de sueltas). Si no la reconoce, lo dice y no se inventa nada.
+  2. **La imagen se descarga del [Cover Art Archive](https://coverartarchive.org)**, el archivo de portadas de [MusicBrainz](https://musicbrainz.org): gratuito, sin clave ni cuenta. Se busca el disco por título y artista, a una consulta por segundo como pide MusicBrainz. **Solo se acepta si título y artista coinciden exactamente** (sin contar tildes, mayúsculas ni añadidos como «Deluxe»): un disco del mismo nombre de otro artista, o «MOTOMAMI +» en lugar de «MOTOMAMI», no vale.
+
+  Las canciones del mismo disco comparten portada y una sola búsqueda. La portada se reduce a 600 px y se sube a `_fiora/portadas/` para tus otros dispositivos. Después **se escribe dentro de cada archivo (MP3, FLAC, M4A) y se sube a la nube junto con el resto de metadatos editados**, con la misma comprobación que el resto de ediciones; el resto del archivo no cambia. Las canciones en las que no se encuentra portada se anotan para no volver a pedirlas (ni pagarlas). A la IA le llegan título, artistas, álbum y año; a MusicBrainz, solo el disco, el artista y el título.
 
 ## Tu criatura sonora
 
@@ -226,6 +231,7 @@ La puntuación no es un porcentaje de afinidad; la app muestra su desglose regla
 
 - Los indicadores de sesiones, descubrimiento, reencuentros y radio empiezan a contar desde que existe el resumen diario. De lo anterior solo se usan los totales, y solo en «Todo el historial».
 - Entre dispositivos, de cada contador del día se conserva el valor más alto: si escuchas el mismo día en dos dispositivos, ese día puede quedar corto.
+- La constelación se ve entera y agrupada en el centro: la cámara no se acerca más que su encuadre. Tocar una estrella (o elegirla en la lista) la resalta y muestra su tarjeta, sin recargar la escena. Allí solo están los botones que hacen algo: animación, hábitat y pantalla completa (girar y acercar son para la figura). El botón «girar con un dedo» solo aparece en pantallas táctiles.
 - La constelación no incluye «artista nuevo descubierto» ni «canción recuperada» con nombre, porque el resumen no guarda qué canciones son.
 - La animación exportable depende de `MediaRecorder`; donde no existe, solo hay imagen.
 
@@ -372,6 +378,7 @@ Y abre `http://localhost:8000`.
 | `js/app.js` | Pantallas, menús y navegación |
 | `js/player.js` | Reproductor, cola y controles del sistema; elige entre la ruta normal y la espacial |
 | `js/spatial.js` | Audio espacial (8D): grafo de Web Audio, modos, comprobación de compatibilidad |
+| `js/covers.js` | Portadas que faltan: búsqueda en MusicBrainz y descarga del Cover Art Archive |
 | `js/fades.js` | Fundidos y mezcla cruzada: ajustes, curvas y volumen de cada momento |
 | `js/library.js`, `js/tags.js` | Importación y lectura de etiquetas |
 | `js/cloud.js` | Oracle Cloud Object Storage (uno o varios buckets) |

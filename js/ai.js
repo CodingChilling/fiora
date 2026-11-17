@@ -1,4 +1,5 @@
-// Etiquetado con IA: pide a un modelo los géneros y el ambiente de un grupo de canciones.
+// IA del modo desarrollador: pide a un modelo los géneros y el ambiente de un grupo de canciones y,
+// para buscar portadas, el álbum o single al que pertenece cada una.
 // La app no tiene servidor, así que la petición sale del navegador con la clave de API que el
 // usuario pega en Ajustes → Modo desarrollador. Esa clave se guarda solo en este dispositivo.
 // Proveedores: Claude (Anthropic), OpenAI, Gemini (Google AI Studio), Hugging Face (Inference
@@ -82,11 +83,11 @@ async function post(url, headers, body) {
   return { r, data, msg: data?.error?.message || (typeof data?.error === 'string' ? data.error : '') || `Respuesta ${r.status}` };
 }
 
-async function askAnthropic(cfg, user) {
+async function askAnthropic(cfg, user, task = TAGS) {
   const body = {
-    model: cfg.model, max_tokens: 16000, system: SYSTEM,
+    model: cfg.model, max_tokens: 16000, system: task.system,
     messages: [{ role: 'user', content: user }],
-    output_config: { effort: 'low', format: { type: 'json_schema', schema: SCHEMA } },
+    output_config: { effort: 'low', format: { type: 'json_schema', schema: task.schema } },
   };
   const headers = {
     'Content-Type': 'application/json', 'x-api-key': cfg.key, 'anthropic-version': '2026-10-21',
@@ -96,31 +97,31 @@ async function askAnthropic(cfg, user) {
   if (!cfg.model.includes('haiku')) { body.fallbacks = 'default'; headers['anthropic-beta'] = 'server-side-fallback-2026-07-01'; }
   const { r, data, msg } = await post(ANTHROPIC, headers, body);
   if (!r.ok) throw httpError(r.status, msg);
-  if (data.stop_reason === 'refusal') throw new Error('El modelo declinó clasificar este grupo de canciones');
+  if (data.stop_reason === 'refusal') throw new Error(task.refusal);
   if (data.stop_reason === 'max_tokens') throw new Error('La respuesta se cortó. Prueba con menos canciones');
   return (data.content || []).find(b => b.type === 'text')?.text;
 }
 
 // API de "chat completions" de OpenAI, que también ofrecen muchos otros servicios.
-async function askOpenAI(cfg, user) {
+async function askOpenAI(cfg, user, task = TAGS) {
   const headers = { 'Content-Type': 'application/json' };
   if (cfg.key) headers.Authorization = `Bearer ${cfg.key}`;
-  const shape = '\n\nResponde únicamente con un objeto JSON de la forma {"songs":[{"i":0,"genres":["…"],"moods":["…"]}]}. Los valores permitidos en "moods" son: ' + MOODS.join(', ') + '.';
+  const shape = task.shape;
   // Se intenta primero la salida con esquema estricto; los servicios que no la admiten responden 400
   // y se reintenta con JSON libre y, por último, sin pedir formato.
   const formats = [
-    { type: 'json_schema', json_schema: { name: 'etiquetas', strict: true, schema: SCHEMA } },
+    { type: 'json_schema', json_schema: { name: task.name, strict: true, schema: task.schema } },
     { type: 'json_object' },
     null,
   ];
   let last;
   for (const format of formats) {
-    const body = { model: cfg.model, messages: [{ role: 'system', content: SYSTEM + (format?.type === 'json_schema' ? '' : shape) }, { role: 'user', content: user }] };
+    const body = { model: cfg.model, messages: [{ role: 'system', content: task.system + (format?.type === 'json_schema' ? '' : shape) }, { role: 'user', content: user }] };
     if (format) body.response_format = format;
     last = await post(`${baseUrl(cfg)}/chat/completions`, headers, body);
     if (last.r.ok) {
       const m = last.data?.choices?.[0]?.message;
-      if (m?.refusal) throw new Error('El modelo declinó clasificar este grupo de canciones');
+      if (m?.refusal) throw new Error(task.refusal);
       if (last.data?.choices?.[0]?.finish_reason === 'length') throw new Error('La respuesta se cortó. Prueba con menos canciones');
       return typeof m?.content === 'string' ? m.content : (m?.content || []).map(c => c.text || '').join('');
     }
@@ -145,23 +146,56 @@ const GEMINI_SCHEMA = {
     },
   },
 };
+// Lo que se pide en cada tarea: instrucciones, esquema de respuesta (estándar y de Gemini) y la forma
+// del JSON para los servicios que no admiten esquema.
+const TAGS = {
+  name: 'etiquetas', system: SYSTEM, schema: SCHEMA, gemini: GEMINI_SCHEMA, refusal: 'El modelo declinó clasificar este grupo de canciones',
+  shape: '\n\nResponde únicamente con un objeto JSON de la forma {"songs":[{"i":0,"genres":["…"],"moods":["…"]}]}. Los valores permitidos en "moods" son: ' + MOODS.join(', ') + '.',
+};
+const RELEASES = {
+  name: 'lanzamientos',
+  system: `Ayudas a buscar la portada de canciones en el catálogo público MusicBrainz. Recibes una lista JSON de canciones con su índice "i", título, artistas, álbum y año tal como venían en el archivo (pueden estar incompletos o mal escritos, p. ej. "Track 01" o "Unknown Album").
+
+Para cada canción devuelve el lanzamiento original (álbum, EP o single) en el que se publicó:
+- "known": true solo si reconoces la canción o el álbum con seguridad.
+- "album": el título exacto del lanzamiento, con su ortografía oficial (sin añadidos como "Deluxe" si no consta en el archivo). Si la canción solo salió como single, el título del single.
+- "artist": el artista principal del lanzamiento (no los invitados).
+- "year": el año de publicación, o 0 si no lo sabes.
+
+Si no la reconoces, devuelve known false y textos vacíos: una portada equivocada es peor que ninguna. No inventes títulos.
+Devuelve una entrada por cada canción recibida, con el mismo "i".`,
+  schema: {
+    type: 'object', additionalProperties: false, required: ['songs'],
+    properties: { songs: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['i', 'known', 'album', 'artist', 'year'],
+      properties: { i: { type: 'integer' }, known: { type: 'boolean' }, album: { type: 'string' }, artist: { type: 'string' }, year: { type: 'integer' } } } } },
+  },
+  gemini: {
+    type: 'OBJECT', required: ['songs'],
+    properties: { songs: { type: 'ARRAY', items: { type: 'OBJECT', required: ['i', 'known', 'album', 'artist', 'year'],
+      properties: { i: { type: 'INTEGER' }, known: { type: 'BOOLEAN' }, album: { type: 'STRING' }, artist: { type: 'STRING' }, year: { type: 'INTEGER' } } } } },
+  },
+  refusal: 'El modelo declinó identificar este grupo de canciones',
+  shape: '\n\nResponde únicamente con un objeto JSON de la forma {"songs":[{"i":0,"known":true,"album":"…","artist":"…","year":2020}]}.',
+};
+const ask = (cfg, user, task) => (cfg.provider === 'anthropic' ? askAnthropic(cfg, user, task) : cfg.provider === 'gemini' ? askGemini(cfg, user, task) : askOpenAI(cfg, user, task));
+
 const geminiError = (status, msg) => (/api key/i.test(msg) ? new Error('La clave de la API no es válida') : httpError(status, msg));
 
-async function askGemini(cfg, user) {
+async function askGemini(cfg, user, task = TAGS) {
   const headers = { 'Content-Type': 'application/json', 'x-goog-api-key': cfg.key };
-  const shape = '\n\nResponde únicamente con un objeto JSON de la forma {"songs":[{"i":0,"genres":["…"],"moods":["…"]}]}. Los valores permitidos en "moods" son: ' + MOODS.join(', ') + '.';
+  const shape = task.shape;
   // Primero con esquema; si el modelo no lo admite (400), con JSON libre.
-  const configs = [{ responseMimeType: 'application/json', responseSchema: GEMINI_SCHEMA }, { responseMimeType: 'application/json' }];
+  const configs = [{ responseMimeType: 'application/json', responseSchema: task.gemini }, { responseMimeType: 'application/json' }];
   let last;
   for (const generationConfig of configs) {
     last = await post(`${GEMINI}/models/${encodeURIComponent(geminiModel(cfg.model))}:generateContent`, headers, {
-      systemInstruction: { parts: [{ text: SYSTEM + (generationConfig.responseSchema ? '' : shape) }] },
+      systemInstruction: { parts: [{ text: task.system + (generationConfig.responseSchema ? '' : shape) }] },
       contents: [{ role: 'user', parts: [{ text: user }] }],
       generationConfig,
     });
     if (last.r.ok) {
       const c = last.data?.candidates?.[0];
-      if (last.data?.promptFeedback?.blockReason || ['SAFETY', 'PROHIBITED_CONTENT', 'BLOCKLIST'].includes(c?.finishReason)) throw new Error('El modelo declinó clasificar este grupo de canciones');
+      if (last.data?.promptFeedback?.blockReason || ['SAFETY', 'PROHIBITED_CONTENT', 'BLOCKLIST'].includes(c?.finishReason)) throw new Error(task.refusal);
       if (c?.finishReason === 'MAX_TOKENS') throw new Error('La respuesta se cortó. Prueba con menos canciones');
       return (c?.content?.parts || []).filter(p => !p.thought).map(p => p.text || '').join('');
     }
@@ -210,7 +244,7 @@ export async function tagTracks(tracks, cfg) {
   if (lack) throw new Error(`Falta ${lack} en Ajustes → Modo desarrollador`);
   const songs = tracks.map((t, i) => ({ i, titulo: t.title, artistas: t.artists || [t.artist], album: t.album || '', anio: t.year || null, genero_del_archivo: (t.genres || []).join(', ') }));
   const user = JSON.stringify({ generos_ya_usados: (cfg.knownGenres || []).slice(0, 200), canciones: songs });
-  const parsed = parseJson(await (cfg.provider === 'anthropic' ? askAnthropic(cfg, user) : cfg.provider === 'gemini' ? askGemini(cfg, user) : askOpenAI(cfg, user)));
+  const parsed = parseJson(await ask(cfg, user, TAGS));
 
   const out = tracks.map(() => null);
   for (const s of parsed.songs || []) {
@@ -219,6 +253,25 @@ export async function tagTracks(tracks, cfg) {
       genres: [...new Set((s.genres || []).map(g => String(g).trim()).filter(Boolean))].slice(0, 4),
       moods: [...new Set((s.moods || []).map(m => String(m).toLowerCase()).filter(m => MOODS.includes(m)))].slice(0, 4),
     };
+  }
+  return out;
+}
+
+/**
+ * Identifica el lanzamiento (álbum o single) de cada canción para buscar su portada, con el mismo
+ * proveedor, clave y modelo que los géneros. Devuelve un array alineado con `tracks`:
+ * {album, artist, year} o null si la IA no la reconoce.
+ */
+export async function identifyReleases(tracks, cfg) {
+  const lack = missing(cfg);
+  if (lack) throw new Error(`Falta ${lack} en Ajustes → Modo desarrollador`);
+  const songs = tracks.map((t, i) => ({ i, titulo: t.title, artistas: t.artists || [t.artist], album: t.album || '', anio: t.year || null }));
+  const parsed = parseJson(await ask(cfg, JSON.stringify({ canciones: songs }), RELEASES));
+  const out = tracks.map(() => null);
+  for (const s of parsed.songs || []) {
+    if (!Number.isInteger(s.i) || s.i < 0 || s.i >= tracks.length || !s.known) continue;
+    const album = String(s.album || '').trim(), artist = String(s.artist || '').trim();
+    if (album && artist) out[s.i] = { album, artist, year: Number.isInteger(s.year) && s.year > 0 ? s.year : 0 };
   }
   return out;
 }

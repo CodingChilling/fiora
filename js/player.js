@@ -100,6 +100,7 @@ function fadeTo(el, to, secs) {
   });
 }
 let timer = null, crossedFor = -1;
+let ready = -1;           // carga cuya canción ya está en el elemento que suena (mientras otra carga espera, `audio` sigue con la anterior)
 function tick() {
   const now = performance.now();
   for (const el of [audio, ...outgoing]) {
@@ -121,7 +122,7 @@ const skipOffline = t => !navigator.onLine && !t.radio && !t.hasBlob;
 /** Mezcla cruzada automática: cuando a la canción le quedan los segundos del solape, empieza la siguiente. */
 function maybeCross() {
   const t = P.now;
-  if (!t || t.radio || audio.paused || crossedFor === loadToken || P.repeat === 'one' || !fades.volumeControl()) return;
+  if (!t || t.radio || audio.paused || ready !== loadToken || crossedFor === loadToken || P.repeat === 'one' || !fades.volumeControl()) return;
   const X = fades.crossFor(fades.settings(), audio.duration);
   if (!X || audio.duration - audio.currentTime > X || audio.currentTime < 1) return;
   crossedFor = loadToken;
@@ -223,6 +224,7 @@ async function load(autoplay = true, opts = {}) {
     used = el;
     setVol(el);
     el.src = src;
+    ready = token;
     run();
     if (autoplay) await el.play();
     if (spatialRoute) guard(token);
@@ -541,8 +543,11 @@ listen('timeupdate', () => {
 });
 
 /** Engancha los eventos a un elemento; solo cuenta el que está sonando. */
+// Mientras se carga otra canción, el elemento que suena aún tiene la anterior: su final, sus errores y
+// sus tiempos no deben atribuirse a la nueva (saltaría la canción elegida o contaría escuchas que no son).
+const STALE = new Set(['ended', 'error', 'loadedmetadata', 'timeupdate']);
 function bind(el) {
-  for (const [name, fn] of handlers) el.addEventListener(name, () => { if (el === audio) fn(); });
+  for (const [name, fn] of handlers) el.addEventListener(name, () => { if (el === audio && (ready === loadToken || !STALE.has(name))) fn(); });
   // La canción que se despide en una mezcla se vacía al acabar (o si falla): ya no manda.
   for (const name of ['ended', 'error']) el.addEventListener(name, () => { if (outgoing.has(el)) stopEl(el); });
 }
