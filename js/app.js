@@ -891,7 +891,7 @@ async function viewSettings() {
           ${prov.site ? `<small class="muted">La clave se crea en ${prov.site}.${prov.help ? ` ${esc(prov.help)}` : ''}</small>` : '<small class="muted">Vale cualquier servicio con API compatible con la de OpenAI (OpenRouter, Groq, Mistral, un modelo local…), siempre que admita llamadas desde el navegador.</small>'}</form>
         ${aiReady ? `<div class="actions" style="margin-top:14px"><button class="btn" data-act="ai-tag-all" ${untagged ? '' : 'disabled'}>${icon('spark')}${untagged ? `Etiquetar ${plural(untagged, 'canción', 'canciones')} sin etiquetar` : 'Todas las canciones están etiquetadas'}</button>
           <button class="btn" data-act="ai-covers" ${coverless ? '' : 'disabled'}>${icon('disc')}${coverless ? `Buscar portada de ${plural(coverless, 'canción', 'canciones')} sin portada` : 'No quedan canciones sin portada por buscar'}</button></div>
-          <small class="muted">Portadas: la IA identifica el álbum o single de cada canción y la imagen se busca primero en Apple (iTunes) y, si no está, en MusicBrainz (Cover Art Archive): gratuitos y sin clave. Si el disco no tiene portada, se usa la de otra canción del mismo álbum o del mismo artista (de tu biblioteca o de esos catálogos) y, si no se sabe nada del artista, se genera una con el título: ninguna se queda sin portada. Las portadas se escriben en el archivo y se suben a la nube junto con los metadatos.</small>` : ''}` : ''}</div>
+          <small class="muted">Portadas: la IA identifica el álbum o single de cada canción y la imagen se busca en Apple (iTunes), YouTube Music (a través de Piped) y MusicBrainz (Cover Art Archive): gratuitos y sin clave. Si el disco no tiene portada, se usa la de otra canción del mismo álbum o del mismo artista (de tu biblioteca o de esos catálogos) y, si no se sabe nada del artista, se genera una con el título: ninguna se queda sin portada. Las portadas se escriben en el archivo y se suben a la nube junto con los metadatos.</small>` : ''}` : ''}</div>
     ${PF.settingsPanel()}
     <div class="panel"><h2>Tus escuchas</h2>
       <p>Tus estadísticas y tu criatura sonora están en tu perfil. Las recomendaciones aprenden de lo que terminas, a qué hora escuchas cada cosa y qué canciones pones seguidas.</p>
@@ -1362,7 +1362,7 @@ async function findCovers(tracks) {
   let opts;
   try { opts = await aiOptions(); } catch (e) { return note.done(e.message, 8000); }
   const byKey = new Map(), byArtist = new Map(), copies = new Map(), misses = [], changed = [];
-  const count = { exact: 0, album: 0, artist: 0, generated: 0 }, from = { apple: 0, musicbrainz: 0 };
+  const count = { exact: 0, album: 0, artist: 0, generated: 0 }, from = { apple: 0, youtube: 0, musicbrainz: 0 };
   let stopped = '', notUploaded = 0;
   // Guarda una imagen como portada nueva (y la sube para los demás dispositivos).
   const store = async (blob, seed) => {
@@ -1499,7 +1499,7 @@ async function findCovers(tracks) {
   const msg = [`${plural(count.exact, 'portada encontrada', 'portadas encontradas')}`,
     count.album && `${count.album} del mismo álbum`, count.artist && `${count.artist} del mismo artista`,
     count.generated && `${plural(count.generated, 'generada', 'generadas')} (sin datos del disco ni del artista)`,
-    (from.apple || from.musicbrainz) && `imágenes de ${[from.apple && `Apple (${from.apple})`, from.musicbrainz && `MusicBrainz (${from.musicbrainz})`].filter(Boolean).join(' y ')}`,
+    (from.apple || from.youtube || from.musicbrainz) && `imágenes de ${[from.apple && `Apple (${from.apple})`, from.youtube && `YouTube Music (${from.youtube})`, from.musicbrainz && `MusicBrainz (${from.musicbrainz})`].filter(Boolean).join(', ')}`,
     notUploaded && `${notUploaded} no se pudieron subir a la nube`,
     aiProblem && `sin ayuda de la IA para algunas (${aiProblem})`,
     stopped && `se detuvo: ${stopped}${left ? ` (${left} sin portada todavía; vuelve a intentarlo más tarde)` : ''}`].filter(Boolean).join(' · ');
@@ -1886,7 +1886,7 @@ const ACTIONS = {
     const list = allTracks().filter(needsCover);
     const A = aiConf(), service = ai.PROVIDERS[A.provider].name;
     if (!list.length || !(await confirmDlg(`¿Buscar la portada de ${plural(list.length, 'canción', 'canciones')}?`,
-      `Se enviarán el título, los artistas, el álbum y el año de cada canción a ${service} con tu clave (puede tener un coste en tu cuenta), y el nombre del disco y del artista a Apple (iTunes) y a MusicBrainz para descargar la portada. Si no hay portada del disco, se usa una del mismo álbum o artista, o se genera una. Se escriben en los archivos y se suben a la nube.`, 'Buscar portadas'))) return;
+      `Se enviarán el título, los artistas, el álbum y el año de cada canción a ${service} con tu clave (puede tener un coste en tu cuenta), y el nombre del disco y del artista a Apple (iTunes), a YouTube Music (a través de Piped) y a MusicBrainz para descargar la portada. Si no hay portada del disco, se usa una del mismo álbum o artista, o se genera una. Se escriben en los archivos y se suben a la nube.`, 'Buscar portadas'))) return;
     findCovers(list);
   },
   async 'ai-tag-all'() {

@@ -1,14 +1,21 @@
-// Portadas que faltan (modo desarrollador). La IA de los géneros identifica el álbum o single de
-// cada canción y la imagen se busca en dos catálogos públicos, gratuitos y sin clave:
-//   · Apple (iTunes Search API): rápido; una consulta da el disco y su portada. Apple pide no pasar
-//     de unas 20 consultas por minuto.
-//   · MusicBrainz y su Cover Art Archive: más lento (una consulta por segundo y las imágenes vienen
-//     de archive.org), pero con discos que Apple no tiene.
-// Se usa Apple mientras le quede cupo en el minuto y, si no encuentra el disco, MusicBrainz. Si el
-// navegador no deja leer las respuestas de Apple, se sigue solo con MusicBrainz.
+// Portadas que faltan (modo desarrollador). Se buscan en catálogos públicos, gratuitos y sin clave,
+// de más rápido a más lento:
+//   · Apple (iTunes Search API): una consulta da el disco y su portada. Apple pide no pasar de unas
+//     20 consultas por minuto.
+//   · YouTube Music, a través de Piped: servidores públicos de voluntarios que replican YouTube y
+//     dejan consultarlo desde el navegador. Tiene casi todo, pero sus servidores van y vienen: se
+//     prueban varios y, si ninguno contesta, se sigue sin ellos. Solo se aceptan imágenes cuadradas
+//     (portadas de YouTube Music, no fotogramas de vídeos).
+//   · MusicBrainz y su Cover Art Archive: una consulta por segundo e imágenes de archive.org (lento),
+//     pero con discos que los demás no tienen.
+// Si el navegador no deja leer las respuestas de alguno, se sigue con los otros.
 const MB = 'https://musicbrainz.org/ws/2';
 const CAA = 'https://coverartarchive.org';
 const ITUNES = 'https://itunes.apple.com/search';
+// Lista pública de servidores de Piped (la que usa su propia web) y, por si no responde, algunos conocidos.
+const PIPED_LIST = 'https://piped-instances.kavin.rocks/';
+const PIPED_WAIT = 8000;     // los servidores de Piped que no contestan en 8 s se descartan
+const PIPED_KNOWN = ['https://pipedapi.kavin.rocks', 'https://pipedapi.adminforge.de', 'https://api.piped.private.coffee', 'https://pipedapi.r4fo.com'];
 const GAP = 1100;            // ms entre consultas a MusicBrainz
 const MIN_SCORE = 85;        // puntuación mínima de MusicBrainz para aceptar un resultado
 const APPLE_PER_MIN = 20;    // consultas a Apple por minuto
@@ -17,7 +24,7 @@ const WAIT = 20000;          // ms como mucho por consulta o descarga (si no, se
 
 /** fetch con tiempo máximo: un servidor que no contesta no deja la búsqueda colgada. */
 async function get(url, opts = {}) {
-  const ac = new AbortController(), timer = setTimeout(() => ac.abort(), WAIT);
+  const ac = new AbortController(), timer = setTimeout(() => ac.abort(), opts.wait || WAIT);
   try {
     const r = await fetch(url, { ...opts, signal: ac.signal });
     const body = await (opts.as === 'blob' ? r.blob() : r.json().catch(() => null));
@@ -151,9 +158,96 @@ async function frontCoverNow(groupId) {
   return /^image\//.test(blob.type) && blob.size > 500 ? blob : null;
 }
 
+// --- YouTube Music (Piped) -------------------------------------------------
+const piped = { list: null, bad: new Set(), off: false, imgOff: false };
+async function pipedServers() {
+  if (!piped.list) {
+    piped.list = (async () => {
+      try {
+        const r = await get(PIPED_LIST, { wait: PIPED_WAIT });
+        const urls = (Array.isArray(r.body) ? r.body : []).map(x => x?.api_url).filter(u => /^https:\/\//.test(u || ''));
+        return [...new Set([...urls.slice(0, 6), ...PIPED_KNOWN])];
+      } catch { return PIPED_KNOWN.slice(); }
+    })();
+  }
+  return (await piped.list).filter(u => !piped.bad.has(u));
+}
+// Servidor en uso: se elige uno que conteste (de uno en uno, aunque haya varias búsquedas a la vez)
+// y se usa mientras funcione; si falla, se elige otro.
+let pipedCur = null;
+function pipedPick(q2, filter) {
+  if (!pipedCur) {
+    pipedCur = (async () => {
+      for (const base of (await pipedServers()).slice(0, 4)) {
+        try {
+          const r = await get(`${base}/search?${new URLSearchParams({ q: q2, filter })}`, { wait: PIPED_WAIT });
+          if (r.ok && Array.isArray(r.body?.items)) return { base, first: r.body.items };
+        } catch { /* no contesta o el navegador no deja leerlo */ }
+        piped.bad.add(base);
+      }
+      piped.off = true;
+      return null;
+    })();
+  }
+  return pipedCur;
+}
+/** Busca en YouTube Music. undefined: ningún servidor ha contestado (se sigue sin Piped). */
+async function pipedSearch(q2, filter) {
+  for (let tries = 0; tries < 3 && !piped.off; tries++) {
+    const was = pipedCur, cur = await pipedPick(q2, filter);
+    if (!cur) return undefined;
+    if (!was) return cur.first;                    // esta búsqueda fue la que eligió el servidor
+    try {
+      const r = await get(`${cur.base}/search?${new URLSearchParams({ q: q2, filter })}`, { wait: PIPED_WAIT });
+      if (r.ok && Array.isArray(r.body?.items)) return r.body.items;
+    } catch { /* se elige otro */ }
+    piped.bad.add(cur.base);
+    if (pipedCur === was) pipedCur = null;
+  }
+  return undefined;
+}
+const ytArtist = s => String(s || '').replace(/\s*-\s*Topic$/i, '');
+/** Las miniaturas de YouTube Music llevan el tamaño en la dirección (=w120-h120): se piden de 600 px. */
+const ytArt = u => String(u || '').replace(/=w\d+-h\d+/, `=w${ART}-h${ART}`).replace(/([?&])(w|h)=\d+/g, `$1$2=${ART}`);
+/** ¿Es cuadrada? (las portadas sí; los fotogramas de un vídeo, 16:9, no). */
+async function square(blob) {
+  try { const b = await createImageBitmap(blob); const ok = b.width >= 300 && Math.abs(b.width / b.height - 1) < 0.08; b.close?.(); return ok; }
+  catch { return false; }
+}
+function pipedImage(url) {
+  if (!url || piped.imgOff) return Promise.resolve(null);
+  return once(`yt:${url}`, async () => {
+    let r;
+    try { r = await get(url, { as: 'blob' }); } catch (e) { if (e?.name !== 'AbortError') piped.imgOff = true; return null; }
+    const blob = r.ok ? r.body : null;
+    return blob && /^image\//.test(blob.type) && blob.size > 500 && (await square(blob)) ? blob : null;
+  });
+}
+/** Portada de YouTube Music para un disco o una canción. undefined: Piped no ha contestado. */
+async function pipedFind({ album, artist, title = '' }) {
+  if (album) {
+    const items = await pipedSearch(`${artist} ${album}`, 'music_albums');
+    if (items === undefined) return undefined;
+    for (const x of items.filter(x => sameTitle(x.name || x.title, album) && sameArtist([{ name: ytArtist(x.uploaderName) }], artist)).slice(0, 2)) {
+      const blob = await pipedImage(ytArt(x.thumbnail));
+      if (blob) return { blob, id: `yt:${x.url || x.name}`, title: x.name || x.title, from: 'youtube' };
+    }
+  }
+  if (title) {
+    const items = await pipedSearch(`${artist} ${title}`, 'music_songs');
+    if (items === undefined) return undefined;
+    for (const x of items.filter(x => sameTitle(x.title, title) && sameArtist([{ name: ytArtist(x.uploaderName) }], artist)).slice(0, 2)) {
+      const blob = await pipedImage(ytArt(x.thumbnail));
+      if (blob) return { blob, id: `yt:${x.url}`, title: x.title, from: 'youtube' };
+    }
+  }
+  return null;
+}
+
 /**
  * Busca la portada de un lanzamiento. Prueba con cada consulta (lo que dijo la IA, lo que traía el
- * archivo), primero en Apple y luego en MusicBrainz. Devuelve {blob, id, title, from} o null.
+ * archivo), primero en Apple, luego en YouTube Music y por último en MusicBrainz. Devuelve
+ * {blob, id, title, from: 'apple'|'youtube'|'musicbrainz'} o null.
  * Con `direct` (primera pasada, con los datos del archivo y sin IA): MusicBrainz solo se consulta
  * si Apple no ha podido contestar (sin cupo en ese minuto o bloqueado); si Apple contesta que no lo
  * tiene, se deja para la segunda pasada, con la IA.
@@ -173,6 +267,10 @@ export async function find(queries, { direct = false } = {}) {
     if (blob) return { blob, id: a.id, title: a.title, from: 'apple' };
   }
   for (const query of list) {
+    const y = await pipedFind(query);
+    if (y) return y;
+  }
+  for (const query of list) {
     if (direct && asked.includes(query)) continue;
     for (const c of await candidates(query)) {
       const blob = await frontCover(c.id);
@@ -186,7 +284,7 @@ export async function find(queries, { direct = false } = {}) {
 export const unknownArtist = a => !norm(a) || /^(artista desconocido|unknown artist|desconocido|various artists|varios artistas|va)$/.test(norm(a));
 
 /**
- * Portada de otro disco del mismo artista (en Apple y, si no, en MusicBrainz), cuando la del disco de la canción no
+ * Portada de otro disco del mismo artista (en Apple, YouTube Music o MusicBrainz), cuando la del disco de la canción no
  * existe. Prefiere álbumes a singles. Devuelve {blob, id, title} o null.
  */
 export async function artistCover(artist) {
@@ -196,12 +294,17 @@ export async function artistCover(artist) {
     const blob = await appleImage(artOf(x));
     if (blob) return { blob, id: `apple:${x.collectionId}`, title: x.collectionName, from: 'apple' };
   }
+  const yt = await pipedSearch(artist, 'music_albums');
+  for (const x of (yt || []).filter(x => norm(ytArtist(x.uploaderName)) === norm(artist)).slice(0, 3)) {
+    const blob = await pipedImage(ytArt(x.thumbnail));
+    if (blob) return { blob, id: `yt:${x.url || x.name}`, title: x.name, from: 'youtube' };
+  }
   const d = await mb(`release-group/?query=${encodeURIComponent(`artist:${q(artist)}`)}&fmt=json&limit=15`);
   const groups = (d?.['release-groups'] || []).filter(g => (g.score ?? 100) >= MIN_SCORE && sameArtist(g['artist-credit'], artist) && norm(g['artist-credit']?.[0]?.name || g['artist-credit']?.[0]?.artist?.name) === norm(artist));
   const rank = g => (g['primary-type'] === 'Album' ? 0 : g['primary-type'] === 'EP' ? 1 : 2);
   for (const g of groups.sort((a, b) => rank(a) - rank(b)).slice(0, 5)) {
     const blob = await frontCover(g.id);
-    if (blob) return { blob, id: g.id, title: g.title };
+    if (blob) return { blob, id: g.id, title: g.title, from: 'musicbrainz' };
   }
   return null;
 }

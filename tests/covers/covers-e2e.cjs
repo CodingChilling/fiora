@@ -43,6 +43,11 @@ song('f0.flac', { title: 'Maqueta A', artist: 'Rosalía', album: 'Demos 2019' },
 ff('-f', 'lavfi', '-i', 'color=c=0x1e8cd2:s=300x300', '-frames:v', '1', path.join(TMP, 'demo.jpg'));
 ff('-i', path.join(TMP, 'f0.flac'), '-i', path.join(TMP, 'demo.jpg'), '-map', '0', '-map', '1', '-c', 'copy', '-disposition:v', 'attached_pic', path.join(TMP, 'f.flac'));
 FILES['Rosalía/Demos 2019/Rosalía - Maqueta A.flac'] = fs.readFileSync(path.join(TMP, 'f.flac'));
+// Solo está en YouTube Music
+FILES['Varios/Canela - Luna.mp3'] = song('g.mp3', { title: 'Luna', artist: 'Canela' }, 600);
+// Un fotograma de vídeo (16:9): no es una portada
+ff('-f', 'lavfi', '-i', 'color=c=0x222222:s=640x360', '-frames:v', '1', path.join(TMP, 'video.jpg'));
+const VIDEO = fs.readFileSync(path.join(TMP, 'video.jpg'));
 
 // --- lo que contestarían la IA y MusicBrainz
 const KNOWN = {
@@ -106,6 +111,24 @@ const GROUPS = [
     });
   };
   await appleRoutes(ctx);
+  // YouTube Music a través de Piped: la lista de servidores da dos; el primero está caído.
+  const pipedCalls = [], ytImgs = [];
+  await ctx.route('https://piped-instances.kavin.rocks/**', route => route.fulfill({ contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify([{ name: 'uno', api_url: 'https://piped1.prueba' }, { name: 'dos', api_url: 'https://piped2.prueba' }]) }));
+  await ctx.route(/pipedapi|piped\.private|r4fo/, route => route.abort('failed'));   // los conocidos de reserva: no se usan aquí
+  await ctx.route('https://piped1.prueba/**', route => { pipedCalls.push('1'); route.abort('failed'); });
+  await ctx.route('https://piped2.prueba/**', route => {
+    const u = new URL(route.request().url()), qy = u.searchParams.get('q'), f = u.searchParams.get('filter');
+    pipedCalls.push(`2:${f}:${qy}`);
+    const items = f === 'music_songs' && /Canela Luna/.test(qy) ? [{ url: '/watch?v=luna', type: 'stream', title: 'Luna', uploaderName: 'Canela - Topic', thumbnail: 'https://yt.prueba/luna=w120-h120-l90-rj' }]
+      : f === 'music_songs' && /Bad Bunny Tití/.test(qy) ? [{ url: '/watch?v=titi', type: 'stream', title: 'Tití', uploaderName: 'Bad Bunny', thumbnail: 'https://yt.prueba/video-titi.jpg' }]
+      : [];
+    route.fulfill({ contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify({ items }) });
+  });
+  await ctx.route('https://yt.prueba/**', route => {
+    const p2 = new URL(route.request().url()).pathname;
+    ytImgs.push(p2);
+    route.fulfill({ contentType: 'image/jpeg', headers: { 'Access-Control-Allow-Origin': '*' }, body: /video/.test(p2) ? VIDEO : JPG });
+  });
   await ctx.route('https://coverartarchive.org/**', route => {
     const u = new URL(route.request().url());
     caaCalls.push(u.pathname);
@@ -128,7 +151,7 @@ const GROUPS = [
   if (await page.$('details.more summary')) await page.click('details.more summary');
   await page.fill('[data-form="par"] [name=name]', 'Mi música'); await page.fill('[data-form="par"] [name=url]', OWNER_PAR);
   await page.click('[data-form="par"] button');
-  await until(async () => (await import('./js/store.js')).S.tracks.size >= 9, null, 30000);
+  await until(async () => (await import('./js/store.js')).S.tracks.size >= 10, null, 30000);
   await page.goto(APP + '#/ajustes');
   await page.click('details.key-steps summary');
   await page.fill('[data-form="oci"] textarea', fs.readFileSync(path.join(KEYS, 'config.txt'), 'utf8'));
@@ -155,7 +178,7 @@ const GROUPS = [
   check((await page.innerText('#sheet')).includes('Buscar portada'), '2. El menú de una canción sin portada ofrece «Buscar portada»');
   await page.keyboard.press('Escape'); await page.waitForTimeout(200);
 
-  const pending = without - 2;
+  const pending = without - 3;   // Safaera y Yo Perreo Sola (Apple) y Luna (YouTube Music) no necesitan la IA
 
   // --- búsqueda de verdad
   await page.goto(APP + '#/inicio'); await page.goto(APP + '#/ajustes');
@@ -184,7 +207,12 @@ const GROUPS = [
   const sentToAi = aiCalls.length ? JSON.parse(aiCalls[0].messages.find(m => m.role === 'user').content).canciones.map(c => c.titulo) : [];
   check(by('Safaera').coverId && by('Safaera').coverId === by('Yo Perreo Sola').coverId && by('Safaera').source === 'exact',
     '3. Sin IA: «Safaera» y «Yo Perreo Sola» salen directamente de Apple con el título, el artista y el álbum del archivo (la misma portada para las dos)');
-  check(sentToAi.length === pending && !sentToAi.includes('Safaera') && !sentToAi.includes('Yo Perreo Sola') && sentToAi.includes('Track 01'),
+  check(by('Luna').source === 'exact' && ytImgs.includes('/luna=w600-h600-l90-rj'),
+    '   «Luna», que solo está en YouTube Music, sale de allí (vía Piped), pidiendo la portada a 600 px');
+  check(pipedCalls.filter(c => c === '1').length === 1 && pipedCalls.some(c => c.startsWith('2:')),
+    '   Un servidor de Piped caído se descarta a la primera y se sigue con el siguiente');
+  check(by('Tití').source === 'artist' && ytImgs.includes('/video-titi.jpg'), '   Una miniatura de vídeo (16:9) de YouTube no se acepta como portada');
+  check(sentToAi.length === pending && !sentToAi.includes('Luna') && !sentToAi.includes('Safaera') && !sentToAi.includes('Yo Perreo Sola') && sentToAi.includes('Track 01'),
     `   A la IA solo van las que no se encuentran así o cuyos datos no dicen nada (${sentToAi.length}: ${sentToAi.join(', ')})`);
   const yhlqApple = appleCalls.filter(c => /YHLQMDLG|Yo Perreo Sola/.test(c.term)).length;
   check(yhlqApple === 1 && artCalls.filter(p => p.includes('/yhlq/600x600bb.jpg')).length === 1 && !artCalls.some(p => p.includes('falso')),
@@ -202,7 +230,7 @@ const GROUPS = [
   // --- en la nube: imagen para los demás dispositivos y archivos reescritos con la portada dentro
   const log = await (await fetch(ORACLE + '/__log')).json();
   const covers = log.objects.filter(([n]) => n.startsWith('_fiora/portadas/'));
-  check(covers.length === 5, `8. Las portadas nuevas se suben a la nube (_fiora/portadas) para los demás dispositivos: ${covers.length} (2 de su disco, la copiada del álbum, la del artista y la generada)`);
+  check(covers.length === 6, `8. Las portadas nuevas se suben a la nube (_fiora/portadas) para los demás dispositivos: ${covers.length} (3 de su disco, la copiada del álbum, la del artista y la generada)`);
   const get = async n => Buffer.from(await (await fetch(OWNER_PAR + n.split('/').map(encodeURIComponent).join('/'))).arrayBuffer());
   const mp3 = await get('Bad Bunny/YHLQMDLG/Bad Bunny - Safaera.mp3'), flac = await get('Rosalía/MOTOMAMI/Rosalía - Saoko.flac'), plain = await get('Varios/Track 01.flac');
   const jpegIn = buf => buf.includes(Buffer.from([0xff, 0xd8, 0xff]));
@@ -255,6 +283,7 @@ const GROUPS = [
   const ctx3 = await b.newContext();
   let appleBlocked = 0;
   await ctx3.route('https://itunes.apple.com/**', route => { appleBlocked++; route.abort('failed'); });
+  await ctx3.route(/piped|kavin\.rocks|r4fo/, route => route.abort('failed'));   // sin Piped tampoco
   await ctx3.route('https://musicbrainz.org/**', route => { const qy = new URL(route.request().url()).searchParams.get('query') || ''; route.fulfill({ contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify({ 'release-groups': GROUPS.filter(g => qy.includes(`"${g.title}"`)) }) }); });
   await ctx3.route('https://coverartarchive.org/**', route => route.fulfill(/rg-(yhlq|moto)\/front-500$/.test(new URL(route.request().url()).pathname) ? { contentType: 'image/jpeg', headers: { 'Access-Control-Allow-Origin': '*' }, body: JPG } : { status: 404, body: '' }));
   const p3 = await ctx3.newPage();
