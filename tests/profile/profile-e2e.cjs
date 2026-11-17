@@ -284,6 +284,8 @@ function days(kind, n = 30) {
   check(memTxt.includes(mem1.title), `    Tocar una estrella abre su tarjeta con datos reales: ${mem1.kind} · ${mem1.title}`);
   await A.click('.cr-stars li:first-child button'); await A.waitForTimeout(400);
   check(/Canción más reproducida/i.test(await text(A, '[data-cr-memory]')), '    y también desde la lista');
+  const zoomed = await A.evaluate(() => { const c = globalThis.__fioraCreature(); for (let i = 0; i < 30; i++) c.zoomBy(1.2); const r = document.querySelector('.cr-stage canvas, canvas').getBoundingClientRect(); return { z: c.debug().zoom, inside: c.starScreen().every(q => q.x > r.left && q.x < r.right && q.y > r.top && q.y < r.bottom) }; });
+  check(zoomed.z <= 1 && zoomed.inside, '    Acercar al máximo no mete la cámara en la constelación: todas las estrellas siguen dentro del encuadre');
 
   // --- Exportar
   await A.click('.cr-tabs a[href="#/criatura"]'); await A.waitForSelector('[data-act="cr-share"]'); await sceneReady(A, 'zorro');

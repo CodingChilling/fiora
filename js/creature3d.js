@@ -147,8 +147,18 @@ export function create(canvas, opts = {}) {
   function placeCamera() {
     // la figura (radio 1) cabe entera también en pantallas estrechas
     const fit = camera.aspect < 1 ? 1 / camera.aspect : 1;
-    camera.position.set(0, 0, (3.9 * Math.max(1, fit * 0.98)) / S.zoom);
+    const base = 3.9 * Math.max(1, fit * 0.98);
+    // En la constelación no se puede acercar más que el encuadre de todas las estrellas (si no, la
+    // cámara se mete entre ellas y se ven enormes y cortadas); sí alejarse.
+    camera.position.set(0, 0, starPts.length && stars ? Math.max(base, starsFit()) / Math.min(1, S.zoom) : base / S.zoom);
     camera.lookAt(0, 0, 0);
+  }
+  /** Distancia a la que caben todas las estrellas, con margen, en el tamaño actual del lienzo. */
+  function starsFit() {
+    const tv = Math.tan((camera.fov * Math.PI) / 360) * 0.8, th = tv * camera.aspect;
+    let d = 0;
+    for (const v of starPts) d = Math.max(d, v.z + Math.max(Math.abs(v.x) / th, Math.abs(v.y) / tv), v.z + 2);
+    return d;
   }
 
   function applyLook(look) {
@@ -312,7 +322,7 @@ export function create(canvas, opts = {}) {
     return Math.hypot(cx, cy) < px * 0.85;
   }
   const rotateBy = (dyaw, dpitch) => { S.yaw += dyaw; S.pitch = Math.max(-0.95, Math.min(0.95, S.pitch + dpitch)); S.lastUser = performance.now(); S.settled = 0; kick(); };
-  const zoomBy = f => { S.zoom = Math.max(0.6, Math.min(2.6, S.zoom * f)); placeCamera(); S.lastUser = performance.now(); S.settled = 0; kick(); };
+  const zoomBy = f => { S.zoom = Math.max(0.6, Math.min(stars ? 1 : 2.6, S.zoom * f)); placeCamera(); S.lastUser = performance.now(); S.settled = 0; kick(); };
   function down(e) {
     pointers.set(e.pointerId, e);
     if (kind === 'full') { try { canvas.setPointerCapture(e.pointerId); } catch { /* sin captura */ } }
@@ -401,7 +411,7 @@ export function create(canvas, opts = {}) {
     if (stars) { scene.remove(stars); scene.remove(starLines); stars.geometry.dispose(); stars.material.dispose(); starLines.geometry.dispose(); starLines.material.dispose(); stars = starLines = null; }
     starSel = selected;
     points.visible = !n; if (extras) extras.visible = !n;
-    if (!n) return kick();
+    if (!n) { placeCamera(); return kick(); }
     const r = rng(n * 31 + 5); starPts = [];
     for (let i = 0; i < n; i++) { const a = (i / n) * 6.2832 + (r() - 0.5) * 0.5, d = 0.75 + r() * 0.75; starPts.push(new THREE.Vector3(d * Math.cos(a) * 1.25, d * Math.sin(a) * 0.8 + (r() - 0.5) * 0.2, (r() - 0.5) * 0.9)); }
     const p = new Float32Array(n * 3), sd = new Float32Array(n), sz = new Float32Array(n);
@@ -416,6 +426,8 @@ export function create(canvas, opts = {}) {
     const lg = new THREE.BufferGeometry(); lg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(lp), 3));
     starLines = new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ color: S.colA.clone().lerp(new THREE.Color('#ffffff'), 0.5), transparent: true, opacity: 0.22 }));
     scene.add(starLines); scene.add(stars);
+    S.zoom = Math.min(S.zoom, 1);
+    placeCamera();
     kick();
   }
   function pickStar(e) {
