@@ -14,6 +14,7 @@ Tu música, sin suscripciones. Una app web instalable (PWA) para escuchar tu pro
 - **Playlists personalizables**: portada propia (recortable) o collage de carátulas, colores automáticos o elegidos, emoji, descripción, frase, etiquetas y estado de ánimo; carrusel de hasta 15 fotos con visor a pantalla completa; orden manual arrastrando, filtros, buscador y ordenaciones que no tocan tu orden; capítulos que se pliegan y se reproducen por separado; hasta 3 canciones destacadas; notas personales en cada canción; «Descubre más» con canciones de tu biblioteca; estadísticas con gráficos; modos sorpresa y ambiente; y módulos que se activan y reordenan por playlist. Todo se sincroniza con tu cuenta (Supabase). **«Canciones que te gustan»** tiene el mismo diseño y se personaliza igual; sus canciones las decide el corazón, por defecto de la más reciente a la más antigua, y se puede reordenar a mano (las nuevas favoritas entran arriba) o volver al orden por fecha. No se puede eliminar.
 - **Favoritos**, aleatorio y repetición, controles en la pantalla de bloqueo.
 - **Cola**: lo que añades a mano suena antes de seguir con lo que estabas escuchando; desliza una canción a la derecha para añadirla. Al acabar, continúa sola con canciones parecidas.
+- **Audio espacial (8D)**, opcional: un efecto de movimiento del sonido para las canciones de tu biblioteca, pensado para auriculares. Se configura solo en **Perfil → Ajustes → Audio y reproducción** y no cambia tus archivos. Más abajo, [Audio espacial (8D)](#audio-espacial-8d).
 - **Letras** sincronizadas (incrustadas en el archivo o de [LRCLIB](https://lrclib.net)) y carátulas.
 - **Para ti**: mezcla diaria, mezclas por ambiente y por hora del día, redescubre y radio a partir de una canción. Aprenden de lo que terminas, lo que saltas y lo que escuchas seguido; todo se calcula en tu dispositivo.
 - **Perfil**: tu identidad musical en un sitio: quién eres, tu criatura sonora, todas tus estadísticas (minutos por día, horas y días en que más escuchas, y tus artistas, canciones, álbumes, géneros y ambientes más oídos) y tu evolución. Los **Ajustes** están dentro de Perfil, en el engranaje de arriba a la derecha.
@@ -230,6 +231,51 @@ La puntuación no es un porcentaje de afinidad; la app muestra su desglose regla
 
 Pruebas en [`tests/profile`](tests/profile/README.md).
 
+## Audio espacial (8D)
+
+Un efecto opcional que mueve el sonido mientras escuchas. Está apagado por defecto y toda su configuración vive en **Perfil → Ajustes → Audio y reproducción**: no hay botones ni indicadores en el reproductor ni en ninguna otra pantalla. No mejora la calidad de la música; añade un efecto.
+
+**A qué se aplica**
+
+| Fuente | ¿Se procesa? |
+|---|---|
+| Canciones importadas o descargadas en la app | Sí, siempre |
+| Canciones de tu biblioteca que suenan directamente desde Oracle | Sí, si el bucket responde con cabeceras CORS; si no, audio original |
+| Música libre que has guardado en tu biblioteca | Sí, si su servidor permite CORS; si no, audio original |
+| Música libre reproducida desde Explorar | No |
+| Emisoras de radio (cualquiera) | Nunca |
+
+**Modos**
+
+| Modo | Qué hace | Movimiento |
+|---|---|---|
+| Suave | Paneo estéreo senoidal lento (`StereoPannerNode`) | Amplitud hasta 0,6 · una vuelta cada 8–33 s |
+| Circular | Paneo estéreo más amplio, con un filtro que apaga un poco los agudos al pasar «por detrás». Es un efecto estéreo, no sonido 3D real | Amplitud hasta 0,9 · una vuelta cada 4–20 s |
+| Envolvente (experimental) | Mezcla mono situada con `PannerNode` y HRTF en una órbita alrededor de la cabeza, sumada al estéreo original | Una vuelta cada 5–25 s |
+
+- **Intensidad** (0–100 %): cuánto se mueve el sonido. Al 0 % sale el original, muestra a muestra.
+- **Velocidad** (0–100 %): la frecuencia del movimiento dentro del rango de cada modo.
+- Los cambios se aplican en marcha y suavizados (unos 150 ms), sin reiniciar la canción.
+
+**Cómo está hecho (`js/spatial.js`)**
+
+- **Dos elementos de audio y una sola fuente audible.** El de siempre se usa para radios, Explorar, el efecto apagado y todo lo que no se pueda procesar, y nunca se conecta a Web Audio. El segundo solo existe para la ruta espacial y se conecta una única vez al grafo. Así, nada de lo que falle en el procesamiento puede dejar la reproducción normal en silencio.
+- **Antes de cada canción** se decide la ruta: tiene que estar en tu biblioteca, no ser una radio, el efecto estar activado y la fuente ser legible por Web Audio. Para direcciones de otro servidor se hace antes una petición de comprobación; solo si pasa se carga con `crossOrigin` anónimo.
+- **Vuelta segura:** si el elemento espacial da error o el sonido no arranca, la misma canción sigue por el elemento normal en el mismo punto, sin avisos y sin tocar tu preferencia.
+- **Nunca más alto que el original:** el paneo se compensa instante a instante para que ningún canal supere a la entrada, y la rama HRTF lleva un limitador.
+- **Preferencias:** en el dispositivo (funciona sin conexión) y, con sesión, en tu cuenta junto al resto de ajustes. No hay tablas nuevas ni se sube audio a ningún sitio.
+
+**Medido** (con señales de prueba, `tests/audio/spatial-graph.cjs`): el balance izquierda-derecha oscila con el período esperado en los tres modos; el pico nunca supera al de entrada; el nivel medio baja entre 2 y 5 dB en Suave y Circular y entre 2 y 10 dB en Envolvente según la señal.
+
+**Límites y pendientes**
+
+- **Sin validar de oído.** Las pruebas miden movimiento y niveles, no si suena agradable. La comodidad, la claridad de las voces y si el modo Envolvente merece quedarse hay que juzgarlos escuchando; ese modo es el que más cambia el timbre y el volumen.
+- **Solo probado en Chromium.** Firefox, Safari, iOS y Android no se han probado, ni la reproducción en segundo plano en el móvil con el efecto activo.
+- **Oracle real sin probar:** se ha verificado contra un emulador, con y sin CORS. Con tu bucket, si Oracle no manda esas cabeceras, las canciones en streaming sonarán en original (las descargadas en la app se procesan siempre).
+- Activar el efecto a mitad de canción la pasa de un elemento de audio al otro: puede notarse un corte muy breve.
+
+Pruebas en [`tests/audio`](tests/audio/README.md).
+
 ## Explorar
 
 Una sola sección del menú con tres vistas: **Para ti** (lo más visual: ambientes, canciones y radios destacadas, géneros, destinos y experiencias), **Música libre** (los catálogos de siempre y novedades, géneros y recomendaciones) y **Radios** (tus emisoras y colecciones, descubrimiento del día, destacadas, tendencias, ciudades, países y géneros). El buscador de arriba consulta a la vez los catálogos de música y el directorio de radios y agrupa los resultados (canciones, álbumes, artistas, emisoras, países, etiquetas); si una fuente falla, las demás siguen y la que falla ofrece reintentar. La búsqueda se conserva al cambiar de vista.
@@ -297,7 +343,8 @@ Y abre `http://localhost:8000`.
 | --- | --- |
 | `index.html`, `css/styles.css` | Página y estilos |
 | `js/app.js` | Pantallas, menús y navegación |
-| `js/player.js` | Reproductor, cola y controles del sistema |
+| `js/player.js` | Reproductor, cola y controles del sistema; elige entre la ruta normal y la espacial |
+| `js/spatial.js` | Audio espacial (8D): grafo de Web Audio, modos, comprobación de compatibilidad |
 | `js/library.js`, `js/tags.js` | Importación y lectura de etiquetas |
 | `js/cloud.js` | Oracle Cloud Object Storage (uno o varios buckets) |
 | `js/flac.js` | Conversión sin pérdida de WAV a FLAC |

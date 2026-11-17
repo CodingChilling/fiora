@@ -4,16 +4,33 @@ import { S, emit, countPlay, countSkip, countDone, countNext, saveTrack, saveKV 
 import { coverUrl } from './library.js';
 import { objectUrl, configured } from './cloud.js';
 import { songRadio } from './recs.js';
+import * as spatial from './spatial.js';
 
-const audio = new Audio();
-audio.preload = 'auto';
+// Dos elementos de audio y una sola fuente audible:
+//   · main    — el de siempre. Radios, música de Explorar, 8D apagado y todo lo que no se pueda procesar.
+//               Nunca se conecta a Web Audio, así que nada del audio espacial puede dejarlo en silencio.
+//   · spatial — el del audio espacial (spatial.js), solo para canciones de la biblioteca compatibles.
+// `audio` es el que está sonando en cada momento.
+const main = new Audio();
+main.preload = 'auto';
+let audio = main;
+let curSrc = '';          // dirección de lo que suena (para volver al original si la ruta espacial falla)
+let watchdog = null;
+/** Pasa a usar un elemento y deja el otro parado y vacío (nunca suenan dos a la vez). */
+function use(el) {
+  if (audio === el) return;
+  const old = audio;
+  audio = el;
+  audio.volume = old.volume;
+  old.pause(); old.removeAttribute('src'); old.load();
+}
 
 // Hay dos colas, como en los reproductores habituales:
 //   · P.queue  — la lista que se está reproduciendo (un álbum, una playlist, una mezcla…) y, al
 //                acabarse, la continuación automática con canciones parecidas (desde P.autoFrom).
 //   · P.user   — lo que el usuario ha añadido a mano. Siempre suena antes de seguir con P.queue.
 export const P = {
-  audio,
+  get audio() { return audio; },
   queue: [],        // pistas (objetos); pueden ser de la biblioteca, de un catálogo o radios
   index: -1,        // posición en P.queue
   user: [],         // cola del usuario
@@ -72,20 +89,73 @@ async function load(autoplay = true) {
   if (t && !t.radio) sess = { id: t.id, max: 0, dur: 0 };
   radioClock.id = null; radioClock.secs = 0;
   emit('track', t);
-  if (!t) { audio.removeAttribute('src'); audio.load(); return; }
+  let used = null;
+  if (!t) { clearTimeout(watchdog); use(main); curSrc = ''; audio.removeAttribute('src'); audio.load(); return; }
   try {
     const src = await resolveSrc(t);
     if (token !== loadToken) return;
+    // ¿Ruta espacial? Solo canciones de la biblioteca con el 8D activado y fuente compatible.
+    if (spatial.settings().on && !t.radio) prepareSpatial();
+    const spatialRoute = await spatial.routeFor(t, src).catch(() => false);
+    if (token !== loadToken) return;
+    clearTimeout(watchdog);
+    use(spatialRoute ? spatial.element() : main);
+    curSrc = src;
+    used = audio;
     audio.src = src;
     if (autoplay) await audio.play();
+    if (spatialRoute) guard(token);
   } catch (e) {
     if (token !== loadToken || e?.name === 'AbortError') return;
+    if (used && used !== audio) return;      // falló la ruta espacial y la canción ya sigue por la normal
     onError(e);
   }
   updateMediaSession(t);
 }
 
+/** Vigila la ruta espacial: si el sonido no arranca de verdad, la misma canción vuelve al elemento normal. */
+function guard(token) {
+  clearTimeout(watchdog);
+  const at = audio.currentTime;
+  watchdog = setTimeout(() => {
+    if (token !== loadToken || audio === main || audio.paused) return;
+    if (!spatial.contextRunning() || (audio.currentTime <= at && audio.readyState >= 2)) fallback('contexto');
+  }, 1800);
+}
+/** La ruta espacial ha fallado: suena el original, en el mismo punto y sin avisos. La preferencia no cambia. */
+function fallback(reason) {
+  if (audio === main || !curSrc) return false;
+  const t = P.current, pos = audio.currentTime || 0, wasPlaying = !audio.paused || audio.readyState < 2;
+  spatial.failed(t, curSrc, reason);
+  use(main);
+  main.src = curSrc;
+  if (pos > 0.5) main.addEventListener('loadedmetadata', () => { try { main.currentTime = pos; } catch { /* sin búsqueda */ } }, { once: true });
+  if (wasPlaying) main.play().catch(onError);
+  return true;
+}
+/**
+ * Cambia de ruta la canción que suena (al activar el audio espacial a mitad de canción), en el mismo
+ * punto y sin contarla de nuevo. Al desactivarlo no hace falta: el grafo se queda en la rama original.
+ */
+export async function reroute() {
+  const t = P.current;
+  if (!t || t.radio || !audio.src || audio !== main) return;
+  const token = loadToken, pos = audio.currentTime || 0, wasPlaying = !audio.paused;
+  prepareSpatial();
+  if (!(await spatial.routeFor(t, curSrc).catch(() => false)) || token !== loadToken || audio !== main) return;
+  let src = curSrc;
+  try { src = await resolveSrc(t); } catch { return; }
+  if (token !== loadToken) return;
+  const el = spatial.element();
+  use(el);
+  curSrc = src; el.src = src;
+  el.addEventListener('loadedmetadata', () => { try { el.currentTime = pos; } catch { /* sin búsqueda */ } }, { once: true });
+  if (wasPlaying) { try { await el.play(); guard(token); } catch (e) { if (e?.name !== 'AbortError') fallback('error'); } }
+  emit('state');
+}
+
 function onError(e) {
+  if (audio !== main && fallback('error')) return;      // el fallo era de la ruta espacial: se sigue con el original
   const t = P.current;
   if (sess) sess.error = true;
   if (t?.radio) {
@@ -234,6 +304,8 @@ export function forget(ids) {
 
 export function clearUserQueue() { P.user = []; emit('queue'); }
 
+/** Pone el volumen sin guardarlo (al arrancar o al recibirlo de la cuenta). */
+export function applyVolume(v) { audio.volume = Math.max(0, Math.min(1, v)); }
 export function setVolume(v) {
   audio.volume = Math.max(0, Math.min(1, v));
   S.settings.volume = audio.volume;
@@ -243,13 +315,15 @@ export function setVolume(v) {
 }
 
 // --- Eventos del elemento de audio ----------------------------------------
-audio.addEventListener('ended', () => { if (sess) sess.done = true; next(true); });
-audio.addEventListener('play', () => { errors = 0; emit('state'); });
-audio.addEventListener('pause', () => emit('state'));
-audio.addEventListener('waiting', () => emit('state'));
-audio.addEventListener('playing', () => emit('state'));
-audio.addEventListener('error', () => { if (audio.src && P.current) onError(audio.error); });
-audio.addEventListener('loadedmetadata', () => {
+const handlers = [];
+const listen = (name, fn) => handlers.push([name, fn]);
+listen('ended', () => { if (sess) sess.done = true; next(true); });
+listen('play', () => { errors = 0; emit('state'); });
+listen('pause', () => emit('state'));
+listen('waiting', () => emit('state'));
+listen('playing', () => emit('state'));
+listen('error', () => { if (audio.src && P.current) onError(audio.error); });
+listen('loadedmetadata', () => {
   const t = P.current;
   if (t && !t.radio && !t.duration && Number.isFinite(audio.duration)) {
     t.duration = audio.duration;
@@ -257,7 +331,7 @@ audio.addEventListener('loadedmetadata', () => {
   }
   emit('time');
 });
-audio.addEventListener('timeupdate', () => {
+listen('timeupdate', () => {
   const t = P.current;
   if (t && !counted && !t.radio && S.tracks.has(t.id) &&
       (audio.currentTime > 30 || (audio.duration && audio.currentTime > audio.duration / 2))) {
@@ -285,6 +359,17 @@ audio.addEventListener('timeupdate', () => {
   }
 });
 
+/** Engancha los eventos a un elemento; solo cuenta el que está sonando. */
+function bind(el) { for (const [name, fn] of handlers) el.addEventListener(name, () => { if (el === audio) fn(); }); }
+bind(main);
+let boundSpatial = false;
+/** El elemento espacial se crea la primera vez que hace falta: entonces se le enganchan los mismos eventos. */
+export function prepareSpatial() {
+  const el = spatial.element();
+  if (el && !boundSpatial) { boundSpatial = true; bind(el); }
+  return el;
+}
+
 // --- Controles del sistema (pantalla de bloqueo, auriculares) --------------
 async function updateMediaSession(t) {
   if (!('mediaSession' in navigator) || !t) return;
@@ -303,3 +388,6 @@ if ('mediaSession' in navigator) {
   set('nexttrack', () => next(false));
   set('seekto', d => seek(d.seekTime));
 }
+
+/** Los dos elementos de audio (para las pruebas: nunca deben sonar a la vez). */
+export const elements = () => ({ main, spatial: spatial.hasElement() ? spatial.element() : null });

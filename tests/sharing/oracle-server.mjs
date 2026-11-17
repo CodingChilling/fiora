@@ -36,8 +36,9 @@ function reset() {
 }
 reset();
 
+let noCors = false;
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST,PUT,GET,HEAD,DELETE,OPTIONS', 'Access-Control-Allow-Headers': 'authorization,x-date,x-content-sha256,content-type,range', 'Access-Control-Expose-Headers': 'content-range,etag' };
-const send = (res, status, body, type = 'application/json') => { res.writeHead(status, { ...cors, 'Content-Type': type }); res.end(body === undefined ? '' : typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body)); };
+const send = (res, status, body, type = 'application/json') => { res.writeHead(status, { ...(res.noCors ? {} : cors), 'Content-Type': type }); res.end(body === undefined ? '' : typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body)); };
 const readBody = req => new Promise(ok => { const ch = []; req.on('data', c => ch.push(c)); req.on('end', () => ok(Buffer.concat(ch))); });
 const summary = p => ({ id: p.id, name: p.name, accessType: p.accessType, bucketListingAction: p.listing, objectName: null, timeExpires: new Date(p.expires).toISOString(), timeCreated: new Date(p.created).toISOString() });
 
@@ -59,7 +60,10 @@ http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') return send(res, 200);
   const u = new URL(req.url, 'http://x');
   if (u.pathname === '/__log') return send(res, 200, { log, objects: [...store].map(([n, b]) => [n, b.length]), pars: [...pars].map(([t, p]) => ({ token: t, ...summary(p) })) });
-  if (u.pathname === '/__reset') { reset(); return send(res, 200, {}); }
+  if (u.pathname === '/__reset') { reset(); noCors = false; return send(res, 200, {}); }
+  // Para probar un bucket que no manda cabeceras CORS con la música (el audio espacial debe dejar el original).
+  if (u.pathname === '/__nocors') { noCors = u.searchParams.get('on') === '1'; return send(res, 200, { noCors }); }
+  if (noCors && /\/o\/.+\.(wav|mp3|flac|m4a|ogg)$/i.test(decodeURIComponent(u.pathname))) res.noCors = true;
 
   // --- PAR
   const m = u.pathname.match(/^\/p\/([^/]+)\/n\/ns\/b\/musica\/o\/(.*)$/);

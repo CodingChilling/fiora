@@ -15,6 +15,7 @@ import { initExplore } from './explore-ui.js';
 import * as rdata from './radio-data.js';
 import * as groups from './groups.js';
 import * as habits from './habits.js';
+import * as spatial from './spatial.js';
 import { initProfile } from './profile-ui.js';
 import * as account from './account.js';
 import * as src from './sources.js';
@@ -821,9 +822,11 @@ async function viewSettings() {
     <div class="panel"><h2>Este dispositivo</h2>
       <p>${plural(tracks.length, 'canción', 'canciones')} en la biblioteca · ${offline} disponibles sin conexión.</p>
       ${est.quota ? `<div class="meter"><i style="width:${Math.min(100, (est.usage / est.quota) * 100).toFixed(1)}%"></i></div><small class="muted">${gb(est.usage)} GB usados de ${gb(est.quota)} GB disponibles para la app</small>` : ''}
+      <div class="actions" style="margin-top:14px">${ADD_BTN}${installEvent ? `<button class="btn" data-act="install">${icon('download')}Instalar como app</button>` : ''}</div></div>
+    <div class="panel" id="ajustes-audio"><h2>Audio y reproducción</h2>
       <label class="switch"><input type="checkbox" data-toggle="autoplay" ${S.settings.autoplay === false ? '' : 'checked'}><span><b>Reproducción automática</b>
         <small>Cuando se acaba lo que estás escuchando, sigue con canciones parecidas de tu biblioteca.</small></span></label>
-      <div class="actions" style="margin-top:14px">${ADD_BTN}${installEvent ? `<button class="btn" data-act="install">${icon('download')}Instalar como app</button>` : ''}</div></div>
+      ${spatialPanel()}</div>
     <div class="panel"><h2>Modo desarrollador</h2>
       ${keyPanel}
       <label class="switch${devReady() ? '' : ' disabled'}" style="margin-top:12px"><input type="checkbox" data-toggle="dev" ${dev ? 'checked' : ''} ${devReady() ? '' : 'disabled'}><span><b>Editar metadatos de las canciones</b>
@@ -863,6 +866,39 @@ async function viewSettings() {
     <p class="muted" style="text-align:center">Fiora · Letras de LRCLIB · Música libre de Internet Archive, Openverse, Wikimedia Commons y Jamendo · Radios de Radio Browser</p>`);
   loadShares();
 }
+// Audio espacial (8D): toda su configuración vive aquí; no hay controles en ninguna otra pantalla.
+const SPATIAL_WHY = { ok: 'se está procesando con el efecto', apagado: 'audio original (el efecto está desactivado)', radio: 'audio original: las emisoras nunca se procesan', explorar: 'audio original: no es una canción de tu biblioteca',
+  cors: 'audio original: el servidor de esta canción no permite procesarla', contexto: 'audio original: el navegador no dejó iniciar el procesamiento', error: 'audio original: esta canción no se pudo procesar', 'sin-webaudio': 'audio original: este navegador no admite el procesamiento' };
+function spatialPanel() {
+  const sp = spatial.settings(), ok = spatial.supported(), st = spatial.status(), off = ok && sp.on ? '' : 'disabled';
+  return `<h2 style="margin-top:22px">Audio espacial (8D)</h2>
+      <p>Crea una sensación de movimiento del sonido al escuchar canciones de tu biblioteca. Se recomienda utilizar auriculares.</p>
+      <label class="switch${ok ? '' : ' disabled'}"><input type="checkbox" data-sp="on" ${sp.on && ok ? 'checked' : ''} ${ok ? '' : 'disabled'}><span><b>Activar audio espacial</b>
+        <small>${ok ? 'Se aplica al vuelo, solo a las canciones de tu biblioteca. No cambia tus archivos, y las emisoras de radio y la música de Explorar suenan siempre como son.' : 'Este navegador no admite el procesamiento de audio necesario.'}</small></span></label>
+      <div class="sp-controls">
+        <label class="lbl">Modo<span class="field"><select data-sp="mode" ${off}>${Object.entries(spatial.MODES).map(([k, v]) => `<option value="${k}" ${k === sp.mode ? 'selected' : ''}>${v}</option>`).join('')}</select></span>
+          <small data-sp-desc>${{ suave: 'El sonido se desplaza despacio entre izquierda y derecha. Pensado para escuchar mucho rato.', circular: 'Movimiento estéreo más amplio y continuo, con un ligero cambio de brillo al pasar «por detrás». Es un efecto estéreo, no sonido 3D real.', envolvente: 'Sitúa el sonido girando alrededor de la cabeza con procesamiento binaural (HRTF). Experimental: puede cambiar el timbre y el equilibrio de algunas canciones.' }[sp.mode]}</small></label>
+        <label class="lbl">Intensidad <b data-sp-val="intensity">${sp.intensity} %</b><input type="range" class="sp-range" data-sp="intensity" min="0" max="100" step="1" value="${sp.intensity}" style="--p:${sp.intensity}%" ${off} aria-label="Intensidad del audio espacial">
+          <small>Cuánto se mueve el sonido. No sube el volumen; al 0 % suena el original.</small></label>
+        <label class="lbl">Velocidad <b data-sp-val="speed">${sp.speed} %</b><input type="range" class="sp-range" data-sp="speed" min="0" max="100" step="1" value="${sp.speed}" style="--p:${sp.speed}%" ${off} aria-label="Velocidad del audio espacial">
+          <small data-sp-speed>${spatialSpeedText(sp)}</small></label>
+      </div>
+      <div class="actions" style="margin-top:12px"><button class="btn" data-act="sp-reset">${icon('sync')}Restaurar ajustes</button></div>
+      <p class="muted" style="margin:12px 0 0">El efecto depende del archivo y de dónde está. Las canciones guardadas en este dispositivo siempre se pueden procesar; las que suenan directamente desde la nube, solo si su servidor lo permite. Cuando una canción no se puede procesar, suena el audio original sin avisos.
+        ${st.last ? `<span data-sp-status>Última canción${st.last.title ? ` («${esc(st.last.title)}»)` : ''}: ${SPATIAL_WHY[st.last.reason] || 'audio original'}.</span>` : ''}</p>`;
+}
+const spatialSpeedText = sp => { const f = spatial.freqOf(sp); return `Una vuelta completa cada ${Math.round(1 / f)} segundos.`; };
+async function setSpatial(patch) {
+  const before = spatial.settings();
+  S.settings.spatial = { ...before, ...patch };
+  S.settings.spatialAt = Date.now();
+  await saveKV('settings', false);
+  emit('dirty');
+  const now = spatial.settings();
+  if (now.on && !before.on) { player.prepareSpatial(); spatial.apply(); await player.reroute(); }   // la canción que suena pasa a la ruta espacial sin reiniciarse
+  else spatial.apply();
+}
+on('spatial-changed', () => { spatial.apply(); if (location.hash.startsWith('#/ajustes')) refresh(); });
 // Grupos de los buckets: con quién se pueden compartir playlists y con qué nombre te ven.
 function groupsPanel() {
   if (!account.user()) return '';
@@ -1574,6 +1610,7 @@ const ACTIONS = {
     if (name === null) return;
     try { await groups.setName(g.id, name); toast('Nombre guardado'); } catch (e) { toast(e.message, 6000); }
   },
+  async 'sp-reset'() { await setSpatial({ mode: spatial.DEFAULTS.mode, intensity: spatial.DEFAULTS.intensity, speed: spatial.DEFAULTS.speed }); toast('Ajustes de audio espacial restaurados'); refresh(); },
   async 'share-revoke'(el) {
     const b = cloud.buckets().find(x => x.id === el.dataset.bid);
     if (!b || !(await confirmDlg(`¿Revocar el enlace de ${el.dataset.who}?`, `Dejará de funcionar al momento: ${el.dataset.who} ya no podrá escuchar ni descargar las canciones de «${b.name}». Lo que ya descargó en su dispositivo no se puede borrar desde aquí.`, 'Revocar'))) return;
@@ -1991,7 +2028,24 @@ document.addEventListener('change', e => {
   seeking = false;
   if (Number.isFinite(P.audio.duration)) player.seek((e.target.value / 1000) * P.audio.duration);
 });
+// Audio espacial: los deslizadores actúan mientras se mueven; el resto, al cambiar.
+document.addEventListener('input', e => {
+  const k = e.target.dataset?.sp;
+  if (k !== 'intensity' && k !== 'speed') return;
+  const v = +e.target.value;
+  e.target.style.setProperty('--p', `${v}%`);
+  const out = $(`[data-sp-val="${k}"]`); if (out) out.textContent = `${v} %`;
+  S.settings.spatial = { ...spatial.settings(), [k]: v };
+  spatial.apply();
+  const sp = $('[data-sp-speed]'); if (sp) sp.textContent = spatialSpeedText(spatial.settings());
+});
 document.addEventListener('change', async e => {
+  const spk = e.target.dataset?.sp;
+  if (spk) {
+    await setSpatial({ [spk]: spk === 'on' ? e.target.checked : spk === 'mode' ? e.target.value : +e.target.value });
+    if (spk === 'on' || spk === 'mode') refresh();
+    return;
+  }
   if (e.target.matches?.('[data-ai-provider]')) { aiConf().provider = e.target.value; await saveKV('settings', false); return refresh(); }
   const key = e.target.dataset?.toggle;
   if (!key) return;
@@ -2042,7 +2096,7 @@ on('cloud-changed', async () => {
   if (oci.configured() && navigator.onLine) await cloud.verifyKey().catch(e => console.warn('Clave de Oracle', e));
   refresh(); cloudSync(true);
 });
-on('volume', v => { P.audio.volume = v; });
+on('volume', v => { player.applyVolume(v); });
 
 async function start() {
   try { await load(); }
@@ -2051,7 +2105,7 @@ async function start() {
     view.innerHTML = `<div class="wrap">${empty('x', 'No se pudo abrir la biblioteca', 'El navegador ha bloqueado el almacenamiento. Si estás en una ventana privada, prueba en una normal.')}</div>`;
     return;
   }
-  if (typeof S.settings.volume === 'number') P.audio.volume = S.settings.volume;
+  if (typeof S.settings.volume === 'number') player.applyVolume(S.settings.volume);
   cloud.migrate();
   await sealAiKeys().catch(e => console.warn('No se pudieron cifrar las claves de IA', e));
   if (devOn()) {
