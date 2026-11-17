@@ -63,7 +63,7 @@ const GROUPS = [
   await fetch(ORACLE + '/__reset');
   for (const [name, buf] of Object.entries(FILES)) await fetch(OWNER_PAR + name.split('/').map(encodeURIComponent).join('/'), { method: 'PUT', body: buf });
   const b = await chromium.launch();
-  const errs = [], aiCalls = [], mbCalls = [], caaCalls = [];
+  const errs = [], aiCalls = [], mbCalls = [], caaCalls = [], appleCalls = [], artCalls = [];
   let aiFail = false;
   const ctx = await b.newContext({ viewport: { width: 1280, height: 900 } });
   await ctx.route(SB + '/**', async route => { try { await route.fulfill({ response: await route.fetch({ url: route.request().url().replace(SB, API) }) }); } catch { await route.abort('failed').catch(() => {}); } });
@@ -85,6 +85,24 @@ const GROUPS = [
       : GROUPS.filter(g => qy.toLowerCase().includes(`"${g.title.toLowerCase().replace(/[+]/g, '\\+')}"`));
     route.fulfill({ contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify(u.pathname.includes('recording') ? { recordings: [] } : { 'release-groups': groups }) });
   });
+  // Apple (iTunes Search API): conoce YHLQMDLG; MOTOMAMI y el resto no, así que van a MusicBrainz.
+  const appleRoutes = async c => {
+    await c.route('https://itunes.apple.com/**', route => {
+      const u = new URL(route.request().url());
+      appleCalls.push({ at: Date.now(), term: u.searchParams.get('term'), entity: u.searchParams.get('entity') });
+      const hit = u.searchParams.get('entity') === 'album' && /YHLQMDLG/i.test(u.searchParams.get('term'));
+      const results = hit ? [
+        { collectionId: 1, collectionName: 'YHLQMDLG', artistName: 'Otro Artista', artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/falso/100x100bb.jpg' },   // otro artista: no vale
+        { collectionId: 2, collectionName: 'YHLQMDLG', artistName: 'Bad Bunny', trackCount: 20, artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/yhlq/100x100bb.jpg' },
+      ] : [];
+      route.fulfill({ contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify({ resultCount: results.length, results }) });
+    });
+    await c.route('https://is1-ssl.mzstatic.com/**', route => {
+      artCalls.push(new URL(route.request().url()).pathname);
+      route.fulfill({ contentType: 'image/jpeg', headers: { 'Access-Control-Allow-Origin': '*' }, body: JPG });
+    });
+  };
+  await appleRoutes(ctx);
   await ctx.route('https://coverartarchive.org/**', route => {
     const u = new URL(route.request().url());
     caaCalls.push(u.pathname);
@@ -150,6 +168,7 @@ const GROUPS = [
   const dlg = await page.innerText('#sheet');
   await page.click('#sheet[open] button:has-text("Buscar portadas")');
   check(/MusicBrainz/.test(dlg) && /coste/.test(dlg), '4. Antes de empezar avisa de qué se envía a la IA y a MusicBrainz');
+  const t0 = Date.now();
   const finished = await until(() => /archivos? actualizados? y comprobados?|Guardado y comprobado/.test(document.querySelector('#toasts').innerText), null, 60000);
   all = await tracks();
   const by = n => all.find(t => t.title === n);
@@ -165,9 +184,15 @@ const GROUPS = [
   check(by('Track 01').source === 'generated' && !mbCalls.some(c => /artist:"Artista desconocido"/.test(c.query)), '   «Track 01» (sin artista ni disco) recibe una portada generada, sin buscar «Artista desconocido»');
   check(!caaCalls.includes('/release-group/rg-falso/front-500'), '   Un disco con el mismo título pero de otro artista no se acepta');
   check(aiCalls.length === 1 && JSON.parse(aiCalls[0].messages.find(m => m.role === 'user').content).canciones.length === without, `7. Una sola llamada a la IA para las ${without} canciones (por lotes de 20)`);
+  const took = (Date.now() - t0) / 1000;
   const yhlqSearches = mbCalls.filter(c => /releasegroup:"YHLQMDLG"/.test(c.query)).length;
+  const yhlqApple = appleCalls.filter(c => /YHLQMDLG/.test(c.term)).length;
   const gaps = mbCalls.slice(1).map((c, i) => c.at - mbCalls[i].at);
-  check(yhlqSearches === 1, '   El disco compartido se busca una sola vez en MusicBrainz');
+  check(yhlqApple === 1 && yhlqSearches === 0 && artCalls.includes('/image/thumb/yhlq/600x600bb.jpg') && !artCalls.some(p => p.includes('falso')),
+    '   YHLQMDLG sale de Apple (una consulta, portada de 600 px, y no la de otro artista con el mismo título) sin tocar MusicBrainz');
+  check(mbCalls.some(c => /releasegroup:"MOTOMAMI"/.test(c.query)) && caaCalls.includes('/release-group/rg-moto/front-500'), '   MOTOMAMI, que Apple no tiene, sale de MusicBrainz');
+  check(appleCalls.length <= 20, `   Como mucho 20 consultas por minuto a Apple (${appleCalls.length})`);
+  console.log(`     (búsqueda y escritura de ${without} canciones: ${took.toFixed(1)} s)`);
   check(gaps.every(g => g >= 1000), `   Como mucho una consulta por segundo a MusicBrainz (${mbCalls.length} consultas, mínimo ${Math.min(...gaps)} ms entre ellas)`);
   check(mbCalls.every(c => !/@|secreta|portadas@/.test(c.query)), '   A MusicBrainz solo llegan el disco, el artista y el título');
 
@@ -206,6 +231,21 @@ const GROUPS = [
   await p2.click('[data-form="login"] button[value="in"]');
   const got2 = await (async () => { const t = Date.now(); while (Date.now() - t < 30000) { const r = await p2.evaluate(async () => { const { S } = await import('./js/store.js'), l = await import('./js/library.js'); const t = [...S.tracks.values()].find(x => x.title === 'Saoko'); return t?.coverId ? !!(await l.coverUrl(t)) : false; }).catch(() => false); if (r) return true; await p2.waitForTimeout(500); } return false; })();
   check(got2, '11. Otro dispositivo con la misma cuenta y el mismo bucket ve la portada');
+
+  // --- si el navegador no deja leer a Apple (CORS), se sigue solo con MusicBrainz
+  const ctx3 = await b.newContext();
+  let appleBlocked = 0;
+  await ctx3.route('https://itunes.apple.com/**', route => { appleBlocked++; route.abort('failed'); });
+  await ctx3.route('https://musicbrainz.org/**', route => { const qy = new URL(route.request().url()).searchParams.get('query') || ''; route.fulfill({ contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify({ 'release-groups': GROUPS.filter(g => qy.includes(`"${g.title}"`)) }) }); });
+  await ctx3.route('https://coverartarchive.org/**', route => route.fulfill(/rg-(yhlq|moto)\/front-500$/.test(new URL(route.request().url()).pathname) ? { contentType: 'image/jpeg', headers: { 'Access-Control-Allow-Origin': '*' }, body: JPG } : { status: 404, body: '' }));
+  const p3 = await ctx3.newPage();
+  await p3.goto(APP + '#/inicio'); await p3.waitForSelector('#nav-links a');
+  const r3 = await p3.evaluate(async () => {
+    const c = await import('./js/covers.js');
+    const a = await c.find([{ album: 'YHLQMDLG', artist: 'Bad Bunny' }]), m = await c.find([{ album: 'MOTOMAMI', artist: 'ROSALÍA' }]);
+    return [a?.from, m?.from];
+  });
+  check(r3[0] === 'musicbrainz' && r3[1] === 'musicbrainz' && appleBlocked === 1, `12. Si el navegador no deja leer a Apple, se sigue con MusicBrainz sin volver a intentarlo con Apple (${appleBlocked} intento)`);
 
   check(!errs.length, 'Sin errores de JavaScript' + (errs.length ? `: ${errs.slice(0, 3).join(' | ')}` : ''));
   await b.close();

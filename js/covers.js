@@ -1,11 +1,18 @@
 // Portadas que faltan (modo desarrollador). La IA de los géneros identifica el álbum o single de
-// cada canción y la imagen se busca en el catálogo público de MusicBrainz y su Cover Art Archive:
-// gratuitos, sin clave y con permiso para llamadas desde el navegador. MusicBrainz pide no pasar de
-// una consulta por segundo, así que las búsquedas van de una en una.
+// cada canción y la imagen se busca en dos catálogos públicos, gratuitos y sin clave:
+//   · Apple (iTunes Search API): rápido; una consulta da el disco y su portada. Apple pide no pasar
+//     de unas 20 consultas por minuto.
+//   · MusicBrainz y su Cover Art Archive: más lento (una consulta por segundo y las imágenes vienen
+//     de archive.org), pero con discos que Apple no tiene.
+// Se usa Apple mientras le quede cupo en el minuto y, si no encuentra el disco, MusicBrainz. Si el
+// navegador no deja leer las respuestas de Apple, se sigue solo con MusicBrainz.
 const MB = 'https://musicbrainz.org/ws/2';
 const CAA = 'https://coverartarchive.org';
+const ITUNES = 'https://itunes.apple.com/search';
 const GAP = 1100;            // ms entre consultas a MusicBrainz
 const MIN_SCORE = 85;        // puntuación mínima de MusicBrainz para aceptar un resultado
+const APPLE_PER_MIN = 20;    // consultas a Apple por minuto
+const ART = 600;             // tamaño de la portada que se pide (px)
 
 /** Texto comparable: sin tildes, mayúsculas ni signos (salvo «+» y «#», que distinguen discos como «MOTOMAMI +»). */
 export const norm = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9+#]+/g, ' ').replace(/\s*([+#])/g, ' $1').trim();
@@ -26,17 +33,67 @@ export function sameArtist(credit, artist) {
 /** Escapa los caracteres especiales de las consultas de MusicBrainz (Lucene). */
 const q = s => `"${String(s).replace(/([+\-!(){}[\]^"~*?:\\/]|&&|\|\|)/g, '\\$1')}"`;
 
-let last = 0;
+// Las consultas a MusicBrainz pasan de una en una por esta cola (aunque se busquen varios discos a la vez).
+let mbQueue = Promise.resolve();
+const mbSlot = () => { const p = mbQueue.then(() => new Promise(r => setTimeout(r, GAP))); mbQueue = p; return mbQueue.then(() => {}); };
+let firstMb = true;
 async function mb(path) {
-  const wait = last + GAP - Date.now();
-  if (wait > 0) await new Promise(r => setTimeout(r, wait));
-  last = Date.now();
+  if (firstMb) firstMb = false; else await mbSlot();
   let r;
   try { r = await fetch(`${MB}/${path}`, { headers: { Accept: 'application/json' } }); }
   catch { throw new Error(navigator.onLine ? 'No se pudo contactar con MusicBrainz' : 'No hay conexión a internet'); }
   if (r.status === 503 || r.status === 429) throw new Error('MusicBrainz está limitando las consultas. Inténtalo dentro de un rato');
   if (!r.ok) return null;
   return r.json().catch(() => null);
+}
+
+// --- Apple ---------------------------------------------------------------
+const apple = { calls: [], off: false, pause: 0 };
+/** ¿Se puede consultar a Apple ahora mismo sin pasar de su límite? (si no, se usa MusicBrainz) */
+function appleTurn() {
+  const now = Date.now();
+  if (apple.off || now < apple.pause) return false;
+  apple.calls = apple.calls.filter(t => now - t < 60000);
+  if (apple.calls.length >= APPLE_PER_MIN) return false;
+  apple.calls.push(now);
+  return true;
+}
+const country = () => { const m = /-([A-Za-z]{2})\b/.exec(navigator.language || ''); return (m ? m[1] : 'us').toLowerCase(); };
+async function itunes(params) {
+  if (!appleTurn()) return undefined;                       // sin cupo: que busque MusicBrainz
+  let r;
+  try { r = await fetch(`${ITUNES}?${new URLSearchParams({ ...params, country: country(), limit: '15' })}`); }
+  catch { if (navigator.onLine) apple.off = true; return undefined; }   // el navegador no deja leerla (CORS): solo MusicBrainz
+  if (r.status === 403 || r.status === 429) { apple.pause = Date.now() + 60000; return undefined; }
+  if (!r.ok) return undefined;
+  const d = await r.json().catch(() => null);
+  return d?.results || [];
+}
+const artOf = x => String(x.artworkUrl100 || '').replace(/\/\d+x\d+(bb)?\.(jpg|png|webp)$/i, `/${ART}x${ART}bb.jpg`);
+async function appleImage(url) {
+  if (!url) return null;
+  let r;
+  try { r = await fetch(url); } catch { apple.off = true; return null; }
+  if (!r.ok) return null;
+  const blob = await r.blob();
+  return /^image\//.test(blob.type) && blob.size > 500 ? blob : null;
+}
+/** Portada en Apple de un disco (o, sin disco, del single o disco donde está la canción). undefined: no se ha podido consultar. */
+async function appleFind({ album, artist, title = '' }) {
+  const credit = x => [{ name: x.artistName }];
+  if (album) {
+    const res = await itunes({ term: `${artist} ${album}`, entity: 'album' });
+    if (res === undefined) return undefined;
+    const hit = res.find(x => sameTitle(x.collectionName, album) && sameArtist(credit(x), artist));
+    if (hit) return { url: artOf(hit), id: `apple:${hit.collectionId}`, title: hit.collectionName };
+  }
+  if (title) {
+    const res = await itunes({ term: `${artist} ${title}`, entity: 'song' });
+    if (res === undefined) return undefined;
+    const hit = res.find(x => sameTitle(x.trackName, title) && sameArtist(credit(x), artist) && (!album || sameTitle(x.collectionName, album) || sameTitle(x.collectionName, title)));
+    if (hit) return { url: artOf(hit), id: `apple:${hit.collectionId}`, title: hit.collectionName };
+  }
+  return null;
 }
 
 /**
@@ -76,18 +133,25 @@ export async function frontCover(groupId) {
 
 /**
  * Busca la portada de un lanzamiento. Prueba con lo que dijo la IA y, si no basta, con lo que
- * traía el archivo. Devuelve {blob, id, title} o null.
+ * traía el archivo; en cada caso, primero en Apple y luego en MusicBrainz. Devuelve
+ * {blob, id, title, from: 'apple'|'musicbrainz'} o null.
  */
 export async function find(queries) {
-  const seen = new Set();
+  const seen = new Set(), list = [];
   for (const query of queries) {
-    if (!query?.artist || /^artista desconocido$/i.test(query.artist) || !(query.album || query.title)) continue;
+    if (!query?.artist || unknownArtist(query.artist) || !(query.album || query.title)) continue;
     const key = `${norm(query.album)}|${norm(query.artist)}|${norm(query.title)}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
+    if (!seen.has(key)) { seen.add(key); list.push(query); }
+  }
+  for (const query of list) {
+    const a = await appleFind(query);
+    const blob = a && await appleImage(a.url);
+    if (blob) return { blob, id: a.id, title: a.title, from: 'apple' };
+  }
+  for (const query of list) {
     for (const c of await candidates(query)) {
       const blob = await frontCover(c.id);
-      if (blob) return { blob, id: c.id, title: c.title };
+      if (blob) return { blob, id: c.id, title: c.title, from: 'musicbrainz' };
     }
   }
   return null;
@@ -97,11 +161,16 @@ export async function find(queries) {
 export const unknownArtist = a => !norm(a) || /^(artista desconocido|unknown artist|desconocido|various artists|varios artistas|va)$/.test(norm(a));
 
 /**
- * Portada de otro disco del mismo artista en MusicBrainz, cuando la del disco de la canción no
+ * Portada de otro disco del mismo artista (en Apple y, si no, en MusicBrainz), cuando la del disco de la canción no
  * existe. Prefiere álbumes a singles. Devuelve {blob, id, title} o null.
  */
 export async function artistCover(artist) {
   if (unknownArtist(artist)) return null;
+  const res = await itunes({ term: artist, entity: 'album', attribute: 'artistTerm' });
+  for (const x of (res || []).filter(x => norm(x.artistName) === norm(artist)).sort((p, q2) => (q2.trackCount || 0) - (p.trackCount || 0)).slice(0, 3)) {
+    const blob = await appleImage(artOf(x));
+    if (blob) return { blob, id: `apple:${x.collectionId}`, title: x.collectionName, from: 'apple' };
+  }
   const d = await mb(`release-group/?query=${encodeURIComponent(`artist:${q(artist)}`)}&fmt=json&limit=15`);
   const groups = (d?.['release-groups'] || []).filter(g => (g.score ?? 100) >= MIN_SCORE && sameArtist(g['artist-credit'], artist) && norm(g['artist-credit']?.[0]?.name || g['artist-credit']?.[0]?.artist?.name) === norm(artist));
   const rank = g => (g['primary-type'] === 'Album' ? 0 : g['primary-type'] === 'EP' ? 1 : 2);
