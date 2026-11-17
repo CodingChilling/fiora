@@ -90,8 +90,10 @@ const GROUPS = [
     await c.route('https://itunes.apple.com/**', route => {
       const u = new URL(route.request().url());
       appleCalls.push({ at: Date.now(), term: u.searchParams.get('term'), entity: u.searchParams.get('entity') });
-      const hit = u.searchParams.get('entity') === 'album' && /YHLQMDLG/i.test(u.searchParams.get('term'));
-      const results = hit ? [
+      const ent = u.searchParams.get('entity'), term = u.searchParams.get('term');
+      const hit = ent === 'album' && /YHLQMDLG/i.test(term);
+      const song = ent === 'song' && /Bad Bunny Yo Perreo Sola/i.test(term);
+      const results = song ? [{ trackName: 'Yo Perreo Sola', collectionName: 'YHLQMDLG', artistName: 'Bad Bunny', collectionId: 2, artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/yhlq/100x100bb.jpg' }] : hit ? [
         { collectionId: 1, collectionName: 'YHLQMDLG', artistName: 'Otro Artista', artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/falso/100x100bb.jpg' },   // otro artista: no vale
         { collectionId: 2, collectionName: 'YHLQMDLG', artistName: 'Bad Bunny', trackCount: 20, artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/yhlq/100x100bb.jpg' },
       ] : [];
@@ -152,14 +154,26 @@ const GROUPS = [
   check((await page.innerText('#sheet')).includes('Buscar portada'), '2. El menú de una canción sin portada ofrece «Buscar portada»');
   await page.keyboard.press('Escape'); await page.waitForTimeout(200);
 
-  // --- si la IA falla, no se marca nada
-  aiFail = true;
+  // --- primera pasada sin IA: las canciones con buenos datos salen directamente de Apple
+  aiFail = true;   // la IA falla: así se ve qué se encuentra sin ella y que lo demás no se toca
   await page.goto(APP + '#/ajustes'); await page.click('[data-act="ai-covers"]');
   await page.waitForSelector('#sheet[open]'); await page.click('#sheet[open] button:has-text("Buscar portadas")');
   await until(() => /se detuvo/.test(document.querySelector('#toasts').innerText));
+  await until(() => /actualizados? y comprobados?|Guardado y comprobado/.test(document.querySelector('#toasts').innerText), null, 30000);
   all = await tracks();
-  check(all.filter(t => t.title !== 'Maqueta A').every(t => !t.coverId && !t.tried) && !mbCalls.length, '3. Si la IA falla, se avisa, no se consulta MusicBrainz y no se marca ninguna canción');
+  const by1 = n => all.find(t => t.title === n);
+  const sentToAi = aiCalls.length ? JSON.parse(aiCalls[0].messages.find(m => m.role === 'user').content).canciones.map(c => c.titulo) : [];
+  check(by1('Safaera').coverId && by1('Safaera').coverId === by1('Yo Perreo Sola').coverId && by1('Safaera').source === 'exact',
+    '3. Sin IA: «Safaera» y «Yo Perreo Sola» salen directamente de Apple con el título, el artista y el álbum del archivo (la misma portada para las dos)');
+  check(sentToAi.length === without - 2 && !sentToAi.includes('Safaera') && !sentToAi.includes('Yo Perreo Sola') && sentToAi.includes('Track 01'),
+    `   A la IA solo van las que no se encuentran así o cuyos datos no dicen nada (${sentToAi.length}: ${sentToAi.join(', ')})`);
+  check(all.filter(t => !['Maqueta A', 'Safaera', 'Yo Perreo Sola'].includes(t.title)).every(t => !t.coverId && !t.tried) && !mbCalls.length,
+    '   Si la IA falla, se avisa y las demás no se tocan (ni se consulta MusicBrainz para ellas)');
+  const yhlqApple = appleCalls.filter(c => /YHLQMDLG|Yo Perreo Sola/.test(c.term)).length;
+  check(yhlqApple === 1 && artCalls.filter(p => p.includes('/yhlq/600x600bb.jpg')).length === 1 && !artCalls.some(p => p.includes('falso')),
+    '   Las dos son del mismo disco: una sola consulta a Apple y una sola descarga, a 600 px, y nunca la de otro artista con el mismo título');
   aiFail = false; aiCalls.length = 0;
+  const pending = without - 2;
 
   // --- búsqueda de verdad
   await page.goto(APP + '#/inicio'); await page.goto(APP + '#/ajustes');
@@ -169,11 +183,11 @@ const GROUPS = [
   await page.click('#sheet[open] button:has-text("Buscar portadas")');
   check(/MusicBrainz/.test(dlg) && /coste/.test(dlg), '4. Antes de empezar avisa de qué se envía a la IA y a MusicBrainz');
   const t0 = Date.now();
+  await page.evaluate(() => { document.querySelector('#toasts').innerHTML = ''; });   // (el aviso final de la pasada anterior)
   const finished = await until(() => /archivos? actualizados? y comprobados?|Guardado y comprobado/.test(document.querySelector('#toasts').innerText), null, 60000);
   all = await tracks();
   const by = n => all.find(t => t.title === n);
   check(finished, '   termina escribiendo los archivos');
-  check(by('Safaera').coverId && by('Safaera').coverId === by('Yo Perreo Sola').coverId, '5. «Safaera» y «Yo Perreo Sola» (mismo disco) reciben la misma portada');
   check(by('Saoko').coverId && by('Saoko').coverId !== by('Safaera').coverId, '   «Saoko» recibe la de MOTOMAMI (el archivo decía «Motomami»)');
   check(by('Saoko').source === 'exact' && by('Safaera').source === 'exact', '   (portadas de su propio disco)');
   check(all.every(t => t.coverId), '6. Ninguna canción se queda sin portada');
@@ -183,16 +197,15 @@ const GROUPS = [
   check(by('Única').source === 'artist' && caaCalls.includes('/release-group/rg-otro/front-500') && mbCalls.some(c => c.query === 'artist:"Otro"'), '   «Única» (artista sin otras canciones) recibe la de otro disco del artista en MusicBrainz');
   check(by('Track 01').source === 'generated' && !mbCalls.some(c => /artist:"Artista desconocido"/.test(c.query)), '   «Track 01» (sin artista ni disco) recibe una portada generada, sin buscar «Artista desconocido»');
   check(!caaCalls.includes('/release-group/rg-falso/front-500'), '   Un disco con el mismo título pero de otro artista no se acepta');
-  check(aiCalls.length === 1 && JSON.parse(aiCalls[0].messages.find(m => m.role === 'user').content).canciones.length === without, `7. Una sola llamada a la IA para las ${without} canciones (por lotes de 20)`);
+  check(aiCalls.length === 1 && JSON.parse(aiCalls[0].messages.find(m => m.role === 'user').content).canciones.length === pending, `7. Una sola llamada a la IA para las ${pending} que quedaban (por lotes de 20)`);
   const took = (Date.now() - t0) / 1000;
   const yhlqSearches = mbCalls.filter(c => /releasegroup:"YHLQMDLG"/.test(c.query)).length;
-  const yhlqApple = appleCalls.filter(c => /YHLQMDLG/.test(c.term)).length;
   const gaps = mbCalls.slice(1).map((c, i) => c.at - mbCalls[i].at);
-  check(yhlqApple === 1 && yhlqSearches === 0 && artCalls.includes('/image/thumb/yhlq/600x600bb.jpg') && !artCalls.some(p => p.includes('falso')),
-    '   YHLQMDLG sale de Apple (una consulta, portada de 600 px, y no la de otro artista con el mismo título) sin tocar MusicBrainz');
+  check(yhlqSearches === 0, '   YHLQMDLG, que ya salió de Apple, no se busca en MusicBrainz');
   check(mbCalls.some(c => /releasegroup:"MOTOMAMI"/.test(c.query)) && caaCalls.includes('/release-group/rg-moto/front-500'), '   MOTOMAMI, que Apple no tiene, sale de MusicBrainz');
-  check(appleCalls.length <= 20, `   Como mucho 20 consultas por minuto a Apple (${appleCalls.length})`);
-  console.log(`     (búsqueda y escritura de ${without} canciones: ${took.toFixed(1)} s)`);
+  const perMin = Math.max(...appleCalls.map(c => appleCalls.filter(d => d.at >= c.at && d.at - c.at < 60000).length));
+  check(perMin <= 20, `   Como mucho 20 consultas por minuto a Apple (${appleCalls.length} en total, máximo ${perMin} en un minuto)`);
+  console.log(`     (búsqueda y escritura de las ${pending} restantes: ${took.toFixed(1)} s)`);
   check(gaps.every(g => g >= 1000), `   Como mucho una consulta por segundo a MusicBrainz (${mbCalls.length} consultas, mínimo ${Math.min(...gaps)} ms entre ellas)`);
   check(mbCalls.every(c => !/@|secreta|portadas@/.test(c.query)), '   A MusicBrainz solo llegan el disco, el artista y el título');
 

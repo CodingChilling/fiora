@@ -10,6 +10,8 @@ La IA, Apple (iTunes Search API y su servidor de imágenes), MusicBrainz y el Co
 
 Qué comprueba:
 
+- Primera pasada sin IA: las canciones con buenos datos salen directamente de Apple (una consulta y una descarga por disco); a la IA solo van las demás.
+
 - La IA falla: no se consulta nada ni se marca ninguna canción.
 - Las canciones del mismo disco comparten portada y una sola búsqueda.
 - Coincidencias estrictas: no vale otro artista ni «MOTOMAMI +» por «MOTOMAMI».
@@ -29,4 +31,4 @@ Necesita ffmpeg, la app en :8765, el emulador de Supabase en :8766 (con una base
 cd tests/covers && NODE_PATH=/opt/node-tools/node_modules node covers-e2e.cjs
 ```
 
-Resultado: 33 comprobaciones correctas.
+Resultado: 35 comprobaciones correctas.

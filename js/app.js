@@ -1397,27 +1397,47 @@ async function findCovers(tracks) {
   let done = 0;
   const progress = (what, total) => note.set(`${what}: ${done} de ${total}…`);
 
-  // 1. La portada de su disco
-  for (let i = 0; i < tracks.length && !stopped; i += ai.BATCH) {
-    const chunk = tracks.slice(i, i + ai.BATCH);
-    note.set(`Identificando con IA: ${i + 1}–${i + chunk.length} de ${tracks.length}…`);
+  // 1. La portada de su disco. Primero directamente con el título, el artista y el álbum del
+  //    archivo (lo normal: una consulta por disco y sin IA); la IA solo identifica las que así no
+  //    se encuentran o cuyos datos no dicen nada («Track 01», «Artista desconocido»).
+  const artistOf = t => albumArtistOf(t) || artistsOf(t)[0] || '';
+  const found = new Map();          // disco del catálogo → portada guardada (aunque se llegue por consultas distintas)
+  const lookup = async (jobs, what, direct = false) => {
+    const todo = [...jobs.values()].filter(j => !byKey.has(j.key));
+    done = 0;
+    await pool(todo, async j => {
+      const res = await covers.find(j.queries, { direct });
+      if (res && !found.has(res.id)) { found.set(res.id, store(res.blob, res.id)); from[res.from]++; }
+      byKey.set(j.key, res ? await found.get(res.id) : null);
+      done++; progress(what, todo.length);
+    });
+  };
+  const fileJobs = new Map(), needAi = [];
+  for (const t of tracks) {
+    const artist = artistOf(t);
+    if (!covers.searchable(t.title, artist)) { needAi.push(t); continue; }
+    const key = `f|${covers.discKey(t.album || t.title, artist)}`;
+    if (!fileJobs.has(key)) fileJobs.set(key, { key, songs: [], queries: [{ album: t.album, artist, title: t.title }] });
+    fileJobs.get(key).songs.push(t);
+  }
+  await lookup(fileJobs, `Buscando portadas (${tracks.length} canciones)`, true);
+  for (const j of fileJobs.values()) {
+    const cid = byKey.get(j.key);
+    for (const t of j.songs) { if (cid) await apply(t, cid, 'exact'); else if (byKey.has(j.key)) needAi.push(t); }
+  }
+  for (let i = 0; i < needAi.length && !stopped; i += ai.BATCH) {
+    const chunk = needAi.slice(i, i + ai.BATCH);
+    note.set(`Identificando con IA: ${i + 1}–${i + chunk.length} de ${needAi.length}…`);
     let ids;
     try { ids = await ai.identifyReleases(chunk, opts); } catch (e) { stopped = e.message; break; }
     const jobs = new Map();          // disco → canciones que lo comparten y cómo buscarlo
     chunk.forEach((t, k) => {
-      const id = ids[k], artist = albumArtistOf(t) || artistsOf(t)[0] || '';
-      const key = id ? `${covers.norm(id.album)}|${covers.norm(id.artist)}` : `f|${covers.norm(t.album) || covers.norm(t.title)}|${covers.norm(artist)}`;
+      const id = ids[k], artist = artistOf(t);
+      const key = id ? `ia|${covers.discKey(id.album, id.artist)}` : `fia|${covers.discKey(t.album || t.title, artist)}`;
       if (!jobs.has(key)) jobs.set(key, { key, songs: [], queries: [id && { ...id, title: t.title }, { album: t.album, artist, title: t.title }] });
       jobs.get(key).songs.push({ t, artist: id?.artist || artist });
     });
-    const todo = [...jobs.values()].filter(j => !byKey.has(j.key));
-    done = 0;
-    await pool(todo, async j => {
-      const res = await covers.find(j.queries);
-      byKey.set(j.key, res ? await store(res.blob, res.id) : null);
-      if (res) from[res.from]++;
-      done++; progress(`Buscando portadas (${i + 1}–${i + chunk.length} de ${tracks.length})`, todo.length);
-    });
+    await lookup(jobs, `Buscando portadas (${i + 1}–${i + chunk.length} de ${needAi.length})`);
     for (const j of jobs.values()) {
       if (!byKey.has(j.key)) continue;              // se cortó antes de buscarlo
       const cid = byKey.get(j.key);

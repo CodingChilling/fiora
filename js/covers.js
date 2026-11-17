@@ -18,6 +18,13 @@ const ART = 600;             // tamaño de la portada que se pide (px)
 export const norm = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9+#]+/g, ' ').replace(/\s*([+#])/g, ' $1').trim();
 /** Quita añadidos habituales que no forman parte del título del disco: «(Deluxe)», «- Single», «[Remastered]». */
 const core = s => norm(String(s || '').replace(/\s*[([][^)\]]*(deluxe|remaster|edition|edición|version|versión|bonus|expanded)[^)\]]*[)\]]/gi, '').replace(/\s*-\s*(single|ep)$/i, ''));
+/** Clave de un disco para agrupar canciones: «YHLQMDLG (Deluxe)» y «YHLQMDLG» son el mismo. */
+export const discKey = (album, artist) => `${core(album)}|${norm(artist)}`;
+/** Títulos que no dicen nada de la canción («Track 01», «Pista 3», «Sin título»…): no sirven para buscar. */
+export const junkTitle = t => !norm(t) || /^(track|pista|audio|cancion|song|untitled|sin titulo|unknown|desconocid[ao])( ?\d+)?$/.test(norm(t));
+/** ¿Los datos del archivo bastan para buscar directamente, sin la IA? */
+export const searchable = (title, artist) => !junkTitle(title) && !unknownArtist(artist);
+
 /** ¿Son el mismo título? Iguales una vez quitados tildes, signos y añadidos como «(Deluxe)». Nada aproximado. */
 export function sameTitle(a, b) {
   const x = core(a), y = core(b);
@@ -70,8 +77,11 @@ async function itunes(params) {
   return d?.results || [];
 }
 const artOf = x => String(x.artworkUrl100 || '').replace(/\/\d+x\d+(bb)?\.(jpg|png|webp)$/i, `/${ART}x${ART}bb.jpg`);
-async function appleImage(url) {
-  if (!url) return null;
+// Cada imagen se descarga una sola vez aunque la pidan a la vez varias canciones del mismo disco.
+const images = new Map();
+const once = (key, fn) => { if (!images.has(key)) images.set(key, fn()); return images.get(key); };
+function appleImage(url) { return url ? once(url, () => appleImageNow(url)) : Promise.resolve(null); }
+async function appleImageNow(url) {
   let r;
   try { r = await fetch(url); } catch { apple.off = true; return null; }
   if (!r.ok) return null;
@@ -122,7 +132,8 @@ export async function candidates({ album, artist, title = '' }) {
 }
 
 /** Descarga la portada delantera de un grupo de lanzamiento (500 px). null si no tiene. */
-export async function frontCover(groupId) {
+export function frontCover(groupId) { return once(`caa:${groupId}`, () => frontCoverNow(groupId)); }
+async function frontCoverNow(groupId) {
   let r;
   try { r = await fetch(`${CAA}/release-group/${encodeURIComponent(groupId)}/front-500`); }
   catch { return null; }
@@ -132,23 +143,28 @@ export async function frontCover(groupId) {
 }
 
 /**
- * Busca la portada de un lanzamiento. Prueba con lo que dijo la IA y, si no basta, con lo que
- * traía el archivo; en cada caso, primero en Apple y luego en MusicBrainz. Devuelve
- * {blob, id, title, from: 'apple'|'musicbrainz'} o null.
+ * Busca la portada de un lanzamiento. Prueba con cada consulta (lo que dijo la IA, lo que traía el
+ * archivo), primero en Apple y luego en MusicBrainz. Devuelve {blob, id, title, from} o null.
+ * Con `direct` (primera pasada, con los datos del archivo y sin IA): MusicBrainz solo se consulta
+ * si Apple no ha podido contestar (sin cupo en ese minuto o bloqueado); si Apple contesta que no lo
+ * tiene, se deja para la segunda pasada, con la IA.
  */
-export async function find(queries) {
+export async function find(queries, { direct = false } = {}) {
   const seen = new Set(), list = [];
   for (const query of queries) {
     if (!query?.artist || unknownArtist(query.artist) || !(query.album || query.title)) continue;
     const key = `${norm(query.album)}|${norm(query.artist)}|${norm(query.title)}`;
     if (!seen.has(key)) { seen.add(key); list.push(query); }
   }
+  const asked = [];
   for (const query of list) {
     const a = await appleFind(query);
+    if (a !== undefined) asked.push(query);
     const blob = a && await appleImage(a.url);
     if (blob) return { blob, id: a.id, title: a.title, from: 'apple' };
   }
   for (const query of list) {
+    if (direct && asked.includes(query)) continue;
     for (const c of await candidates(query)) {
       const blob = await frontCover(c.id);
       if (blob) return { blob, id: c.id, title: c.title, from: 'musicbrainz' };
