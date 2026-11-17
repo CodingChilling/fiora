@@ -75,12 +75,24 @@ function httpError(status, msg) {
   return new Error(msg);
 }
 
+// Si el servicio no contesta en este tiempo, se abandona la petición (si no, la app esperaría para siempre).
+export const TIMEOUT = 90000;
+let timeoutMs = TIMEOUT;
+/** Cambia el tiempo máximo de espera (para las pruebas). */
+export const setTimeoutMs = ms => { timeoutMs = ms || TIMEOUT; };
 async function post(url, headers, body) {
-  let r;
-  try { r = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) }); }
-  catch { throw new Error(navigator.onLine ? 'No se pudo contactar con el servicio de IA (puede que no admita llamadas desde el navegador)' : 'No hay conexión a internet'); }
-  const data = await r.json().catch(() => null);
-  return { r, data, msg: data?.error?.message || (typeof data?.error === 'string' ? data.error : '') || `Respuesta ${r.status}` };
+  const ac = new AbortController(), timer = setTimeout(() => ac.abort(), timeoutMs);
+  try {
+    let r;
+    try { r = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: ac.signal }); }
+    catch {
+      if (ac.signal.aborted) throw new Error(`El servicio de IA no ha respondido en ${Math.round(timeoutMs / 1000)} segundos`);
+      throw new Error(navigator.onLine ? 'No se pudo contactar con el servicio de IA (puede que no admita llamadas desde el navegador)' : 'No hay conexión a internet');
+    }
+    const data = await r.json().catch(() => null);
+    if (ac.signal.aborted) throw new Error(`El servicio de IA no ha respondido en ${Math.round(timeoutMs / 1000)} segundos`);
+    return { r, data, msg: data?.error?.message || (typeof data?.error === 'string' ? data.error : '') || `Respuesta ${r.status}` };
+  } finally { clearTimeout(timer); }
 }
 
 async function askAnthropic(cfg, user, task = TAGS) {

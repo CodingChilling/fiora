@@ -64,12 +64,13 @@ const GROUPS = [
   for (const [name, buf] of Object.entries(FILES)) await fetch(OWNER_PAR + name.split('/').map(encodeURIComponent).join('/'), { method: 'PUT', body: buf });
   const b = await chromium.launch();
   const errs = [], aiCalls = [], mbCalls = [], caaCalls = [], appleCalls = [], artCalls = [];
-  let aiFail = false;
+  let aiFail = false, aiHang = false;
   const ctx = await b.newContext({ viewport: { width: 1280, height: 900 } });
   await ctx.route(SB + '/**', async route => { try { await route.fulfill({ response: await route.fetch({ url: route.request().url().replace(SB, API) }) }); } catch { await route.abort('failed').catch(() => {}); } });
   await ctx.route(AI + '/**', async route => {
     const body = JSON.parse(route.request().postData() || '{}');
     aiCalls.push(body);
+    if (aiHang) { await new Promise(r => setTimeout(r, 20000)); return route.fulfill({ status: 200, body: '{}' }).catch(() => {}); }   // no contesta
     if (aiFail) return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: { message: 'caído' } }) });
     const songs = JSON.parse(body.messages.find(m => m.role === 'user').content).canciones;
     const out = songs.map(s => { const k = KNOWN[norm(s.titulo)]; return k ? { i: s.i, known: true, ...k } : { i: s.i, known: false, album: '', artist: '', year: 0 }; });
@@ -154,25 +155,6 @@ const GROUPS = [
   check((await page.innerText('#sheet')).includes('Buscar portada'), '2. El menú de una canción sin portada ofrece «Buscar portada»');
   await page.keyboard.press('Escape'); await page.waitForTimeout(200);
 
-  // --- primera pasada sin IA: las canciones con buenos datos salen directamente de Apple
-  aiFail = true;   // la IA falla: así se ve qué se encuentra sin ella y que lo demás no se toca
-  await page.goto(APP + '#/ajustes'); await page.click('[data-act="ai-covers"]');
-  await page.waitForSelector('#sheet[open]'); await page.click('#sheet[open] button:has-text("Buscar portadas")');
-  await until(() => /se detuvo/.test(document.querySelector('#toasts').innerText));
-  await until(() => /actualizados? y comprobados?|Guardado y comprobado/.test(document.querySelector('#toasts').innerText), null, 30000);
-  all = await tracks();
-  const by1 = n => all.find(t => t.title === n);
-  const sentToAi = aiCalls.length ? JSON.parse(aiCalls[0].messages.find(m => m.role === 'user').content).canciones.map(c => c.titulo) : [];
-  check(by1('Safaera').coverId && by1('Safaera').coverId === by1('Yo Perreo Sola').coverId && by1('Safaera').source === 'exact',
-    '3. Sin IA: «Safaera» y «Yo Perreo Sola» salen directamente de Apple con el título, el artista y el álbum del archivo (la misma portada para las dos)');
-  check(sentToAi.length === without - 2 && !sentToAi.includes('Safaera') && !sentToAi.includes('Yo Perreo Sola') && sentToAi.includes('Track 01'),
-    `   A la IA solo van las que no se encuentran así o cuyos datos no dicen nada (${sentToAi.length}: ${sentToAi.join(', ')})`);
-  check(all.filter(t => !['Maqueta A', 'Safaera', 'Yo Perreo Sola'].includes(t.title)).every(t => !t.coverId && !t.tried) && !mbCalls.length,
-    '   Si la IA falla, se avisa y las demás no se tocan (ni se consulta MusicBrainz para ellas)');
-  const yhlqApple = appleCalls.filter(c => /YHLQMDLG|Yo Perreo Sola/.test(c.term)).length;
-  check(yhlqApple === 1 && artCalls.filter(p => p.includes('/yhlq/600x600bb.jpg')).length === 1 && !artCalls.some(p => p.includes('falso')),
-    '   Las dos son del mismo disco: una sola consulta a Apple y una sola descarga, a 600 px, y nunca la de otro artista con el mismo título');
-  aiFail = false; aiCalls.length = 0;
   const pending = without - 2;
 
   // --- búsqueda de verdad
@@ -199,6 +181,14 @@ const GROUPS = [
   check(!caaCalls.includes('/release-group/rg-falso/front-500'), '   Un disco con el mismo título pero de otro artista no se acepta');
   check(aiCalls.length === 1 && JSON.parse(aiCalls[0].messages.find(m => m.role === 'user').content).canciones.length === pending, `7. Una sola llamada a la IA para las ${pending} que quedaban (por lotes de 20)`);
   const took = (Date.now() - t0) / 1000;
+  const sentToAi = aiCalls.length ? JSON.parse(aiCalls[0].messages.find(m => m.role === 'user').content).canciones.map(c => c.titulo) : [];
+  check(by('Safaera').coverId && by('Safaera').coverId === by('Yo Perreo Sola').coverId && by('Safaera').source === 'exact',
+    '3. Sin IA: «Safaera» y «Yo Perreo Sola» salen directamente de Apple con el título, el artista y el álbum del archivo (la misma portada para las dos)');
+  check(sentToAi.length === pending && !sentToAi.includes('Safaera') && !sentToAi.includes('Yo Perreo Sola') && sentToAi.includes('Track 01'),
+    `   A la IA solo van las que no se encuentran así o cuyos datos no dicen nada (${sentToAi.length}: ${sentToAi.join(', ')})`);
+  const yhlqApple = appleCalls.filter(c => /YHLQMDLG|Yo Perreo Sola/.test(c.term)).length;
+  check(yhlqApple === 1 && artCalls.filter(p => p.includes('/yhlq/600x600bb.jpg')).length === 1 && !artCalls.some(p => p.includes('falso')),
+    '   Las dos son del mismo disco: una sola consulta a Apple y una sola descarga, a 600 px, y nunca la de otro artista con el mismo título');
   const yhlqSearches = mbCalls.filter(c => /releasegroup:"YHLQMDLG"/.test(c.query)).length;
   const gaps = mbCalls.slice(1).map((c, i) => c.at - mbCalls[i].at);
   check(yhlqSearches === 0, '   YHLQMDLG, que ya salió de Apple, no se busca en MusicBrainz');
@@ -244,6 +234,22 @@ const GROUPS = [
   await p2.click('[data-form="login"] button[value="in"]');
   const got2 = await (async () => { const t = Date.now(); while (Date.now() - t < 30000) { const r = await p2.evaluate(async () => { const { S } = await import('./js/store.js'), l = await import('./js/library.js'); const t = [...S.tracks.values()].find(x => x.title === 'Saoko'); return t?.coverId ? !!(await l.coverUrl(t)) : false; }).catch(() => false); if (r) return true; await p2.waitForTimeout(500); } return false; })();
   check(got2, '11. Otro dispositivo con la misma cuenta y el mismo bucket ve la portada');
+
+  // --- una IA que no contesta no deja la búsqueda colgada
+  const wavBuf = (() => { const n = 8000, b = Buffer.alloc(44 + n); b.write('RIFF', 0); b.writeUInt32LE(36 + n, 4); b.write('WAVEfmt ', 8); b.writeUInt32LE(16, 16); b.writeUInt16LE(1, 20); b.writeUInt16LE(1, 22); b.writeUInt32LE(8000, 24); b.writeUInt32LE(8000, 28); b.writeUInt16LE(1, 32); b.writeUInt16LE(8, 34); b.write('data', 36); b.writeUInt32LE(n, 40); b.fill(128, 44); return b; })();
+  await page.goto(APP + '#/inicio');
+  await page.setInputFiles('#pick-files', [{ name: 'Nadie - Canción nueva.wav', mimeType: 'audio/wav', buffer: wavBuf }]);
+  await until(async () => [...(await import('./js/store.js')).S.tracks.values()].some(t => t.title === 'Canción nueva'));
+  await page.evaluate(async () => (await import('./js/ai.js')).setTimeoutMs(7000));
+  aiHang = true;
+  await page.goto(APP + '#/ajustes'); await page.click('[data-act="ai-covers"]');
+  await page.waitForSelector('#sheet[open]'); await page.click('#sheet[open] button:has-text("Buscar portadas")');
+  const counting = await until(() => /Identificando con IA: .*\(\d+ s\)/.test(document.querySelector('#toasts').innerText), null, 10000);
+  const ended = await until(() => /sin ayuda de la IA/.test(document.querySelector('#toasts').innerText), null, 30000);
+  const nueva = (await tracks()).find(t => t.title === 'Canción nueva');
+  check(counting, '13. Mientras la IA piensa, el aviso cuenta los segundos');
+  check(ended && nueva?.coverId && nueva.source === 'generated', `   Si la IA no contesta, se abandona a los 7 s (90 s en la app) y se sigue sin ella: la canción recibe portada igualmente (${nueva?.source || 'ninguna'})`);
+  aiHang = false;
 
   // --- si el navegador no deja leer a Apple (CORS), se sigue solo con MusicBrainz
   const ctx3 = await b.newContext();

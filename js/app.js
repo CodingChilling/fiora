@@ -1425,11 +1425,19 @@ async function findCovers(tracks) {
     const cid = byKey.get(j.key);
     for (const t of j.songs) { if (cid) await apply(t, cid, 'exact'); else if (byKey.has(j.key)) needAi.push(t); }
   }
+  let aiProblem = '';
   for (let i = 0; i < needAi.length && !stopped; i += ai.BATCH) {
     const chunk = needAi.slice(i, i + ai.BATCH);
-    note.set(`Identificando con IA: ${i + 1}–${i + chunk.length} de ${needAi.length}…`);
+    // Mientras la IA piensa, el aviso cuenta los segundos (para que se vea que sigue trabajando).
+    const label = `Identificando con IA: ${i + 1}–${i + chunk.length} de ${needAi.length}…`, t0 = Date.now();
+    note.set(label);
+    const tick = setInterval(() => { const sec = Math.round((Date.now() - t0) / 1000); if (sec >= 5) note.set(`${label} (${sec} s)`); }, 1000);
     let ids;
-    try { ids = await ai.identifyReleases(chunk, opts); } catch (e) { stopped = e.message; break; }
+    // Si la IA falla o no contesta, se sigue sin ella: se busca con lo que trae el archivo y, si
+    // no aparece, con el resto de la cadena (álbum, artista, generada).
+    try { ids = await ai.identifyReleases(chunk, opts); }
+    catch (e) { aiProblem = e.message; ids = chunk.map(() => null); }
+    finally { clearInterval(tick); }
     const jobs = new Map();          // disco → canciones que lo comparten y cómo buscarlo
     chunk.forEach((t, k) => {
       const id = ids[k], artist = artistOf(t);
@@ -1493,6 +1501,7 @@ async function findCovers(tracks) {
     count.generated && `${plural(count.generated, 'generada', 'generadas')} (sin datos del disco ni del artista)`,
     (from.apple || from.musicbrainz) && `imágenes de ${[from.apple && `Apple (${from.apple})`, from.musicbrainz && `MusicBrainz (${from.musicbrainz})`].filter(Boolean).join(' y ')}`,
     notUploaded && `${notUploaded} no se pudieron subir a la nube`,
+    aiProblem && `sin ayuda de la IA para algunas (${aiProblem})`,
     stopped && `se detuvo: ${stopped}${left ? ` (${left} sin portada todavía; vuelve a intentarlo más tarde)` : ''}`].filter(Boolean).join(' · ');
   note.done(msg, 9000);
   // Se escriben en los archivos (con los demás metadatos editados) y se suben a la nube.

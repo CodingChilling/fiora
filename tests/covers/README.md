@@ -31,4 +31,4 @@ Necesita ffmpeg, la app en :8765, el emulador de Supabase en :8766 (con una base
 cd tests/covers && NODE_PATH=/opt/node-tools/node_modules node covers-e2e.cjs
 ```
 
-Resultado: 35 comprobaciones correctas.
+Resultado: 36 comprobaciones correctas. Incluye una IA que no contesta: se abandona a tiempo y la búsqueda sigue sin ella.

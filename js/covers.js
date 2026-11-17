@@ -13,6 +13,17 @@ const GAP = 1100;            // ms entre consultas a MusicBrainz
 const MIN_SCORE = 85;        // puntuación mínima de MusicBrainz para aceptar un resultado
 const APPLE_PER_MIN = 20;    // consultas a Apple por minuto
 const ART = 600;             // tamaño de la portada que se pide (px)
+const WAIT = 20000;          // ms como mucho por consulta o descarga (si no, se da por fallida)
+
+/** fetch con tiempo máximo: un servidor que no contesta no deja la búsqueda colgada. */
+async function get(url, opts = {}) {
+  const ac = new AbortController(), timer = setTimeout(() => ac.abort(), WAIT);
+  try {
+    const r = await fetch(url, { ...opts, signal: ac.signal });
+    const body = await (opts.as === 'blob' ? r.blob() : r.json().catch(() => null));
+    return { ok: r.ok, status: r.status, body };
+  } finally { clearTimeout(timer); }
+}
 
 /** Texto comparable: sin tildes, mayúsculas ni signos (salvo «+» y «#», que distinguen discos como «MOTOMAMI +»). */
 export const norm = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9+#]+/g, ' ').replace(/\s*([+#])/g, ' $1').trim();
@@ -47,11 +58,10 @@ let firstMb = true;
 async function mb(path) {
   if (firstMb) firstMb = false; else await mbSlot();
   let r;
-  try { r = await fetch(`${MB}/${path}`, { headers: { Accept: 'application/json' } }); }
-  catch { throw new Error(navigator.onLine ? 'No se pudo contactar con MusicBrainz' : 'No hay conexión a internet'); }
+  try { r = await get(`${MB}/${path}`, { headers: { Accept: 'application/json' } }); }
+  catch (e) { throw new Error(e?.name === 'AbortError' ? 'MusicBrainz no responde. Inténtalo dentro de un rato' : navigator.onLine ? 'No se pudo contactar con MusicBrainz' : 'No hay conexión a internet'); }
   if (r.status === 503 || r.status === 429) throw new Error('MusicBrainz está limitando las consultas. Inténtalo dentro de un rato');
-  if (!r.ok) return null;
-  return r.json().catch(() => null);
+  return r.ok ? r.body : null;
 }
 
 // --- Apple ---------------------------------------------------------------
@@ -69,12 +79,11 @@ const country = () => { const m = /-([A-Za-z]{2})\b/.exec(navigator.language || 
 async function itunes(params) {
   if (!appleTurn()) return undefined;                       // sin cupo: que busque MusicBrainz
   let r;
-  try { r = await fetch(`${ITUNES}?${new URLSearchParams({ ...params, country: country(), limit: '15' })}`); }
-  catch { if (navigator.onLine) apple.off = true; return undefined; }   // el navegador no deja leerla (CORS): solo MusicBrainz
+  try { r = await get(`${ITUNES}?${new URLSearchParams({ ...params, country: country(), limit: '15' })}`); }
+  catch (e) { if (e?.name !== 'AbortError' && navigator.onLine) apple.off = true; return undefined; }   // el navegador no deja leerla (CORS): solo MusicBrainz
   if (r.status === 403 || r.status === 429) { apple.pause = Date.now() + 60000; return undefined; }
   if (!r.ok) return undefined;
-  const d = await r.json().catch(() => null);
-  return d?.results || [];
+  return r.body?.results || [];
 }
 const artOf = x => String(x.artworkUrl100 || '').replace(/\/\d+x\d+(bb)?\.(jpg|png|webp)$/i, `/${ART}x${ART}bb.jpg`);
 // Cada imagen se descarga una sola vez aunque la pidan a la vez varias canciones del mismo disco.
@@ -83,9 +92,9 @@ const once = (key, fn) => { if (!images.has(key)) images.set(key, fn()); return 
 function appleImage(url) { return url ? once(url, () => appleImageNow(url)) : Promise.resolve(null); }
 async function appleImageNow(url) {
   let r;
-  try { r = await fetch(url); } catch { apple.off = true; return null; }
+  try { r = await get(url, { as: 'blob' }); } catch (e) { if (e?.name !== 'AbortError') apple.off = true; return null; }
   if (!r.ok) return null;
-  const blob = await r.blob();
+  const blob = r.body;
   return /^image\//.test(blob.type) && blob.size > 500 ? blob : null;
 }
 /** Portada en Apple de un disco (o, sin disco, del single o disco donde está la canción). undefined: no se ha podido consultar. */
@@ -135,10 +144,10 @@ export async function candidates({ album, artist, title = '' }) {
 export function frontCover(groupId) { return once(`caa:${groupId}`, () => frontCoverNow(groupId)); }
 async function frontCoverNow(groupId) {
   let r;
-  try { r = await fetch(`${CAA}/release-group/${encodeURIComponent(groupId)}/front-500`); }
+  try { r = await get(`${CAA}/release-group/${encodeURIComponent(groupId)}/front-500`, { as: 'blob' }); }
   catch { return null; }
   if (!r.ok) return null;
-  const blob = await r.blob();
+  const blob = r.body;
   return /^image\//.test(blob.type) && blob.size > 500 ? blob : null;
 }
 
