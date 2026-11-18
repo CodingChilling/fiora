@@ -1,16 +1,16 @@
 // Service worker: guarda la app para abrirla sin conexión. La música vive en IndexedDB, no aquí.
-const CACHE = 'fiora-v47';
+const CACHE = 'fiora-v48';
 const SHELL = [
   './', 'index.html', 'manifest.webmanifest', 'css/styles.css',
   'js/app.js', 'js/db.js', 'js/store.js', 'js/tags.js', 'js/library.js', 'js/player.js',
   'js/cloud.js', 'js/sources.js', 'js/lyrics.js', 'js/recs.js', 'js/icons.js', 'js/sync.js', 'js/flac.js', 'js/ai.js', 'js/oci.js', 'js/vault.js', 'js/tagwrite.js', 'js/images.js', 'js/playlists-data.js', 'js/playlist-ui.js', 'js/account.js', 'js/config.js',
   'js/radio.js', 'js/discover.js', 'js/radio-data.js', 'js/session.js', 'js/explore-ui.js', 'js/groups.js', 'js/merge.js',
-  'js/habits.js', 'js/creature.js', 'js/creature-data.js', 'js/profile-ui.js', 'js/stats-extra.js', 'js/stats-ui.js', 'js/spatial.js', 'js/fades.js', 'js/covers.js', 'js/youtube.js', 'js/download-ui.js',
+  'js/habits.js', 'js/creature.js', 'js/creature-data.js', 'js/profile-ui.js', 'js/stats-extra.js', 'js/stats-ui.js', 'js/spatial.js', 'js/fades.js', 'js/covers.js',
   'vendor/jsmediatags.min.js', 'icons/icon-64.png', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png',
 ];
 // Lo que se carga al usarlo (mapa de radios, escena 3D de la criatura). Se guarda también al instalar,
 // para que esas pantallas funcionen sin conexión, pero si falla no impide la instalación.
-const LAZY = ['js/atlas.js', 'data/world.json', 'js/creature3d.js', 'js/creature-shapes.js', 'vendor/three.module.min.js', 'vendor/three.core.min.js', 'vendor/lame.min.js'];
+const LAZY = ['js/atlas.js', 'data/world.json', 'js/creature3d.js', 'js/creature-shapes.js', 'vendor/three.module.min.js', 'vendor/three.core.min.js'];
 // Si la red no contesta en este tiempo se usa la copia guardada (conexiones que «parecen» funcionar pero no cargan nada).
 // Tras una espera así, durante un rato se sirve directamente la copia (y se actualiza por detrás): los
 // módulos se piden unos tras otros y esperar cada vez sumaría muchos segundos.

@@ -17,7 +17,6 @@ import * as session from './session.js';
 import * as account from './account.js';
 import { icon } from './icons.js';
 import { JAMENDO_CLIENT_ID } from './config.js';
-import { initDownload } from './download-ui.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -29,12 +28,10 @@ const cap = s => String(s || '').replace(/^\p{L}/u, m => m.toUpperCase());
 export function initExplore(c) {
   const { esc, enc, plural, toast, openSheet, sheet, menu, show, rows, cover, empty, setHTML, watch, ACTIONS, playable, saveToLibrary, trackMenu, confirmDlg, ask, PL } = c;
   const view = $('#view');
-  const DL = initDownload(c);
-  Object.assign(c.ACTIONS, DL.actions);
   const jamendoKey = () => JAMENDO_CLIENT_ID || S.settings.jamendoId || '';
 
   // ========================================================== estado
-  const VIEWS = [['', 'Para ti'], ['libre', 'Música libre'], ['radios', 'Radios'], ['descargar', 'Descargar']];
+  const VIEWS = [['', 'Para ti'], ['libre', 'Música libre'], ['radios', 'Radios']];
   const X = { tab: '', q: '', scope: 'all', cat: 'all', cc: '', lang: '', res: {}, resKey: '', ctrl: null, timer: null };
   // Búsqueda clásica por catálogo (la de siempre de «Música libre», con «Más resultados»)
   const L = { src: 'archive', q: '', results: {}, more: {}, page: {}, loading: false, error: '' };
@@ -153,14 +150,14 @@ export function initExplore(c) {
     fresh();
     const sub = SUBVIEWS[name];
     if (sub) { await sub(...args); watch(view); return; }
-    X.tab = ['libre', 'radios', 'descargar'].includes(name) ? name : '';
+    X.tab = ['libre', 'radios'].includes(name) ? name : '';
     if (!X.q) X.scope = X.tab === 'libre' ? 'music' : X.tab === 'radios' ? 'radio' : 'all';
     show(`${head(X.tab)}<div id="x-body" class="x-fade">${X.q ? resultsHTML() : tabHTML(X.tab)}</div>`);
     afterPaint();
     if (X.q && X.resKey !== resKey()) runSearch();
   }
   function afterPaint() { armBlocks(); watchBar(); }
-  function tabHTML(tab) { return tab === 'libre' ? viewFree() : tab === 'radios' ? viewRadios() : tab === 'descargar' ? DL.html() : viewForYou(); }
+  function tabHTML(tab) { return tab === 'libre' ? viewFree() : tab === 'radios' ? viewRadios() : viewForYou(); }
   function paintBody(html) {
     const box = $('#x-body');
     if (!box) return;
@@ -1161,6 +1158,6 @@ export function initExplore(c) {
   };
   return {
     view: viewExplore, stationMenu, liveHTML, fillLive,
-    forms: { ...DL.forms, async 'jamendo-key'(form) { S.settings.jamendoId = form.key.value.trim(); await c.saveKV('settings', false); paintBody(X.q ? resultsHTML() : tabHTML(X.tab)); if (X.q) runSearch(); } },
+    forms: { async 'jamendo-key'(form) { S.settings.jamendoId = form.key.value.trim(); await c.saveKV('settings', false); paintBody(X.q ? resultsHTML() : tabHTML(X.tab)); if (X.q) runSearch(); } },
   };
 }

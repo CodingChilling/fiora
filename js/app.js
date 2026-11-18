@@ -2037,7 +2037,6 @@ const PF = initProfile({ esc, plural, toast, openSheet, sheet, confirmDlg, show,
 const EX = initExplore({
   esc, enc, plural, toast, openSheet, sheet, menu, show, rows, cover, empty, setHTML, watch: watchSentinels, ACTIONS, playable,
   saveToLibrary, trackMenu: t => trackMenu(t, {}), confirmDlg, ask, PL, go: h => go(h), refresh: () => refresh(), saveKV,
-  saveFile, uploadTo, emit,
 });
 
 document.addEventListener('click', e => {

@@ -320,9 +320,7 @@ Pruebas en [`tests/playback`](tests/playback/README.md).
 
 ## Explorar
 
-Una sola sección del menú con cuatro vistas: **Para ti** (lo más visual: ambientes, canciones y radios destacadas, géneros, destinos y experiencias), **Música libre** (los catálogos de siempre y novedades, géneros y recomendaciones) y **Radios** (tus emisoras y colecciones, descubrimiento del día, destacadas, tendencias, ciudades, países y géneros). El buscador de arriba consulta a la vez los catálogos de música y el directorio de radios y agrupa los resultados (canciones, álbumes, artistas, emisoras, países, etiquetas); si una fuente falla, las demás siguen y la que falla ofrece reintentar. La búsqueda se conserva al cambiar de vista.
-
-**Descargar** (cuarta vista) se explica abajo, en [Descargar de YouTube](#descargar-de-youtube).
+Una sola sección del menú con tres vistas: **Para ti** (lo más visual: ambientes, canciones y radios destacadas, géneros, destinos y experiencias), **Música libre** (los catálogos de siempre y novedades, géneros y recomendaciones) y **Radios** (tus emisoras y colecciones, descubrimiento del día, destacadas, tendencias, ciudades, países y géneros). El buscador de arriba consulta a la vez los catálogos de música y el directorio de radios y agrupa los resultados (canciones, álbumes, artistas, emisoras, países, etiquetas); si una fuente falla, las demás siguen y la que falla ofrece reintentar. La búsqueda se conserva al cambiar de vista.
 
 **De dónde sale cada cosa (nada se inventa)**
 - **Emisoras**: [Radio Browser](https://api.radio-browser.info), directorio comunitario gratuito. Se elige un servidor de su lista y, si falla, el siguiente; se avisa del clic al empezar a escuchar (lo piden sus normas; solo se envía el identificador de la emisora). Solo se muestran emisoras HTTPS en formatos que el navegador puede reproducir. Las «tendencias» son los **clics de las últimas 24 horas** en el directorio (no oyentes en directo) y los votos de su comunidad.
@@ -350,20 +348,6 @@ Una sola sección del menú con cuatro vistas: **Para ti** (lo más visual: ambi
 Todas con RLS (cada usuario solo ve y cambia lo suyo; el rol anónimo no tiene acceso), funciones `security invoker`, límites de tamaño y borrado en cascada al eliminar la cuenta. Las portadas de las colecciones van al bucket `fiora-playlists` con el mismo límite de 16 MB y la misma opción de usarlas solo en el dispositivo. Con esta migración, las emisoras favoritas dejan de viajar en la copia general de la cuenta: así, una emisora quitada en un dispositivo ya no reaparece.
 
 **Pruebas.** En [`tests/explore`](tests/explore/README.md): la migración con RLS en PostgreSQL y la app de punta a punta contra emuladores de Radio Browser, los catálogos y Supabase.
-
-## Descargar de YouTube
-
-En **Explorar → Descargar**:
-
-- **Pega un enlace** de YouTube o YouTube Music (vídeo, `youtu.be`, `shorts`, `music.youtube.com` o playlist). Si el vídeo está dentro de una playlist, eliges **solo esa canción** o **toda la playlist** (hasta 500 canciones; los «Mix» automáticos no, porque cambian para cada persona).
-- **Buscar en YouTube**: canciones (YouTube Music), vídeos o playlists. Al elegir un vídeo se ve en el reproductor incrustado de YouTube (`youtube-nocookie.com`, sin cookies hasta que le das al play), y la música de Fiora se pausa. **Copiar enlace** copia la dirección del vídeo que se está viendo, también si dentro del reproductor pasas a otro (la página lo sabe por la API del reproductor). **Descargar** lo lleva a la descarga. YouTube no deja meter su web completa dentro de otra página, así que la búsqueda y la lista de resultados las pinta Fiora.
-- **Formato**: el audio M4A (AAC) que da YouTube, sin recomprimir. Si un vídeo no tiene M4A (solo Opus), se convierte a **MP3** de 192 kbps en el propio dispositivo con [lamejs](https://github.com/zhuker/lamejs) (LGPL, en `vendor/lame.min.js`, que solo se carga entonces).
-- **Metadatos dentro del archivo**: título y artistas limpios (sin «(Official Video)», «[Lyrics]», «- Topic», «VEVO»; «Artista - Canción» se separa y los «feat.» pasan a artistas). Si Apple (iTunes) tiene esa canción con el mismo título y artista, se añaden álbum, artista del álbum, año, número, género y su portada de 600 px; si no, YouTube Music; y si tampoco, la miniatura del vídeo recortada a cuadrado y sin franjas negras. Puedes editarlos antes de descargar. Las playlists no ponen su nombre como álbum.
-- **Destino**, en cada descarga: **Guardar en el dispositivo** (archivo «Artistas - Título.m4a»; en iPhone/iPad, con el menú Compartir) o **Añadir a mi biblioteca** (disponible sin conexión; opcionalmente subirlas a tu nube y, con una playlist, crearla en Fiora con su nombre y orden). Dos descargas a la vez, con progreso, cancelar y reintentar las que fallan.
-- **Servidor**: YouTube no deja que una web lea su audio, así que se pide a un servidor intermedio de código abierto: primero el tuyo, si lo pones (Piped o Invidious, en «Servidor de descarga»; se guarda en tu cuenta), y después los servidores públicos de [Piped](https://github.com/TeamPiped/Piped). Son gratuitos y de voluntarios, y **a menudo están caídos o bloqueados por YouTube** (les pide «demostrar que no son un robot»): un servidor que falla se descarta y se prueba el siguiente, y el mensaje distingue «YouTube bloquea a los servidores» de «el vídeo no está disponible» (solo cuando dos servidores lo confirman). Lo más fiable y gratis es un servidor de [Invidious](https://docs.invidious.io/installation/) propio en tu ordenador, porque YouTube bloquea sobre todo las IP de centros de datos: se admite `http://localhost` (y desde el móvil, publicado con https, por ejemplo con un túnel de Cloudflare). Solo se les envía el identificador del vídeo, de la playlist o lo que buscas. No se guarda historial de descargas.
-- Úsalo solo para uso personal y respetando los derechos de autor y las condiciones de YouTube.
-
-Pruebas en [`tests/download`](tests/download/README.md).
 
 ## Catálogos de música libre
 
@@ -403,8 +387,6 @@ Y abre `http://localhost:8000`.
 | `js/app.js` | Pantallas, menús y navegación |
 | `js/player.js` | Reproductor, cola y controles del sistema; elige entre la ruta normal y la espacial |
 | `js/spatial.js` | Audio espacial (8D): grafo de Web Audio, modos, comprobación de compatibilidad |
-| `js/youtube.js` | Descargas de YouTube: enlaces, servidores Piped/Invidious, búsqueda, audio por trozos, conversión a MP3 y metadatos |
-| `js/download-ui.js` | Explorar → Descargar: enlaces, lista de canciones, buscador y reproductor de YouTube |
 | `js/covers.js` | Portadas que faltan: búsqueda en Apple (iTunes Search API), YouTube Music (Piped) y MusicBrainz / Cover Art Archive, y portadas generadas |
 | `js/fades.js` | Fundidos y mezcla cruzada: ajustes, curvas y volumen de cada momento |
 | `js/library.js`, `js/tags.js` | Importación y lectura de etiquetas |

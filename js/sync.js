@@ -20,7 +20,6 @@ export function snapshot(withPrefs = false) {
       volume: { v: typeof s.volume === 'number' ? s.volume : 1, at: s.volAt || 0 },
       spatial: { v: s.spatial || null, at: s.spatialAt || 0 },      // audio espacial (8D): activado, modo, intensidad y velocidad
       fx: { v: s.fx || null, at: s.fxAt || 0 },                      // fundidos y transiciones entre canciones
-      ytServer: { v: s.ytServer || '', at: s.ytServerAt || 0 },        // servidor propio para descargar de YouTube (no es secreto)
     };
   }
   return data;
@@ -98,7 +97,6 @@ export async function merge(remote) {
     if (p.volume && p.volume.at > (s.volAt || 0)) { s.volume = p.volume.v; s.volAt = p.volume.at; emit('volume', s.volume); }
     if (p.spatial && p.spatial.v && p.spatial.at > (s.spatialAt || 0)) { s.spatial = p.spatial.v; s.spatialAt = p.spatial.at; emit('spatial-changed'); }
     if (p.fx && p.fx.v && p.fx.at > (s.fxAt || 0)) { s.fx = p.fx.v; s.fxAt = p.fx.at; emit('fx-changed'); }
-    if (p.ytServer && p.ytServer.at > (s.ytServerAt || 0)) { s.ytServer = p.ytServer.v || ''; s.ytServerAt = p.ytServer.at; }
     await saveKV('settings', false);
   }
   if (changed) {
