@@ -34,6 +34,7 @@ const VIDEOS = {
   CCCCCCCCCCC: { title: 'Otra Más (feat. Ana Prueba) [Lyrics]', uploader: 'Banda De Prueba VEVO', duration: 6, audio: 'm4a' },
   DDDDDDDDDDD: { unavailable: true, title: 'Borrado' },
   EEEEEEEEEEE: { title: 'Muy Larga', uploader: 'Lento', duration: 40, audio: 'long' },
+  jNQXAC9IVRw: { title: 'Me at the zoo', uploader: 'jawed', duration: 19, audio: 'm4a' },   // el que pide Fiora para probar un servidor
 };
 const LIST = { PLprueba: { name: 'Mi lista de prueba', uploader: 'Alguien', pages: [['AAAAAAAAAAA', 'BBBBBBBBBBB'], ['CCCCCCCCCCC', 'DDDDDDDDDDD']] } };
 const AUDIO = { m4a: [M4A, 'audio/mp4'], opus: [OPUS, 'audio/webm'], long: [LONG, 'audio/mp4'] };

@@ -1,0 +1,14 @@
+:8080 {
+	# Fiora es otra web: sin esta cabecera el navegador no la deja leer las respuestas.
+	header {
+		defer
+		Access-Control-Allow-Origin "*"
+	}
+	# El audio lo sirve companion; todo lo demás, Invidious.
+	handle /companion* {
+		reverse_proxy companion:8282
+	}
+	handle {
+		reverse_proxy invidious:3000
+	}
+}

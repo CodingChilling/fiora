@@ -9,6 +9,11 @@ export const SUPABASE_KEY = 'sb_publishable__rmG-ZJ4PnXhp9la52cJhg_l8A_Stj0';
 // Vacía: se puede escribir en Explorar → Jamendo y se guarda solo en ese dispositivo.
 export const JAMENDO_CLIENT_ID = '';
 
+// Servidor de descargas de YouTube (Piped o Invidious) que usan todos por defecto, antes que los
+// públicos. Vacío: cada persona puede poner el suyo en Explorar → Descargar → Servidor de descarga
+// (el suyo va primero). Ejemplo: 'https://invidious.midominio.com'
+export const YT_SERVER = '';
+
 // --- Playlists en Supabase -------------------------------------------------------
 // Límite por imagen (portadas y fotos del carrusel): el mismo que tiene el bucket en Supabase
 // Storage (`file_size_limit` en supabase/migrations/…_playlists.sql). 16 MB = 16 × 1024 × 1024.
