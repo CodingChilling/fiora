@@ -12,7 +12,6 @@ import { S } from './store.js';
 import * as covers from './covers.js';
 import { writeTags } from './tagwrite.js';
 import { splitArtists } from './tags.js';
-import { YT_SERVER } from './config.js';
 
 const WAIT = 12000;            // ms como mucho por consulta a un servidor
 let CHUNK = 4 * 1048576;       // el audio se pide en trozos de 4 MB (YouTube corta las descargas largas de golpe)
@@ -46,13 +45,11 @@ const kinds = new Map();   // servidor -> 'piped' | 'invidious'
 const bad = new Set();     // servidores que han fallado en esta sesión
 const own = () => String(S.settings.ytServer || '').trim().replace(/\/+$/, '');
 let cur = null;            // servidor que está funcionando
-const shared = () => String(YT_SERVER || '').trim().replace(/\/+$/, '');   // el de config.js, para todos
 async function servers() {
   const list = [];
   if (own()) list.push(own());
-  if (shared() && !list.includes(shared())) list.push(shared());
   for (const b of await covers.pipedAllServers().catch(() => [])) if (!list.includes(b)) list.push(b);
-  const ok = list.filter(b => !bad.has(b) || b === own() || b === shared());
+  const ok = list.filter(b => !bad.has(b) || b === own());
   if (ok.length) return ok;
   bad.clear();                 // todos fallaron antes: se les da otra oportunidad (quizá ya funcionan)
   return list;
@@ -83,7 +80,7 @@ async function askNow(fn) {
   const tried = [], errors = [];
   const list = await servers();
   if (cur && !list.includes(cur)) cur = null;     // p. ej. el servidor propio que se acaba de quitar
-  const order = [...new Set([own(), shared(), cur, ...list].filter(Boolean))];
+  const order = [...new Set([own(), cur, ...list].filter(Boolean))];
   for (const base of order.slice(0, 6)) {
     tried.push(base);
     let answered = false;
@@ -100,7 +97,7 @@ async function askNow(fn) {
       }
     }
     if (base === cur && !answered) cur = null;
-    if (!answered && base !== own() && base !== shared()) { bad.add(base); covers.pipedBad(base); }
+    if (!answered && base !== own()) { bad.add(base); covers.pipedBad(base); }
     if (errors.filter(e => e.why === 'dead').length >= 2) break;      // dos servidores coinciden: no está disponible
   }
   const dead = errors.filter(e => e.why === 'dead'), bot = errors.some(e => e.why === 'bot');
