@@ -346,7 +346,7 @@ export function initExplore(c) {
   function viewRadios() {
     const favs = data.favs(), colls = data.collections(), hist = data.historyList();
     const s = data.status();
-    const syncNote = account.user() ? (s.mode === 'missing' ? ' · <span class="warn">Falta preparar Supabase: se guardan solo en este dispositivo</span>' : '') : ' · <a href="#/ajustes">Inicia sesión</a> para tenerlas en todos tus dispositivos';
+    const syncNote = account.user() ? (s.mode === 'missing' ? ' · <span class="warn">Falta preparar Supabase: se guardan solo en este dispositivo</span>' : '') : ' · <a href="#/ajustes/cuenta">Inicia sesión</a> para tenerlas en todos tus dispositivos';
     return `
       <section class="xb mine"><div class="xb-head"><div><h2>Tus emisoras</h2><p class="muted">${plural(favs.length, 'favorita', 'favoritas')} · ${plural(colls.length, 'colección', 'colecciones')}${syncNote}</p></div>
         <button class="chip" data-act="x-new-coll">${icon('plus')}Nueva colección</button></div>
@@ -894,7 +894,7 @@ export function initExplore(c) {
     show(`${subHead('Pasaporte musical', '#/explorar/radios', 'Radios')}
       <div class="passport-top"><div class="pp-count"><b>${stamps.length}</b><span>${stamps.length === 1 ? 'país explorado' : 'países explorados'}</span></div>
         <p class="muted">Un país se sella cuando escuchas una de sus emisoras al menos ${pp.secs < 60 ? pp.secs + ' segundos' : pp.secs / 60 + (pp.secs === 60 ? ' minuto' : ' minutos')} seguidos (sin contar pausas). Abrir una ficha no cuenta.
-          ${account.user() ? '' : ' <a href="#/ajustes">Inicia sesión</a> para conservarlo en todos tus dispositivos.'}</p></div>
+          ${account.user() ? '' : ' <a href="#/ajustes/cuenta">Inicia sesión</a> para conservarlo en todos tus dispositivos.'}</p></div>
       <div id="pp-map" class="pp-map"><div class="x-loading"><span class="spin"></span>Cargando mapa…</div></div>
       ${stamps.length ? `<h2>Sellos</h2><div class="stamps">${stamps.map((s, i) => `<div class="stamp" style="--r:${((i * 37) % 9) - 4}deg;--hue:${hueOf(s.cc)}"><span class="flag">${radio.flag(s.cc)}</span><b>${esc(radio.countryName(s.cc))}</b><small>${fmt(s.first)}</small><small class="st-name">${esc(s.name || '')}</small></div>`).join('')}</div>
         <h2>Últimos descubrimientos</h2><ol class="pp-recent">${stamps.slice(0, 8).map(s => `<li>${radio.flag(s.cc)} <b>${esc(radio.countryName(s.cc))}</b> · ${fmt(s.first)}${s.name ? ` · con ${esc(s.name)}` : ''} <a class="chip" href="#/explorar/pais/${s.cc}">Más de ${esc(radio.countryName(s.cc))}</a></li>`).join('')}</ol>`

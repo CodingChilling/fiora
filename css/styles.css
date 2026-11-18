@@ -1461,3 +1461,82 @@ body.dnd, body.dnd * { cursor: grabbing !important; }
 body.offline #view { padding-top: calc(48px + var(--safe-t)); }
 @media (min-width: 900px) { body.offline #view { padding-top: 56px; } }
 .note-box { margin: 0 0 16px; padding: 10px 14px; border-radius: 12px; background: color-mix(in srgb, var(--accent) 12%, var(--surface)); border: 1px solid var(--line); font-size: 14px; }
+
+/* ---------------------------------------------------------------- ajustes */
+.set-index { max-width: 720px; }
+.set-group { margin-bottom: 22px; }
+.set-group h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 700; margin: 0 0 8px 6px; }
+.set-list { background: var(--surface); border-radius: var(--radius); overflow: hidden; }
+.set-row { display: flex; align-items: center; gap: 14px; padding: 12px 14px; min-height: 64px; transition: background-color .15s; }
+.set-list .set-row + .set-row { border-top: 1px solid var(--line); }
+.set-row > .ic:last-child { color: var(--muted); flex: none; }
+.set-row .row-text { flex: 1; min-width: 0; }
+.set-row .row-text b { display: block; font-weight: 650; }
+.set-row .row-text small { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (hover: hover) { .set-row:hover { background: var(--surface-2); } }
+.set-ic { --h: 25; width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; flex: none;
+  color: hsl(var(--h) 85% 68%); background: hsl(var(--h) 70% 55% / .16); }
+.set-ic .ic { width: 20px; height: 20px; }
+@media (prefers-color-scheme: light) { .set-ic { color: hsl(var(--h) 70% 38%); background: hsl(var(--h) 70% 50% / .13); } }
+.set-hero { display: flex; align-items: center; gap: 14px; padding: 16px; margin-bottom: 22px; border-radius: var(--radius);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 22%, var(--surface)), color-mix(in srgb, var(--accent-2) 14%, var(--surface))); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); }
+.set-hero .row-text { flex: 1; min-width: 0; }
+.set-hero .row-text b { display: block; font-size: 16px; }
+.set-hero .row-text small { display: block; color: var(--muted); margin-top: 2px; }
+.set-credits { text-align: center; font-size: 12px; margin-top: 8px; }
+.set-wrap { display: block; }
+.set-side { display: none; }
+.set-body { max-width: 760px; min-width: 0; }
+.set-body .panel h2 { font-size: 18px; }
+.set-body .panel > p:last-child { margin-bottom: 0; }
+.muted.small, p.small { font-size: 13px; }
+.switch.first { margin-top: 4px; }
+details.more.flat { margin-top: 0; border-top: 0; padding-top: 0; }
+details.more.flat[open] summary { margin-bottom: 10px; }
+.panel details.more.flat:not(:first-child) { margin-top: 12px; }
+@media (min-width: 900px) {
+  .set-wrap { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 24px; align-items: start; }
+  .set-side { display: flex; flex-direction: column; gap: 2px; position: sticky; top: 0; }
+  .set-side .set-row { min-height: 0; padding: 7px 10px; border-radius: 12px; gap: 10px; color: var(--muted); }
+  .set-side .set-row .set-ic { width: 28px; height: 28px; border-radius: 8px; }
+  .set-side .set-row .set-ic .ic { width: 17px; height: 17px; }
+  .set-side .set-row[aria-current="page"] { background: var(--surface); color: var(--text); }
+}
+
+/* guía del bucket */
+.tuto-path { display: flex; gap: 4px; padding: 4px; border-radius: 999px; background: var(--surface-2); margin: 4px 0 14px; max-width: 460px; }
+.tuto-path button { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 10px; border-radius: 999px; font-weight: 650; font-size: 14px; color: var(--muted); }
+.tuto-path button .ic { width: 17px; height: 17px; }
+.tuto-path button.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgb(0 0 0 / .2); }
+.tuto-progress { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.tuto-progress .meter { flex: 1; margin: 0; }
+.tuto-progress small { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+ol.tuto { list-style: none; margin: 0; padding: 0; }
+.tuto-step { position: relative; }
+.tuto-step:not(:last-child)::before { content: ""; position: absolute; left: 15px; top: 44px; bottom: -4px; width: 2px; background: var(--line); }
+.tuto-step.done:not(:last-child)::before { background: color-mix(in srgb, var(--accent) 55%, var(--line)); }
+.tuto-step summary { display: flex; align-items: center; gap: 12px; padding: 8px 0; cursor: pointer; list-style: none; }
+.tuto-step summary::-webkit-details-marker { display: none; }
+.tuto-step summary > .ic { color: var(--muted); transition: transform .2s; flex: none; }
+.tuto-step details[open] summary > .ic { transform: rotate(180deg); }
+.tuto-n { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; flex: none; font-weight: 750; font-size: 14px;
+  background: var(--surface-2); color: var(--muted); border: 2px solid var(--line); position: relative; z-index: 1; }
+.tuto-n .ic { width: 16px; height: 16px; }
+.tuto-step.cur .tuto-n { border-color: var(--accent); color: var(--accent); background: var(--surface); }
+.tuto-step.done .tuto-n { background: linear-gradient(135deg, var(--accent), var(--accent-2)); border-color: transparent; color: var(--accent-ink); }
+.tuto-t { flex: 1; min-width: 0; }
+.tuto-t b { display: block; font-weight: 650; }
+.tuto-step.done .tuto-t b { color: var(--muted); }
+.tuto-t small { display: inline-block; margin-top: 2px; font-size: 12px; font-weight: 650; color: var(--accent); }
+.tuto-body { padding: 0 0 12px 44px; }
+.tuto-body > p:first-child { margin-top: 0; }
+.tuto-body ol.steps { margin-top: 0; }
+.tuto-body code { background: var(--surface-2); padding: 1px 6px; border-radius: 6px; font-size: 13px; }
+.panel details.faq { border-top: 1px solid var(--line); }
+.panel details.faq:last-child { border-bottom: 0; }
+.panel details.faq summary { padding: 12px 0; cursor: pointer; font-weight: 600; }
+.panel details.faq p { margin-top: 0; }
+.set-hero .row-text small, .set-hero .row-text b { white-space: normal; }
+.set-body > .set-hero { margin-bottom: 16px; }
+.tuto-path button { white-space: nowrap; }
+@media (max-width: 380px) { .tuto-path button { font-size: 13px; padding: 8px 6px; } .tuto-path button .ic { display: none; } }

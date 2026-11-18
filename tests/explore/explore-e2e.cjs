@@ -47,7 +47,7 @@ const check = (c, m) => { if (c) { ok++; console.log('ok  ', m); } else { fails+
   const settled = page => until(page, () => !document.querySelector('#view .x-loading, #view .skel'), null, 15000);
   const synced = async page => { await page.waitForTimeout(500); return until(page, async () => { const s = (await import('./js/radio-data.js')).status(); return s.mode === 'ready' && !s.pending && !s.busy; }); };
   const login = async (page, email) => {
-    await page.goto(APP + '#/ajustes');
+    await page.goto(APP + '#/ajustes/cuenta');
     await page.fill('[data-form="login"] [name=email]', email); await page.fill('[data-form="login"] [name=password]', 'secreta123');
     await page.click('[data-form="login"] button[value="in"]');
     return synced(page);

@@ -159,7 +159,7 @@ const RADIO = { id: 'radio:prueba-1', uuid: 'prueba-1', radio: true, title: 'Rad
   await A.waitForTimeout(600);
   s = await st(A);
   check(s.v === 1 && s.vol === 1 && s.sounding === 1 && !s.out.length, '9. Por defecto, sin fundidos: el volumen es el elegido desde el primer momento');
-  await A.goto(APP + '#/ajustes'); await A.waitForSelector('#ajustes-audio [data-fx="mode"]');
+  await A.goto(APP + '#/ajustes/audio'); await A.waitForSelector('#ajustes-audio [data-fx="mode"]');
   const ui = await A.evaluate(() => { const p = document.querySelector('#ajustes-audio'); const q = s => p.querySelector(s); return { mode: q('[data-fx="mode"]').value, cross: q('[data-fx="cross"]').disabled, fin: q('[data-fx="fadeIn"]').value, fout: q('[data-fx="fadeOut"]').value, pause: q('[data-fx="pause"]').checked, manual: q('[data-fx="manual"]').checked, reset: !!q('[data-act="fx-reset"]'), txt: p.innerText }; });
   check(ui.mode === 'normal' && ui.cross && ui.fin === '0' && ui.fout === '0' && !ui.pause && !ui.manual && ui.reset && /Transiciones y fundidos/.test(ui.txt),
     '10. Ajustes → Audio y reproducción → «Transiciones y fundidos»: todo apagado de inicio, con «Restaurar transiciones»');
@@ -304,17 +304,19 @@ const RADIO = { id: 'radio:prueba-1', uuid: 'prueba-1', radio: true, title: 'Rad
   await A.evaluate(async () => { const { S, saveKV } = await import('./js/store.js'); S.settings.spatial = { ...S.settings.spatial, on: false }; await saveKV('settings', false); });
 
   // se conservan al recargar y viajan con la cuenta
-  await A.goto(APP + '#/ajustes'); await A.reload(); await A.waitForSelector('[data-fx="mode"]');
+  await A.goto(APP + '#/ajustes/audio'); await A.reload(); await A.waitForSelector('[data-fx="mode"]');
   const kept = await A.evaluate(() => ({ mode: document.querySelector('[data-fx="mode"]').value, cross: document.querySelector('[data-fx="cross"]').value, manual: document.querySelector('[data-fx="manual"]').checked, pause: document.querySelector('[data-fx="pause"]').checked }));
   check(kept.mode === 'cross' && kept.cross === '4' && kept.manual && kept.pause, '21. Los ajustes se conservan al recargar');
+  await A.goto(APP + '#/ajustes/cuenta'); await A.waitForSelector('[data-form="login"]');
   await A.fill('[data-form="login"] [name=email]', 'fundidos@example.com'); await A.fill('[data-form="login"] [name=password]', 'secreta123'); await A.click('[data-form="login"] button[value="in"]');
   await until(A, async () => !!(await import('./js/account.js')).user());
   await A.evaluate(async () => { await (await import('./js/account.js')).sync(); });
   const { page: B } = await device('B', { files: false });
-  await B.goto(APP + '#/ajustes'); await B.fill('[data-form="login"] [name=email]', 'fundidos@example.com'); await B.fill('[data-form="login"] [name=password]', 'secreta123'); await B.click('[data-form="login"] button[value="in"]');
+  await B.goto(APP + '#/ajustes/cuenta'); await B.fill('[data-form="login"] [name=email]', 'fundidos@example.com'); await B.fill('[data-form="login"] [name=password]', 'secreta123'); await B.click('[data-form="login"] button[value="in"]');
   const got = await until(B, async () => (await import('./js/store.js')).S.settings.fx?.mode === 'cross', null, 15000);
   const fb = await fxOf(B);
   check(got && fb.cross === 4 && fb.manual && fb.pause, '    Con sesión, otro dispositivo recibe las transiciones');
+  await A.goto(APP + '#/ajustes/audio'); await A.waitForSelector('[data-act="fx-reset"]');
   await A.click('[data-act="fx-reset"]'); await A.waitForTimeout(400);
   const fr = await fxOf(A);
   check(fr.mode === 'normal' && fr.fadeIn === 0 && fr.fadeOut === 0 && !fr.pause && !fr.manual, '22. «Restaurar transiciones» vuelve a todo apagado');
@@ -322,7 +324,7 @@ const RADIO = { id: 'radio:prueba-1', uuid: 'prueba-1', radio: true, title: 'Rad
   // navegador que no deja cambiar el volumen (iPhone, iPad)
   const { page: I } = await device('I', { init: () => { Object.defineProperty(HTMLMediaElement.prototype, 'volume', { get() { return 1; }, set() {}, configurable: true }); localStorage.setItem('x', '1'); } });
   await I.evaluate(async () => { const { S, saveKV } = await import('./js/store.js'); S.settings.fx = { mode: 'cross', cross: 6, fadeIn: 3, fadeOut: 3, pause: true, manual: true }; await saveKV('settings', false); });
-  await I.goto(APP + '#/ajustes'); await I.waitForSelector('[data-fx="mode"]');
+  await I.goto(APP + '#/ajustes/audio'); await I.waitForSelector('[data-fx="mode"]');
   const iu = await I.evaluate(() => ({ dis: document.querySelector('[data-fx="mode"]').disabled && document.querySelector('[data-fx="fadeIn"]').disabled, txt: document.querySelector('#ajustes-audio').innerText }));
   await playTitles(I, ['Uno', 'Dos']); await sounding(I, 'Uno');
   await seek(I, -7); await I.waitForTimeout(2500);

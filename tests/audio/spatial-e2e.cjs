@@ -85,8 +85,8 @@ function wav(secs, freq = 440, sr = 22050) {
   await A.goto(APP + '#/biblioteca'); await A.waitForSelector('.row'); await A.click('.row [data-act="more"]'); await A.waitForSelector('#sheet .menu');
   check(!RX.test(await A.innerText('#sheet')), '   ni en el menú de una canción');
   await A.keyboard.press('Escape');
-  await A.goto(APP + '#/ajustes'); await A.waitForSelector('#ajustes-audio');
-  const ui = await A.evaluate(() => { const p = document.querySelector('#ajustes-audio'); return { title: p.querySelector('h2').textContent, auto: !!p.querySelector('[data-toggle="autoplay"]'), on: p.querySelector('[data-sp="on"]').checked, mode: p.querySelector('[data-sp="mode"]').value, modes: [...p.querySelectorAll('[data-sp="mode"] option')].map(o => o.textContent), i: p.querySelector('[data-sp="intensity"]').value, v: p.querySelector('[data-sp="speed"]').value, dis: p.querySelector('[data-sp="intensity"]').disabled, reset: !!p.querySelector('[data-act="sp-reset"]'), txt: p.innerText, n: document.querySelectorAll('[data-sp]').length }; });
+  await A.goto(APP + '#/ajustes/audio'); await A.waitForSelector('#ajustes-audio');
+  const ui = await A.evaluate(() => { const p = document.querySelector('#ajustes-audio'); return { title: document.querySelector('.head h1').textContent, auto: !!p.querySelector('[data-toggle="autoplay"]'), on: p.querySelector('[data-sp="on"]').checked, mode: p.querySelector('[data-sp="mode"]').value, modes: [...p.querySelectorAll('[data-sp="mode"] option')].map(o => o.textContent), i: p.querySelector('[data-sp="intensity"]').value, v: p.querySelector('[data-sp="speed"]').value, dis: p.querySelector('[data-sp="intensity"]').disabled, reset: !!p.querySelector('[data-act="sp-reset"]'), txt: p.innerText, n: document.querySelectorAll('[data-sp]').length }; });
   check(ui.title === 'Audio y reproducción' && ui.auto && !ui.on && ui.mode === 'suave' && ui.modes.join('|') === 'Suave|Circular|Envolvente (experimental)' && ui.i === '60' && ui.v === '40' && ui.dis && ui.reset && ui.n === 4,
     '3. Ajustes → Audio y reproducción: interruptor apagado, tres modos, intensidad, velocidad y «Restaurar ajustes»');
   check(/Se recomienda utilizar auriculares/.test(ui.txt) && /suena el audio original/.test(ui.txt), '   con la descripción y la nota de compatibilidad');
@@ -150,7 +150,7 @@ function wav(secs, freq = 440, sr = 22050) {
   await play(A, 'Tono largo'); await sounding(A, 'Tono largo');
   s = await st(A);
   check(s.spatial && s.sounding === 1 && !s.mainSrc && s.pref.mode === 'circular', '   Radio → canción de la biblioteca: vuelve el efecto con el modo guardado');
-  await A.goto(APP + '#/ajustes'); await A.waitForSelector('[data-sp-status]');
+  await A.goto(APP + '#/ajustes/audio'); await A.waitForSelector('[data-sp-status]');
   check(/Tono largo/.test(await A.innerText('[data-sp-status]')) && /se está procesando/.test(await A.innerText('[data-sp-status]')), '   Ajustes dice qué pasó con la última canción');
   await playRaw(A, RADIO); await sounding(A, 'Radio de prueba');
   await A.evaluate(async () => (await import('./js/player.js')).toggle()); await A.waitForTimeout(300);
@@ -172,7 +172,7 @@ function wav(secs, freq = 440, sr = 22050) {
   await play(A, 'Otro tono'); await sounding(A, 'Otro tono');
   s = await st(A);
   check(s.sounding === 1 && s.spatial && s.title === 'Otro tono' && await advancing(A), '8. Tras muchos cambios rápidos entre radio, biblioteca y Explorar suena una sola cosa, y es la última');
-  await A.goto(APP + '#/ajustes'); await A.waitForSelector('[data-sp="on"]');
+  await A.goto(APP + '#/ajustes/audio'); await A.waitForSelector('[data-sp="on"]');
   const t0 = (await st(A)).t;
   for (let i = 0; i < 6; i++) { await A.setChecked('[data-sp="on"]', i % 2 === 1); await A.waitForTimeout(140); }
   await A.waitForTimeout(900);
@@ -204,20 +204,21 @@ function wav(secs, freq = 440, sr = 22050) {
   check(sizes.size === orig.length && sizes.hash === [...crypto.createHash('sha256').update(orig).digest()].slice(0, 8).join(','), '14. El archivo guardado es idéntico al original: el efecto no lo modifica');
 
   // --- cuenta: se guarda y llega a otro dispositivo
+  await A.goto(APP + '#/ajustes/cuenta'); await A.waitForSelector('[data-form="login"]');
   await A.fill('[data-form="login"] [name=email]', 'audio@example.com'); await A.fill('[data-form="login"] [name=password]', 'secreta123'); await A.click('[data-form="login"] button[value="in"]');
   await until(A, async () => !!(await import('./js/account.js')).user());
   await A.evaluate(async () => { await (await import('./js/account.js')).sync(); });
   const B = await device('B', { files: false });
-  await B.goto(APP + '#/ajustes'); await B.fill('[data-form="login"] [name=email]', 'audio@example.com'); await B.fill('[data-form="login"] [name=password]', 'secreta123'); await B.click('[data-form="login"] button[value="in"]');
+  await B.goto(APP + '#/ajustes/cuenta'); await B.fill('[data-form="login"] [name=email]', 'audio@example.com'); await B.fill('[data-form="login"] [name=password]', 'secreta123'); await B.click('[data-form="login"] button[value="in"]');
   const got = await until(B, async () => (await import('./js/store.js')).S.settings.spatial?.mode === 'circular', null, 15000);
   s = await st(B);
   check(got && s.pref.on && s.pref.intensity === 75 && s.pref.speed === 20, '    Con sesión, otro dispositivo recibe la configuración (activado, Circular, 75 %, 20 %)');
-  await B.goto(APP + '#/ajustes'); await B.waitForSelector('[data-sp="on"]');
+  await B.goto(APP + '#/ajustes/audio'); await B.waitForSelector('[data-sp="on"]');
   await setUi(B, 'mode', 'suave'); await B.evaluate(async () => { await (await import('./js/account.js')).sync(); });
   await A.evaluate(async () => { await (await import('./js/account.js')).sync(); });
   check((await st(A)).pref.mode === 'suave', '    Un cambio en el otro dispositivo vuelve al primero al sincronizar');
   await B.evaluate(async () => { const a = await import('./js/account.js'); if (a.user()) await a.signOut(); });
-  await B.goto(APP + '#/inicio'); await B.goto(APP + '#/ajustes'); await B.waitForSelector('[data-form="login"]');
+  await B.goto(APP + '#/inicio'); await B.goto(APP + '#/ajustes/cuenta'); await B.waitForSelector('[data-form="login"]');
   await B.fill('[data-form="login"] [name=email]', 'audio@example.com'); await B.fill('[data-form="login"] [name=password]', 'secreta123'); await B.click('[data-form="login"] button[value="in"]');
   await until(B, async () => !!(await import('./js/account.js')).user());
   await B.evaluate(async () => { await (await import('./js/account.js')).sync(); });
@@ -231,11 +232,11 @@ function wav(secs, freq = 440, sr = 22050) {
   await A.context().setOffline(false);
 
   // ====================================================================== Oracle
-  const connect = async page => { await page.goto(APP + '#/ajustes'); if (await page.$('details.more summary')) await page.click('details.more summary'); await page.fill('[data-form="par"] [name=name]', 'Nube'); await page.fill('[data-form="par"] [name=url]', OWNER_PAR); await page.click('[data-form="par"] button'); return until(page, async () => [...(await import('./js/store.js')).S.tracks.values()].filter(t => t.cloudName).length >= 3, null, 20000); };
+  const connect = async page => { await page.goto(APP + '#/ajustes/nube'); if (await page.$('details.more summary')) await page.click('details.more summary'); await page.fill('[data-form="par"] [name=name]', 'Nube'); await page.fill('[data-form="par"] [name=url]', OWNER_PAR); await page.click('[data-form="par"] button'); return until(page, async () => [...(await import('./js/store.js')).S.tracks.values()].filter(t => t.cloudName).length >= 3, null, 20000); };
   const cloudTitle = page => page.evaluate(async () => [...(await import('./js/store.js')).S.tracks.values()].find(t => t.cloudName && !t.hasBlob).title);
   const C = await device('C', { files: false });
   check(await connect(C), '5. Bucket de Oracle conectado (emulador)');
-  await C.goto(APP + '#/ajustes'); await C.waitForSelector('[data-sp="on"]'); await setUi(C, 'on', true);
+  await C.goto(APP + '#/ajustes/audio'); await C.waitForSelector('[data-sp="on"]'); await setUi(C, 'on', true);
   const ct = await cloudTitle(C);
   await play(C, ct); await sounding(C, ct);
   s = await st(C);
@@ -249,7 +250,7 @@ function wav(secs, freq = 440, sr = 22050) {
   const D = await device('D', { files: false });
   await connect(D);
   await fetch(ORACLE + '/__nocors?on=1');                  // a partir de aquí, Oracle no manda cabeceras CORS con la música
-  await D.goto(APP + '#/ajustes'); await D.waitForSelector('[data-sp="on"]'); await setUi(D, 'on', true);
+  await D.goto(APP + '#/ajustes/audio'); await D.waitForSelector('[data-sp="on"]'); await setUi(D, 'on', true);
   const dt = await cloudTitle(D);
   await play(D, dt);
   await until(D, async t => { const pl = await import('./js/player.js'); return pl.P.current?.title === t && !pl.P.audio.paused && pl.P.audio.currentTime > 0.1; }, dt);
@@ -283,7 +284,7 @@ function wav(secs, freq = 440, sr = 22050) {
   await G.evaluate(async () => { const st2 = await import('./js/store.js'); st2.S.settings.spatial = { on: true, mode: 'suave', intensity: 60, speed: 40 }; await st2.saveKV('settings', false); });
   await play(G, 'Tono largo'); await sounding(G, 'Tono largo');
   s = await st(G);
-  await G.goto(APP + '#/ajustes'); await G.waitForSelector('[data-sp="on"]');
+  await G.goto(APP + '#/ajustes/audio'); await G.waitForSelector('[data-sp="on"]');
   check(!s.spatial && s.sounding === 1 && s.last.reason === 'sin-webaudio' && await G.isDisabled('[data-sp="on"]') && /no admite/.test(await G.innerText('#ajustes-audio')), '    Navegador sin Web Audio: todo suena normal y Ajustes lo explica con el interruptor desactivado');
 
   check(errs.length === 0, `25. Sin errores en consola${errs.length ? ': ' + errs.slice(0, 4).join(' | ') : ''}`);

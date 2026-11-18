@@ -32,7 +32,7 @@ const check = (c, m) => { if (c) { ok++; console.log('ok  ', m); } else { fails+
   const until = async (page, fn, arg, ms = 15000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await page.evaluate(fn, arg).catch(() => false)) return true; await page.waitForTimeout(200); } return false; };
   const status = page => ev(page, async () => (await import('./js/playlists-data.js')).status());
   const login = async (page, email) => {
-    await page.goto(APP + '#/ajustes');
+    await page.goto(APP + '#/ajustes/cuenta');
     await page.fill('[data-form="login"] [name=email]', email);
     await page.fill('[data-form="login"] [name=password]', 'secreta123');
     await page.click('[data-form="login"] button[value="in"]');
@@ -359,11 +359,11 @@ const check = (c, m) => { if (c) { ok++; console.log('ok  ', m); } else { fails+
   // ================================================================ sin la migración
   await fetch(API + '/__mode?db=nomig');
   const { page: D } = await device('D', false);
-  await D.goto(APP + '#/ajustes');
+  await D.goto(APP + '#/ajustes/cuenta');
   await D.fill('[data-form="login"] [name=email]', 'nueva@example.com'); await D.fill('[data-form="login"] [name=password]', 'secreta123');
   await D.click('[data-form="login"] button[value="in"]');
   check(await until(D, async () => (await import('./js/playlists-data.js')).status().mode === 'missing'), 'Sin la migración aplicada, la app lo detecta');
-  await D.goto(APP + '#/ajustes'); await D.waitForTimeout(400);
+  await D.goto(APP + '#/ajustes/cuenta'); await D.waitForTimeout(400);
   check(/Falta preparar Supabase para las playlists/.test(await D.innerText('#view')), 'Ajustes explica qué falta y que no se pierde nada');
   await D.click('[data-act="new-playlist"]').catch(() => {});
   await D.goto(APP + '#/playlists'); await D.click('[data-act="new-playlist"]'); await D.fill('#sheet input', 'Local'); await D.click('#sheet button.primary');

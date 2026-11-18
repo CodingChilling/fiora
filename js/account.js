@@ -151,7 +151,7 @@ export async function init() {
   const h = location.hash.slice(1);
   if (!/(^|&)(access_token|error_description)=/.test(h)) return null;
   const p = new URLSearchParams(h);
-  history.replaceState(null, '', location.pathname + '#/ajustes');
+  history.replaceState(null, '', location.pathname + '#/ajustes/cuenta');
   if (p.get('error_description')) { emit('toast', `El enlace no es válido o ha caducado (${p.get('error_description')})`); return null; }
   try {
     const access_token = p.get('access_token');

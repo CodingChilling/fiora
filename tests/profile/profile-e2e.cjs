@@ -49,7 +49,7 @@ function days(kind, n = 30) {
   }
   const habitsReady = page => until(page, async () => { const h = await import('./js/habits.js'); const s = h.status(); return s.mode === 'ready' && !s.busy && !Object.keys(h.H.dirty).length && !h.H.stateDirty && !Object.keys(h.H.logDirty).length; });
   const login = async (page, email) => {
-    await page.goto(APP + '#/ajustes');
+    await page.goto(APP + '#/ajustes/cuenta');
     await page.fill('[data-form="login"] [name=email]', email); await page.fill('[data-form="login"] [name=password]', 'secreta123');
     await page.click('[data-form="login"] button[value="in"]');
     await until(page, async () => { const s = (await import('./js/playlists-data.js')).status(); return s.mode === 'ready' && !s.pending && !s.busy; });
@@ -83,16 +83,17 @@ function days(kind, n = 30) {
   check(!!(await A.$('.head .pf-gear[aria-label="Ajustes"]')), '2. Perfil tiene el botón de Ajustes con engranaje en la cabecera');
   const order = await A.$$eval('.wrap > *', els => els.map(e => e.className || e.tagName).join(' | '));
   check(/pf-id.*pf-creature.*sx-head.*sx-tabs.*sx-body/s.test(order), '   Orden de Perfil: identidad, criatura y estadísticas');
-  await A.click('.pf-gear'); await A.waitForSelector('.panel');
+  await A.click('.pf-gear'); await A.waitForSelector('.set-list');
   check((await A.evaluate(() => location.hash)) === '#/ajustes' && await A.$eval('#nav-links a[data-nav="perfil"]', a => a.classList.contains('on')), '   El engranaje abre Ajustes (Perfil sigue marcado)');
-  const panels = await A.$$eval('.panel > h2:first-child', h => h.map(x => x.textContent));
-  check(['Cuenta', 'Nube', 'Este dispositivo', 'Modo desarrollador', 'Tu criatura sonora'].every(p => panels.includes(p)), `3. Ajustes conserva sus paneles: ${panels.join(' · ')}`);
+  const panels = await A.$$eval('.set-list .set-row b', h => h.map(x => x.textContent));
+  check(['Cuenta', 'Nube', 'Audio y reproducción', 'Este dispositivo', 'Criatura sonora', 'Modo desarrollador', 'Ayuda'].every(p => panels.includes(p)), `3. Ajustes conserva sus secciones: ${panels.join(' · ')}`);
   await A.click('.head a[aria-label="Volver al perfil"]'); await A.waitForSelector('.pf-id');
   check((await A.evaluate(() => location.hash)) === '#/perfil', '   Desde Ajustes se vuelve a Perfil');
-  await A.goBack(); await A.waitForSelector('.panel');
+  await A.goBack(); await A.waitForSelector('.set-list');
   check((await A.evaluate(() => location.hash)) === '#/ajustes', '   El botón «atrás» del navegador conserva el historial');
 
   // --- 3. Un ajuste existente sigue guardándose
+  await A.goto(APP + '#/ajustes/audio'); await A.waitForSelector('[data-toggle="autoplay"]');
   await A.uncheck('[data-toggle="autoplay"]'); await A.waitForTimeout(300);
   await A.reload(); await A.waitForSelector('[data-toggle="autoplay"]');
   check(!(await A.isChecked('[data-toggle="autoplay"]')), '   «Reproducción automática» se desactiva y se conserva al recargar');
@@ -103,7 +104,7 @@ function days(kind, n = 30) {
   check(/tomando forma/i.test(await text(A, '.pf-creature')) && /0 de 15 escuchas/.test(await text(A, '.pf-creature')), '15. Sin historial: «Tu criatura está tomando forma», con el mínimo que falta');
   await sceneReady(A, 'nebula');
   check((await dbg(A))?.id === 'nebula' && (await litPixels(A)) > 300, '    y la escena es una nube de partículas sin silueta');
-  check(/Sin sesión/.test(await text(A, '.pf-id')) && !!(await A.$('.pf-id a[href="#/ajustes"]')), '    Sin sesión, Perfil funciona y ofrece iniciar sesión');
+  check(/Sin sesión/.test(await text(A, '.pf-id')) && !!(await A.$('.pf-id a[href="#/ajustes/cuenta"]')), '    Sin sesión, Perfil funciona y ofrece iniciar sesión');
 
   // --- 5/26. Reproducción real: se anota y no se corta al navegar
   await login(A, 'criatura@example.com');
@@ -363,7 +364,7 @@ function days(kind, n = 30) {
   check((await dbg(E)).anim === false, '22. Con «reducir movimiento» del sistema, la figura no se anima sola');
 
   // ======================================================================= Privacidad
-  await A.goto(APP + '#/ajustes'); await A.waitForSelector('#ajustes-criatura');
+  await A.goto(APP + '#/ajustes/criatura'); await A.waitForSelector('#ajustes-criatura');
   check(/resumen por día/.test(await text(A, '#ajustes-criatura')) && /No guarda qué canciones/.test(await text(A, '#ajustes-criatura')), '    Ajustes explica qué datos usa la criatura');
   await A.uncheck('[data-cr-pref="on"]'); await A.waitForTimeout(400);
   await A.goto(APP + '#/perfil'); await A.waitForSelector('.pf-creature.off');
@@ -375,7 +376,7 @@ function days(kind, n = 30) {
 
   // --- 27. Eliminar los datos de la criatura
   const plays0 = await A.evaluate(async () => Object.values((await import('./js/store.js')).S.stats).reduce((n, s) => n + s.plays, 0));
-  await A.goto(APP + '#/ajustes'); await A.waitForSelector('[data-act="cr-erase"]');
+  await A.goto(APP + '#/ajustes/criatura'); await A.waitForSelector('[data-act="cr-erase"]');
   await A.click('[data-act="cr-erase"]'); await A.waitForSelector('#sheet .dlg'); await A.click('#sheet .dlg .btn.danger, #sheet .dlg .btn.primary');
   await until(A, () => /eliminados/.test(document.querySelector('#toasts').innerText));
   const after = await A.evaluate(async () => { const h = await import('./js/habits.js'), st = await import('./js/store.js'); return { days: Object.keys(h.H.days).length, log: Object.keys(h.H.log).length, off: h.H.official, plays: Object.values(st.S.stats).reduce((n, s) => n + s.plays, 0), pls: st.S.playlists.length }; });

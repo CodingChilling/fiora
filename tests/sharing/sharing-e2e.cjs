@@ -40,14 +40,14 @@ const sql = async q => (await fetch(API + '/__sql', { method: 'POST', body: q })
   const toastHas = (page, re, ms = 15000) => until(page, re => new RegExp(re).test(document.querySelector('#toasts').innerText), re.source, ms);
   const plReady = page => until(page, async () => { const s = (await import('./js/playlists-data.js')).status(); return s.mode === 'ready' && !s.pending && !s.busy; }, null, 30000);
   const login = async (page, email) => {
-    await page.goto(APP + '#/ajustes');
+    await page.goto(APP + '#/ajustes/cuenta');
     await page.fill('[data-form="login"] [name=email]', email);
     await page.fill('[data-form="login"] [name=password]', 'secreta123');
     await page.click('[data-form="login"] button[value="in"]');
     return plReady(page);
   };
   const connect = async (page, url, name = '') => {
-    await page.goto(APP + '#/ajustes');
+    await page.goto(APP + '#/ajustes/nube');
     if (await page.$('details.more summary')) await page.click('details.more summary');
     await page.fill('[data-form="par"] [name=name]', name);
     await page.fill('[data-form="par"] [name=url]', url);
@@ -78,10 +78,11 @@ const sql = async q => (await fetch(API + '/__sql', { method: 'POST', body: q })
   let s = await oracle();
   check(s.objects.some(([n, size]) => n === '_fiora/datos.json' && size === 0), 'la copia antigua de datos personales del bucket queda vacía al sincronizar');
   check(!(await playlistNames(O)).includes('Secreta del dueño'), 'lo que había en esa copia no se mezcla en la app');
-  await O.goto(APP + '#/ajustes'); await O.waitForSelector('.buckets');
+  await O.goto(APP + '#/ajustes/nube'); await O.waitForSelector('.buckets');
   check((await O.innerText('.buckets')).includes('solo lectura'), 'sin clave de API, su bucket es de solo lectura en este dispositivo');
-  check(await O.$eval('[data-toggle="dev"]', i => i.disabled), 'sin clave de API no se puede activar el modo desarrollador');
   check(!(await O.$('[data-form="share"]')) && !(await O.$('[data-act="cloud-tags"]')), 'sin clave no aparecen «Compartir» ni «Actualizar archivos de la nube»');
+  await O.goto(APP + '#/ajustes/desarrollador'); await O.waitForSelector('[data-toggle="dev"]');
+  check(await O.$eval('[data-toggle="dev"]', i => i.disabled), 'sin clave de API no se puede activar el modo desarrollador');
   // Aunque el ajuste quedara activado (p. ej. de una versión anterior), no tiene efecto sin la clave.
   await ev(O, async () => { const st = await import('./js/store.js'); st.S.settings.dev = true; await st.saveKV('settings', false); });
   let items = await menuOf(O, 'Tití');
@@ -91,18 +92,20 @@ const sql = async q => (await fetch(API + '/__sql', { method: 'POST', body: q })
   check(await ev(O, async () => { const c = await import('./js/cloud.js'); const t = [...(await import('./js/store.js')).S.tracks.values()][0]; try { await c.deleteRemote(t); return false; } catch (e) { return /solo lectura/.test(e.message); } }), 'borrar de la nube sin la clave se rechaza aunque se llame directamente');
 
   // --- añade la clave de API
-  await O.goto(APP + '#/ajustes');
+  await O.goto(APP + '#/ajustes/desarrollador');
   await O.click('details.key-steps summary');
   await O.fill('[data-form="oci"] textarea', fs.readFileSync(path.join(FIX, 'config.txt'), 'utf8'));
   await O.setInputFiles('[data-form="oci"] [name=pem]', path.join(FIX, 'key.pem'));
   await O.click('[data-form="oci"] button');
-  await O.waitForSelector('[data-form="share"]', { timeout: 10000 });
+  await O.waitForSelector('[data-act="oci-forget"]', { timeout: 10000 });
   s = await oracle();
   check(s.log.includes('API GET (bucket) firmada'), 'la clave se comprueba con una petición firmada');
-  check(!(await O.$eval('[data-toggle="dev"]', i => i.disabled)) && (await O.innerText('.buckets')).includes('tuyo'), 'con la clave, el bucket es suyo y el modo desarrollador se puede activar');
+  const devEnabled = !(await O.$eval('[data-toggle="dev"]', i => i.disabled));
+  await O.goto(APP + '#/ajustes/nube'); await O.waitForSelector('.buckets');
+  check(devEnabled && (await O.innerText('.buckets')).includes('tuyo'), 'con la clave, el bucket es suyo y el modo desarrollador se puede activar');
   items = await menuOf(O, 'Tití');
   check(items.includes('Editar metadatos') && items.includes('Borrar también de la nube'), 'con la clave y el modo activado vuelven «Editar metadatos» y «Borrar también de la nube»');
-  await O.goto(APP + '#/ajustes');
+  await O.goto(APP + '#/ajustes/nube');
   await O.click('[data-act="cloud-sync"]');
   await until(O, async () => !(await (await fetch('http://localhost:8769/__log')).json()).objects.some(o => o[0] === '_fiora/datos.json'), null, 10000);
   check((await oracle()).log.includes('API DELETE _fiora/datos.json firmada'), 'con la clave, la copia antigua se borra del todo de Oracle');
@@ -126,7 +129,7 @@ const sql = async q => (await fetch(API + '/__sql', { method: 'POST', body: q })
   await O.click('#sheet [data-x]'); await O.waitForTimeout(300);
   await until(O, () => document.querySelector('[data-shares]').innerText.includes('Ana'), null, 8000);
   check((await O.innerText('[data-shares]')).includes('Solo lectura · caduca el'), 'Ana aparece en la lista de enlaces con su caducidad');
-  if (SHOTS) await O.locator('.panel', { has: O.locator('.share-box') }).screenshot({ path: path.join(SHOTS, 'compartir-nube.png') });
+  if (SHOTS) await O.locator('.share-box').screenshot({ path: path.join(SHOTS, 'compartir-nube.png') });
 
   await newPlaylist(O, 'Solo mía');
   check(await plReady(O), 'el propietario crea una playlist y se guarda en Supabase');
@@ -135,10 +138,12 @@ const sql = async q => (await fetch(API + '/__sql', { method: 'POST', body: q })
   const G = await device('Ana', true);
   check(await login(G, 'ana@example.com'), 'Ana inicia sesión con su propia cuenta');
   check(await connect(G, anaUrl, 'Música compartida'), 'Ana conecta el enlace y ve las 3 canciones');
-  await G.goto(APP + '#/ajustes'); await G.waitForSelector('.buckets');
+  await G.goto(APP + '#/ajustes/nube'); await G.waitForSelector('.buckets');
   check((await G.innerText('.buckets')).includes('solo lectura'), 'para Ana el bucket es de solo lectura');
-  check(await G.$eval('[data-toggle="dev"]', i => i.disabled) && !(await G.$('[data-form="share"]')), 'Ana no puede activar el modo desarrollador ni compartir');
   if (SHOTS) await G.screenshot({ path: path.join(SHOTS, 'compartido-movil.png'), fullPage: false });
+  const noShare = !(await G.$('[data-form="share"]'));
+  await G.goto(APP + '#/ajustes/desarrollador'); await G.waitForSelector('[data-toggle="dev"]');
+  check(await G.$eval('[data-toggle="dev"]', i => i.disabled) && noShare, 'Ana no puede activar el modo desarrollador ni compartir');
   const got = await ev(G, async () => { const c = await import('./js/cloud.js'); const t = [...(await import('./js/store.js')).S.tracks.values()].find(x => x.cloudName); return (await c.fetchBlob(t)).size; });
   check(got > 1000, 'Ana puede escuchar y descargar las canciones');
   await ev(G, async () => { const st = await import('./js/store.js'); st.S.settings.dev = true; await st.saveKV('settings', false); });
@@ -168,7 +173,7 @@ const sql = async q => (await fetch(API + '/__sql', { method: 'POST', body: q })
   // --- límite de enlaces
   const more = await ev(O, async url => { const oci = await import('./js/oci.js'); const r = []; for (const w of ['Bea', 'Carla', 'Dani', 'Eva', 'Fran']) { try { await oci.createShare(url, w, 30); r.push('ok'); } catch (e) { r.push(e.message); } } return r; }, OWNER_PAR);
   check(more.slice(0, 4).every(x => x === 'ok') && /revoca/.test(more[4]), `como mucho 5 enlaces vigentes a la vez (${more[4]})`);
-  await O.goto(APP + '#/inicio'); await O.goto(APP + '#/ajustes');   // (si ya estaba en Ajustes, ir a la misma dirección no la vuelve a pintar)
+  await O.goto(APP + '#/inicio'); await O.goto(APP + '#/ajustes/nube');   // (si ya estaba en Ajustes, ir a la misma dirección no la vuelve a pintar)
   await until(O, () => document.querySelector('[data-shares]')?.innerText.includes('Eva'), null, 8000);
   check(await until(O, () => document.querySelector('[data-form="share"] button')?.disabled, null, 8000), 'con 5 enlaces el botón de crear otro queda desactivado');
 
@@ -182,10 +187,12 @@ const sql = async q => (await fetch(API + '/__sql', { method: 'POST', body: q })
   check((await fetch(anaUrl)).status === 404, 'su URL deja de funcionar al momento');
 
   // --- quitar la clave
-  await O.goto(APP + '#/ajustes');
+  await O.goto(APP + '#/ajustes/desarrollador');
   await O.click('[data-act="oci-forget"]');
   await O.waitForSelector('details.key-steps');
-  check(await O.$eval('[data-toggle="dev"]', i => i.disabled && !i.checked) && !(await O.$('[data-form="share"]')), 'al quitar la clave se desactiva el modo desarrollador y desaparece «Compartir»');
+  const devOff = await O.$eval('[data-toggle="dev"]', i => i.disabled && !i.checked);
+  await O.goto(APP + '#/ajustes/nube'); await O.waitForSelector('.buckets');
+  check(devOff && !(await O.$('[data-form="share"]')), 'al quitar la clave se desactiva el modo desarrollador y desaparece «Compartir»');
   check(!(await ev(O, async () => (await import('./js/db.js')).get('kv', 'oci-key'))), 'la clave se borra del dispositivo');
   const snap = await ev(O, async () => JSON.stringify((await import('./js/sync.js')).snapshot(true)));
   check(!/ocid1|PRIVATE|fiora-compartir/.test(snap), 'ni la clave ni los enlaces viajan a la cuenta');

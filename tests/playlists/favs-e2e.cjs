@@ -25,7 +25,7 @@ const check = (c, m) => { if (c) { ok++; console.log('ok  ', m); } else { fails+
   }
   const until = async (page, fn, arg, ms = 15000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await page.evaluate(fn, arg).catch(() => false)) return true; await page.waitForTimeout(200); } return false; };
   const login = async (page, email) => {
-    await page.goto(APP + '#/ajustes');
+    await page.goto(APP + '#/ajustes/cuenta');
     await page.fill('[data-form="login"] [name=email]', email); await page.fill('[data-form="login"] [name=password]', 'secreta123');
     await page.click('[data-form="login"] button[value="in"]');
     return until(page, async () => { const s = (await import('./js/playlists-data.js')).status(); return s.mode === 'ready' && !s.pending && !s.busy; });

@@ -39,14 +39,14 @@ const sql = async q => (await fetch(API + '/__sql', { method: 'POST', body: q })
   const toastHas = (page, re, ms = 15000) => until(page, re => new RegExp(re).test(document.querySelector('#toasts').innerText), re.source, ms);
   const plReady = page => until(page, async () => { const d = await import('./js/playlists-data.js'); const s = d.status(), h = d.sharedStatus(); return s.mode === 'ready' && !s.pending && !s.busy && !h.pending && !h.busy && !h.again; }, null, 30000);
   const login = async (page, email) => {
-    await page.goto(APP + '#/ajustes');
+    await page.goto(APP + '#/ajustes/cuenta');
     await page.fill('[data-form="login"] [name=email]', email);
     await page.fill('[data-form="login"] [name=password]', 'secreta123');
     await page.click('[data-form="login"] button[value="in"]');
     return plReady(page);
   };
   const connect = async (page, url, name) => {
-    await page.goto(APP + '#/ajustes');
+    await page.goto(APP + '#/ajustes/nube');
     if (await page.$('details.more summary')) await page.click('details.more summary');
     await page.fill('[data-form="par"] [name=name]', name);
     await page.fill('[data-form="par"] [name=url]', url);
@@ -80,7 +80,7 @@ const sql = async q => (await fetch(API + '/__sql', { method: 'POST', body: q })
   check(await login(A, 'ana@example.com'), 'Ana inicia sesión');
   check(await connect(A, links[0], 'Música de Pablo'), 'Ana conecta su enlace de solo lectura');
   check(await groupOk(A), 'Ana entra sola en el grupo (puede leer la clave del bucket)');
-  await A.goto(APP + '#/ajustes');
+  await A.goto(APP + '#/ajustes/nube');
   await A.waitForSelector('[data-act="group-name"]');
   await A.click('[data-act="group-name"]');
   await A.fill('#sheet input[name=v]', 'Ana');
@@ -188,7 +188,7 @@ const sql = async q => (await fetch(API + '/__sql', { method: 'POST', body: q })
   check(hack >= 400 && rows[0].n === 2, `aunque Bea llame a Supabase directamente, no puede cambiarla (${hack})`);
 
   // ========================================================= revocar el enlace de Ana
-  await O.goto(APP + '#/ajustes');
+  await O.goto(APP + '#/ajustes/nube');
   await until(O, () => document.querySelector('[data-shares]')?.innerText.includes('Ana'), null, 10000);
   await O.locator('[data-shares] li', { hasText: 'Ana' }).locator('[data-act="share-revoke"]').click();
   await O.click('#sheet [data-ok]');

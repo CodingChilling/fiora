@@ -288,7 +288,7 @@ function viewHome() {
   if (!S.tracks.size) {
     return show(`<div class="head"><h1>${hello}</h1></div>${empty('disc', 'Tu biblioteca está vacía',
       'Añade archivos de música de este dispositivo, conecta tu nube o explora música libre y radios.',
-      `${ADD_BTN}<a class="btn" href="#/explorar">${icon('compass')}Explorar música libre</a><a class="btn" href="#/ajustes">${icon('user')}${account.user() ? 'Conectar nube' : 'Iniciar sesión'}</a>`)}`);
+      `${ADD_BTN}<a class="btn" href="#/explorar">${icon('compass')}Explorar música libre</a><a class="btn" href="#/ajustes/${account.user() ? 'ayuda' : 'cuenta'}">${icon('user')}${account.user() ? 'Conectar nube' : 'Iniciar sesión'}</a>`)}`);
   }
   const recent = allTracks().filter(t => S.stats[t.id]?.last).sort((a, b) => S.stats[b.id].last - S.stats[a.id].last).slice(0, 6);
   const newest = albums().sort((a, b) => b.addedAt - a.addedAt).slice(0, 12);
@@ -751,7 +751,11 @@ async function saveToLibrary(tracks) {
 // ------------------------------------------------------------------- ajustes
 let installEvent = null;
 addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvent = e; if (location.hash.startsWith('#/ajustes')) refresh(); });
-async function viewSettings() {
+// Secciones de Ajustes: [ruta, icono, título, tono del icono].
+const SET_SECS = [['cuenta', 'user', 'Cuenta', 25], ['nube', 'cloud', 'Nube', 200], ['audio', 'wave', 'Audio y reproducción', 330], ['dispositivo', 'download', 'Este dispositivo', 150],
+  ['criatura', 'spark', 'Criatura sonora', 45], ['desarrollador', 'edit', 'Modo desarrollador', 260], ['ayuda', 'help', 'Ayuda', 175]];
+let helpPath = null;   // camino elegido en la guía del bucket («own» o «guest»)
+async function viewSettings(sec) {
   const est = await lib.storageEstimate();
   const tracks = allTracks();
   const offline = tracks.filter(t => t.hasBlob).length;
@@ -778,27 +782,27 @@ async function viewSettings() {
         <label class="field">${icon('folder')}<input name="pem" type="file" accept=".pem,.key,text/plain" aria-label="Archivo de la clave privada (.pem)" required></label>
         <div class="actions"><button class="btn primary">Guardar y comprobar</button></div></form>`;
   const keyPanel = O
-    ? `<p>Clave de API de Oracle guardada en este dispositivo (huella …${esc(O.fingerprint.slice(-5))}). ${own.length ? `Tiene permiso sobre ${own.map(b => `«${esc(b.name)}»`).join(', ')}: aquí puedes cambiar su música y compartirla.` : 'No tiene permiso sobre ninguno de los buckets conectados, así que el modo desarrollador sigue desactivado.'}</p>
+    ? `<p>Guardada en este dispositivo (huella …${esc(O.fingerprint.slice(-5))}). ${own.length ? `Tiene permiso sobre ${own.map(b => `«${esc(b.name)}»`).join(', ')}: puedes subir, cambiar y compartir su música.` : 'No tiene permiso sobre ninguno de los buckets conectados.'}</p>
       <div class="actions">${own.length ? `<button class="btn" data-act="oci-purge">${icon('trash')}Borrar los archivos que quedaron vacíos</button>` : `<button class="btn" data-act="oci-recheck">${icon('sync')}Volver a comprobar</button>`}<button class="btn ghost danger" data-act="oci-forget">Quitar clave</button></div>`
-    : `<p>El modo desarrollador cambia la música del bucket (metadatos dentro de los archivos, borrar canciones, etiquetar con IA…), así que solo se activa con la <b>clave de API de Oracle de quien creó el bucket</b>. ${bks.length ? 'Se guarda solo en este dispositivo, nunca en tu cuenta ni en el bucket, y tiene los mismos permisos que tu usuario de Oracle: añádela solo en dispositivos tuyos.' : 'Primero conecta tu bucket en <b>Nube</b>.'}</p>
-      ${bks.length ? `<details class="more key-steps"><summary>Añadir la clave de API de Oracle (si el bucket es tuyo)</summary>${keySteps}</details>` : ''}`;
+    : `<p>Solo para <b>quien creó el bucket</b>. Permite subir música, cambiar los archivos, compartir y usar el modo desarrollador. Se guarda solo en este dispositivo (nunca en tu cuenta ni en el bucket) y tiene los permisos de tu usuario de Oracle: añádela solo en dispositivos tuyos.</p>
+      ${bks.length ? `<details class="more key-steps"><summary>Añadir la clave de API de Oracle</summary>${keySteps}</details>` : `<p class="muted">Primero conecta tu bucket en <a class="link" href="#/ajustes/nube">Nube</a>.</p>`}`;
   const steps = `<ol class="steps"><li>En la consola de Oracle Cloud: <b>Storage → Buckets → Create Bucket</b> (privado).</li>
        <li>Dentro del bucket: <b>Pre-Authenticated Requests → Create</b>. Destino: <b>Bucket</b>; acceso: <b>Permit object reads and writes</b>; marca <b>Enable Object Listing</b>; pon una caducidad lejana.</li>
        <li>Copia la URL que aparece (solo se muestra una vez) y pégala aquí. Es solo para tus dispositivos: <b>no la compartas</b>.</li></ol>`;
-  const guestNote = `<p><b>¿Alguien ha compartido su música contigo?</b> Pega aquí el enlace que te haya dado. Podrás escuchar y descargar sus canciones, pero no cambiarlas. Tus playlists, favoritos y escuchas se guardan en tu cuenta, nunca en su bucket, y nadie más los ve.</p>`;
   const bucketForm = `<form class="stack" data-form="par">
        <label class="field">${icon('edit')}<input name="name" placeholder="Nombre (p. ej. Rock, Clásica, Música de Ana)" autocomplete="off" maxlength="40"></label>
        <label class="field">${icon('cloud')}<input name="url" type="url" placeholder="https://objectstorage.….oraclecloud.com/p/…/n/…/b/…/o/" autocomplete="off" required></label>
        <div class="actions"><button class="btn ${bks.length ? '' : 'primary'}">${icon('plus')}Conectar bucket</button></div></form>`;
-  const shareBox = b => `<div class="sub-panel share-box"><b>Compartir «${esc(b.name)}»</b>
-       <small>Crea un enlace de <b>solo lectura</b> para cada persona (como mucho ${oci.MAX_SHARES} a la vez). Con él puede escuchar y descargar las canciones de este bucket, pero Oracle le impide subir, cambiar o borrar nada. Sus playlists, favoritos y escuchas van a su propia cuenta, nunca al bucket, y no ve los tuyos. Puedes revocar un enlace cuando quieras.</small>
+  const shareBox = b => `<section class="panel share-box"><h2>Compartir «${esc(b.name)}»</h2>
+       <p>Un enlace de <b>solo lectura</b> para cada persona (como mucho ${oci.MAX_SHARES} a la vez): puede escuchar y descargar, pero no subir, cambiar ni borrar. Sus playlists y escuchas van a su cuenta, nunca al bucket. Puedes revocarlo cuando quieras.</p>
        <ul class="buckets shares" data-shares="${esc(b.id)}"><li class="muted">Cargando enlaces…</li></ul>
        <form class="stack" data-form="share" data-bid="${esc(b.id)}">
          <label class="field">${icon('user')}<input name="who" placeholder="Para quién (p. ej. Ana)" autocomplete="off" maxlength="40" required></label>
          <label class="field">${icon('lock')}<select name="days" aria-label="Caducidad del enlace"><option value="30">Caduca en 1 mes</option><option value="90">Caduca en 3 meses</option><option value="180" selected>Caduca en 6 meses</option><option value="365">Caduca en 1 año</option></select></label>
-         <div class="actions"><button class="btn">${icon('plus')}Crear enlace de solo lectura</button>${groups.of(b.id)?.owner ? `<button type="button" class="btn ghost" data-act="group-rotate" data-bid="${esc(b.id)}">${icon('sync')}Renovar el grupo</button>` : ''}</div></form></div>`;
+         <div class="actions"><button class="btn">${icon('plus')}Crear enlace de solo lectura</button>${groups.of(b.id)?.owner ? `<button type="button" class="btn ghost" data-act="group-rotate" data-bid="${esc(b.id)}">${icon('sync')}Renovar el grupo</button>` : ''}</div></form></section>`;
+  const urlNote = `<p class="muted small">La URL de tu bucket funciona como una contraseña: quien la tenga puede leer y escribir en él. ${account.user() ? 'Se guarda en este dispositivo y en tu cuenta.' : 'Fiora la guarda solo en este dispositivo.'} Para compartir tu música no la des: crea enlaces de solo lectura.</p>`;
   const cloudPanel = bks.length
-    ? `<p>${plural(inCloud, 'canción', 'canciones')} en la nube${S.settings.lastSync ? ` · última sincronización: ${new Date(S.settings.lastSync).toLocaleString('es')}` : ''}.</p>
+    ? `<section class="panel"><h2>Tus buckets</h2><p>${plural(inCloud, 'canción', 'canciones')} en la nube${S.settings.lastSync ? ` · última sincronización: ${new Date(S.settings.lastSync).toLocaleString('es')}` : ''}.</p>
        <ul class="buckets">${bks.map(b => {
          const n = tracks.filter(t => t.cloudName && (t.bucketId || bks[0].id) === b.id).length;
          const mine = cloud.owns(b), isTarget = !!target && b.id === target.id;
@@ -807,20 +811,22 @@ async function viewSettings() {
            ${mine && !isTarget ? `<button class="chip" data-act="bucket-default" data-bid="${esc(b.id)}">Subir aquí</button>` : ''}
            <button class="icon-btn" data-act="bucket-remove" data-bid="${esc(b.id)}" aria-label="Desconectar ${esc(b.name)}">${icon('x')}</button></li>`;
        }).join('')}</ul>
-       ${groupsPanel()}
-       ${own.length < bks.length ? `<p class="muted">${own.length ? 'En los buckets de solo lectura (de otra persona, o sobre los que tu clave no tiene permiso) no se sube, cambia ni borra nada.' : 'En este dispositivo la nube es de solo lectura: escuchas y descargas, pero no se sube, cambia ni borra nada. Si el bucket es tuyo, añade su clave de API de Oracle en Modo desarrollador.'}</p>` : ''}
+       ${own.length < bks.length ? `<p class="muted small">${own.length ? 'En los buckets de solo lectura (de otra persona, o sobre los que tu clave no tiene permiso) no se sube, cambia ni borra nada.' : 'Aquí la nube es de solo lectura: escuchas y descargas, pero no se sube ni se cambia nada. Si el bucket es tuyo, añade su clave en <a class="link" href="#/ajustes/desarrollador">Modo desarrollador</a>.'}</p>` : ''}
        <div class="actions"><button class="btn primary" data-act="cloud-sync">${icon('sync')}Sincronizar ahora</button>
        ${onlyLocal && target ? `<button class="btn" data-act="cloud-upload-all">${icon('cloudUp')}Subir ${plural(onlyLocal, 'canción', 'canciones')}${own.length > 1 ? ` a «${esc(target.name)}»` : ' a la nube'}</button>` : ''}</div>
-       ${dev ? `<div class="sub-panel"><b>Metadatos de los archivos</b>
-         <small>Escribe dentro de cada archivo de tus buckets los géneros, lo que transmite y los cambios hechos en la app (también los de antes). Primero revisa qué archivos lo necesitan; el sonido no cambia.</small>
-         <div class="actions">${bulk ? `<button class="btn danger" data-act="cloud-tags-stop">${icon('x')}Detener</button>` : `<button class="btn" data-act="cloud-tags">${icon('sync')}Actualizar archivos de la nube</button>`}${lastReport && !bulk ? '<button class="btn ghost" data-act="cloud-report">Ver el último informe</button>' : ''}</div></div>` : ''}
+       ${groupsPanel()}</section>
+       ${own.length || dev ? `<section class="panel"><h2>Archivos</h2>
+         ${own.length ? `<label class="switch first"><input type="checkbox" data-toggle="shrink" ${S.settings.shrink ? 'checked' : ''}><span><b>Reducir el tamaño al subir, sin perder calidad</b>
+           <small>Los WAV se convierten a FLAC: suenan igual y ocupan en torno a la mitad. El resto se sube tal cual.</small></span></label>` : ''}
+         ${dev ? `<div class="sub-panel"><b>Metadatos de los archivos</b>
+           <small>Escribe dentro de cada archivo de tus buckets los géneros, lo que transmite y los cambios hechos en la app. Primero revisa qué archivos lo necesitan; el sonido no cambia.</small>
+           <div class="actions">${bulk ? `<button class="btn danger" data-act="cloud-tags-stop">${icon('x')}Detener</button>` : `<button class="btn" data-act="cloud-tags">${icon('sync')}Actualizar archivos de la nube</button>`}${lastReport && !bulk ? '<button class="btn ghost" data-act="cloud-report">Ver el último informe</button>' : ''}</div></div>` : ''}</section>` : ''}
        ${own.map(shareBox).join('')}
-       ${own.length ? `<label class="switch"><input type="checkbox" data-toggle="shrink" ${S.settings.shrink ? 'checked' : ''}><span><b>Reducir el tamaño al subir, sin perder calidad</b>
-         <small>Los archivos WAV se convierten a FLAC: suenan exactamente igual y ocupan en torno a la mitad. MP3, M4A, OGG y FLAC ya están comprimidos y se suben tal cual.</small></span></label>` : ''}
-       <details class="more"><summary>Conectar otro bucket</summary><p>Puedes tener varios buckets conectados a la vez; su música aparece junta en tu biblioteca.</p>${steps}${guestNote}${bucketForm}</details>`
-    : `<p>Guarda tu música en Oracle Cloud Object Storage y escúchala desde cualquier dispositivo. Puedes conectar uno o varios buckets.</p>
-       ${steps}${guestNote}${bucketForm}
-       <p style="margin:12px 0 0">La URL de tu bucket funciona como una contraseña: quien la tenga puede leer y escribir en él. ${account.user() ? 'Se guarda en este dispositivo y en tu cuenta.' : 'Fiora la guarda solo en este dispositivo.'} Para compartir tu música no la des: crea un enlace de solo lectura para cada persona en <b>Compartir</b>, que aparece aquí al añadir tu clave de API de Oracle.</p>`;
+       <section class="panel"><details class="more flat"><summary>Conectar otro bucket</summary><p>Puedes tener varios buckets conectados a la vez; su música aparece junta en tu biblioteca. Pega la URL de tu bucket o el enlace de solo lectura que te hayan dado.</p>${bucketForm}
+         <p class="muted small">¿No sabes de dónde sale la URL? Mira la <a class="link" href="#/ajustes/ayuda">guía paso a paso</a>.</p></details></section>`
+    : `<a class="set-hero" href="#/ajustes/ayuda"><span class="set-ic" style="--h:175">${icon('help')}</span><span class="row-text"><b>¿Primera vez? Sigue la guía</b><small>Guarda tu música en un bucket de Oracle Cloud y escúchala desde cualquier dispositivo. Te lo explicamos paso a paso.</small></span>${icon('chevR')}</a>
+       <section class="panel"><h2>Conectar un bucket</h2><p>Pega la URL de tu bucket o el enlace de solo lectura que alguien te haya dado.</p>${bucketForm}
+       <details class="more flat"><summary>¿Cómo consigo la URL?</summary>${steps}</details>${urlNote}</section>`;
   const u = account.user();
   const accountPanel = u
     ? `<p>Has iniciado sesión como <b>${esc(u.email)}</b>. Tus playlists, favoritos, estadísticas, emisoras, ajustes y la conexión a la nube se guardan en tu cuenta${S.settings.accountSync ? ` · último guardado: ${new Date(S.settings.accountSync).toLocaleString('es')}` : ''}.</p>
@@ -846,37 +852,25 @@ async function viewSettings() {
            <label class="field">${icon('cloud')}<input name="url" type="url" placeholder="https://xxxxxxxx.supabase.co" autocomplete="off" required></label>
            <label class="field">${icon('lock')}<input name="key" placeholder="Clave pública (anon o publishable)" autocomplete="off" required></label>
            <div class="actions"><button class="btn primary">Guardar</button></div></form>`;
-  show(`<div class="head"><a class="icon-btn" href="#/perfil" aria-label="Volver al perfil">${icon('back')}</a><h1>Ajustes</h1></div>
-    <div class="panel"><h2>Cuenta</h2>${accountPanel}</div>
-    <div class="panel"><h2>Nube</h2>${cloudPanel}</div>
-    <div class="panel"><h2>Este dispositivo</h2>
-      <p>${plural(tracks.length, 'canción', 'canciones')} en la biblioteca · ${offline} disponibles sin conexión.</p>
-      ${est.quota ? `<div class="meter"><i style="width:${Math.min(100, (est.usage / est.quota) * 100).toFixed(1)}%"></i></div><small class="muted">${gb(est.usage)} GB usados de ${gb(est.quota)} GB disponibles para la app</small>` : ''}
-      <div class="actions" style="margin-top:14px">${ADD_BTN}${installEvent ? `<button class="btn" data-act="install">${icon('download')}Instalar como app</button>` : ''}</div></div>
-    <div class="panel" id="ajustes-audio"><h2>Audio y reproducción</h2>
-      <label class="switch"><input type="checkbox" data-toggle="autoplay" ${S.settings.autoplay === false ? '' : 'checked'}><span><b>Reproducción automática</b>
-        <small>Cuando se acaba lo que estás escuchando, sigue con canciones parecidas de tu biblioteca.</small></span></label>
-      ${fadesPanel()}
-      ${spatialPanel()}</div>
-    <div class="panel"><h2>Modo desarrollador</h2>
-      ${keyPanel}
-      <label class="switch${devReady() ? '' : ' disabled'}" style="margin-top:12px"><input type="checkbox" data-toggle="dev" ${dev ? 'checked' : ''} ${devReady() ? '' : 'disabled'}><span><b>Editar metadatos de las canciones</b>
-        <small>${devReady() ? 'Añade «Editar metadatos» al menú ⋯ de cada canción: portada, título, artistas, álbum, géneros y lo que transmite. Los cambios se guardan en tu cuenta y en los archivos de tus buckets.' : 'Necesita la clave de API de Oracle con permiso sobre un bucket conectado.'}</small></span></label>
-      ${dev ? `<h2 style="margin-top:22px">Canciones repetidas</h2>
+  const devSection = `<section class="panel"><h2>Clave de API de Oracle</h2>${keyPanel}</section>
+    <section class="panel"><h2>Edición</h2>
+      <label class="switch first${devReady() ? '' : ' disabled'}"><input type="checkbox" data-toggle="dev" ${dev ? 'checked' : ''} ${devReady() ? '' : 'disabled'}><span><b>Editar metadatos de las canciones</b>
+        <small>${devReady() ? 'Añade «Editar metadatos» al menú ⋯ de cada canción: portada, título, artistas, álbum, géneros y lo que transmite. Los cambios se guardan en tu cuenta y en los archivos de tus buckets.' : 'Necesita la clave de API de Oracle con permiso sobre un bucket conectado.'}</small></span></label></section>
+    ${dev ? `<section class="panel"><h2>Canciones repetidas</h2>
         <p>${dups.length ? `${plural(dups.length, 'canción tiene', 'canciones tienen')} más de una copia (mismo título y mismos artistas): ${plural(extra, 'copia sobra', 'copias sobran')}.` : 'No hay canciones repetidas en tu biblioteca.'}
-          En modo desarrollador, borrar una canción la elimina también de su bucket.</p>
-        ${dups.length ? `<div class="actions"><a class="btn" href="#/repetidas">${icon('list')}Ver canciones repetidas</a></div>` : ''}
-        <h2 style="margin-top:22px">Metadatos en los archivos</h2>
-        <p>Al guardar en el editor, los cambios se escriben dentro del archivo (MP3, FLAC y M4A) y, si la canción está en la nube, se sube el archivo actualizado. El sonido no cambia.
+          Borrar una canción en modo desarrollador la elimina también de su bucket.</p>
+        ${dups.length ? `<div class="actions"><a class="btn" href="#/repetidas">${icon('list')}Ver canciones repetidas</a></div>` : ''}</section>
+      <section class="panel"><h2>Metadatos en los archivos</h2>
+        <p>Al guardar en el editor, los cambios se escriben dentro del archivo (MP3, FLAC y M4A) y, si está en la nube, se sube actualizado. El sonido no cambia.
           ${writable.length ? `Hay ${plural(writable.length, 'canción', 'canciones')} con cambios que aún no están en su archivo.` : 'Todos los cambios están ya en los archivos.'}
           ${pendingFiles.length > writable.length ? `${plural(pendingFiles.length - writable.length, 'canción', 'canciones')} solo ${pendingFiles.length - writable.length === 1 ? 'guarda' : 'guardan'} los cambios en la app (formato OGG, WAV u Opus, música libre o sin acceso al archivo).` : ''}</p>
-        ${writable.length ? `<div class="actions"><button class="btn" data-act="write-files">${icon('sync')}Guardar en ${plural(writable.length, 'archivo', 'archivos')}</button></div>` : ''}
-        <h2 style="margin-top:22px">Géneros predefinidos</h2>
-        <p>El editor ofrece una lista de géneros habituales para elegir. Aquí puedes añadir los tuyos.</p>
+        ${writable.length ? `<div class="actions"><button class="btn" data-act="write-files">${icon('sync')}Guardar en ${plural(writable.length, 'archivo', 'archivos')}</button></div>` : ''}</section>
+      <section class="panel"><h2>Géneros predefinidos</h2>
+        <p>El editor ofrece una lista de géneros habituales. Aquí puedes añadir los tuyos.</p>
         ${presets.length ? `<div class="chips">${presets.map(g => `<button class="chip" data-act="preset-remove" data-g="${esc(g)}" aria-label="Quitar ${esc(g)}">${esc(g)} ✕</button>`).join('')}</div>` : ''}
-        <form class="search" data-form="preset-add"><label class="field">${icon('plus')}<input name="g" placeholder="Nuevo género (p. ej. Indie Español)" autocomplete="off" maxlength="40" required></label><button class="btn">Añadir</button></form>
-        <h2 style="margin-top:22px">Etiquetado con IA</h2>
-        <p>Un modelo de IA propone los géneros y lo que transmite cada canción a partir de su título, artistas y álbum. Elige el servicio y pega su clave de API: tiene coste por uso y se guarda cifrada, solo en este dispositivo.</p>
+        <form class="search" data-form="preset-add"><label class="field">${icon('plus')}<input name="g" placeholder="Nuevo género (p. ej. Indie Español)" autocomplete="off" maxlength="40" required></label><button class="btn">Añadir</button></form></section>
+      <section class="panel"><h2>Etiquetado con IA</h2>
+        <p>Un modelo de IA propone los géneros y lo que transmite cada canción, y ayuda a encontrar portadas. Elige el servicio y pega su clave: tiene coste por uso y se guarda cifrada, solo en este dispositivo.</p>
         <form class="stack" data-form="ai-key">
           <label class="field">${icon('compass')}<select name="provider" data-ai-provider aria-label="Servicio de IA">${Object.entries(ai.PROVIDERS).map(([id, x]) => `<option value="${id}" ${id === A.provider ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></label>
           ${prov.needsUrl ? `<label class="field">${icon('cloud')}<input name="url" type="url" value="${esc(A.url || '')}" placeholder="Dirección de la API (https://…/v1)" autocomplete="off" required></label>` : ''}
@@ -891,13 +885,56 @@ async function viewSettings() {
           ${prov.site ? `<small class="muted">La clave se crea en ${prov.site}.${prov.help ? ` ${esc(prov.help)}` : ''}</small>` : '<small class="muted">Vale cualquier servicio con API compatible con la de OpenAI (OpenRouter, Groq, Mistral, un modelo local…), siempre que admita llamadas desde el navegador.</small>'}</form>
         ${aiReady ? `<div class="actions" style="margin-top:14px"><button class="btn" data-act="ai-tag-all" ${untagged ? '' : 'disabled'}>${icon('spark')}${untagged ? `Etiquetar ${plural(untagged, 'canción', 'canciones')} sin etiquetar` : 'Todas las canciones están etiquetadas'}</button>
           <button class="btn" data-act="ai-covers" ${coverless ? '' : 'disabled'}>${icon('disc')}${coverless ? `Buscar portada de ${plural(coverless, 'canción', 'canciones')} sin portada` : 'No quedan canciones sin portada por buscar'}</button></div>
-          <small class="muted">Portadas: la IA identifica el álbum o single de cada canción y la imagen se busca en Apple (iTunes), YouTube Music (a través de Piped) y MusicBrainz (Cover Art Archive): gratuitos y sin clave. Si el disco no tiene portada, se usa la de otra canción del mismo álbum o del mismo artista (de tu biblioteca o de esos catálogos) y, si no se sabe nada del artista, se genera una con el título: ninguna se queda sin portada. Las portadas se escriben en el archivo y se suben a la nube junto con los metadatos.</small>` : ''}` : ''}</div>
-    ${PF.settingsPanel()}
-    <div class="panel"><h2>Tus escuchas</h2>
-      <p>Tus estadísticas y tu criatura sonora están en tu perfil. Las recomendaciones aprenden de lo que terminas, a qué hora escuchas cada cosa y qué canciones pones seguidas.</p>
-      <div class="actions"><a class="btn" href="#/perfil">${icon('chart')}Ver mis estadísticas en Perfil</a></div></div>
-    <p class="muted" style="text-align:center">Fiora · Letras de LRCLIB · Música libre de Internet Archive, Openverse, Wikimedia Commons y Jamendo · Radios de Radio Browser</p>`);
-  loadShares();
+          <details class="more flat"><summary>Cómo se buscan las portadas</summary><p>Se buscan con los datos de cada canción en Apple (iTunes), YouTube Music (a través de Piped) y MusicBrainz (Cover Art Archive), gratuitos y sin clave; la IA solo ayuda con las que no aparecen. Si el disco no tiene portada, se usa la de otra canción del mismo álbum o artista y, si no, se genera una con el título: ninguna se queda sin portada. Las portadas se escriben en el archivo y se suben a la nube junto con los metadatos.</p></details>` : ''}</section>` : ''}`;
+  const sects = SET_SECS.map(([id, ic, title, hue]) => ({ id, ic, title, hue, sum: {
+    cuenta: u ? `Sesión iniciada · ${esc(u.email)}` : account.available() ? 'Sin sesión: tus datos están solo en este dispositivo' : 'Sin cuentas configuradas',
+    nube: bks.length ? `${plural(bks.length, 'bucket', 'buckets')} · ${plural(inCloud, 'canción', 'canciones')}` : 'Sin conectar',
+    audio: `${fades.settings().mode === 'cross' ? 'Mezcla cruzada' : 'Una tras otra'} · audio espacial ${spatial.settings().on ? 'activado' : 'desactivado'}`,
+    dispositivo: `${plural(offline, 'canción', 'canciones')} sin conexión${est.quota && est.usage > 1e7 ? ` · ${gb(est.usage)} GB usados` : ''}`,
+    criatura: habits.prefs().off ? 'Desactivada' : 'Activada',
+    desarrollador: dev ? 'Activado' : devReady() ? 'Desactivado' : 'Necesita la clave de API de Oracle',
+    ayuda: bks.length ? 'Guía del bucket y preguntas frecuentes' : 'Crea y conecta tu bucket paso a paso',
+  }[id] }));
+  const row = (s, side) => `<a class="set-row" href="#/ajustes/${s.id}" data-sec="${s.id}" ${side && s.id === sec ? 'aria-current="page"' : ''}><span class="set-ic" style="--h:${s.hue}">${icon(s.ic)}</span>
+      <span class="row-text"><b>${s.title}</b>${side ? '' : `<small>${s.sum}</small>`}</span>${side ? '' : icon('chevR')}</a>`;
+  const credits = '<p class="muted set-credits">Fiora · Letras de LRCLIB · Música libre de Internet Archive, Openverse, Wikimedia Commons y Jamendo · Radios de Radio Browser</p>';
+  const cur = sects.find(s => s.id === sec);
+  if (!cur) {
+    const group = (title, ids) => `<section class="set-group"><h3>${title}</h3><nav class="set-list">${sects.filter(s => ids.includes(s.id)).map(s => row(s)).join('')}</nav></section>`;
+    return show(`<div class="head"><a class="icon-btn" href="#/perfil" aria-label="Volver al perfil">${icon('back')}</a><h1>Ajustes</h1></div>
+      <div class="set-index">
+      ${bks.length ? '' : `<a class="set-hero" href="#/ajustes/ayuda"><span class="set-ic" style="--h:200">${icon('cloud')}</span><span class="row-text"><b>Conecta tu música en unos minutos</b><small>Una guía paso a paso para crear tu bucket gratuito en Oracle Cloud y conectarlo, o para usar el que alguien ha compartido contigo.</small></span>${icon('chevR')}</a>`}
+      ${group('Tu cuenta', ['cuenta', 'nube'])}
+      ${group('Escucha', ['audio', 'dispositivo', 'criatura'])}
+      <section class="set-group"><h3>Avanzado</h3><nav class="set-list">${row(sects.find(s => s.id === 'desarrollador'))}
+        <a class="set-row" href="#/perfil"><span class="set-ic" style="--h:280">${icon('chart')}</span><span class="row-text"><b>Tus estadísticas</b><small>Están en tu perfil, junto a tu criatura sonora</small></span>${icon('chevR')}</a></nav></section>
+      ${group('Ayuda', ['ayuda'])}
+      ${credits}</div>`);
+  }
+  const P_ = (title, body, extra = '') => `<section class="panel"${extra}>${title ? `<h2>${title}</h2>` : ''}${body}</section>`;
+  const body = {
+    cuenta: () => P_('', accountPanel),
+    nube: () => cloudPanel,
+    audio: () => `<div id="ajustes-audio">${P_('Reproducción', `<label class="switch first"><input type="checkbox" data-toggle="autoplay" ${S.settings.autoplay === false ? '' : 'checked'}><span><b>Reproducción automática</b>
+        <small>Cuando se acaba lo que estás escuchando, sigue con canciones parecidas de tu biblioteca.</small></span></label>`)}
+      ${fadesPanel()}${spatialPanel()}</div>`,
+    dispositivo: () => P_('Almacenamiento', `<p>${plural(tracks.length, 'canción', 'canciones')} en la biblioteca · ${offline} disponibles sin conexión.</p>
+      ${est.quota ? `<div class="meter"><i style="width:${Math.min(100, (est.usage / est.quota) * 100).toFixed(1)}%"></i></div><small class="muted">${gb(est.usage)} GB usados de ${gb(est.quota)} GB disponibles para la app</small>` : ''}
+      <div class="actions" style="margin-top:14px">${ADD_BTN}${installEvent ? `<button class="btn" data-act="install">${icon('download')}Instalar como app</button>` : ''}</div>`),
+    criatura: () => PF.settingsPanel(),
+    desarrollador: () => devSection,
+    ayuda: () => helpSection({ u, bks, own, O, inCloud, keySteps, bucketForm }),
+  }[sec]();
+  // Si se vuelve a pintar la misma sección (p. ej. al terminar una sincronización) mientras escribes en
+  // un formulario, no se pinta: se perdería lo escrito o el archivo elegido. Lo desplegado se conserva.
+  const prev = $(`.set-body[data-set="${sec}"]`);
+  if (prev && [...$$('[data-form]:not([data-sent]) :is(input, textarea)', prev)].some(f => (f.type === 'file' ? f.files.length : f.value !== f.defaultValue))) return;
+  const opened = prev ? [...$$('details', prev)].map(d => d.open) : null;
+  show(`<div class="head"><a class="icon-btn" href="#/ajustes" aria-label="Volver a Ajustes">${icon('back')}</a><h1>${cur.title}</h1></div>
+    <div class="set-wrap"><nav class="set-side" aria-label="Secciones de Ajustes">${sects.map(s => row(s, true)).join('')}</nav>
+    <div class="set-body" data-set="${sec}">${body}${sec === 'ayuda' ? credits : ''}</div></div>`);
+  if (opened) $$(`.set-body[data-set="${sec}"] details`).forEach((d, i) => { if (opened[i] && !d.closest('.tuto-step')) d.open = true; });
+  if (sec === 'nube') loadShares();
 }
 // Audio espacial (8D): toda su configuración vive aquí; no hay controles en ninguna otra pantalla.
 const SPATIAL_WHY = { ok: 'se está procesando con el efecto', apagado: 'audio original (el efecto está desactivado)', radio: 'audio original: las emisoras nunca se procesan', explorar: 'audio original: no es una canción de tu biblioteca',
@@ -910,8 +947,8 @@ function fadesPanel() {
   const range = (k, label, min, max, step) => `<label class="lbl">${label} <b data-fx-val="${k}">${secs(f[k])}</b>
       <input type="range" class="sp-range" data-fx="${k}" min="${min}" max="${max}" step="${step}" value="${f[k]}" style="--p:${((f[k] - min) / (max - min)) * 100}%" ${dis} ${k === 'cross' && f.mode !== 'cross' ? 'disabled' : ''} aria-label="${label}">
       <small data-fx-text="${k}">${fxSecsText(k, f[k])}</small></label>`;
-  return `<h2 style="margin-top:22px">Transiciones y fundidos</h2>
-      <p>Cómo empieza, termina y pasa de una canción a otra. Se aplica a las canciones; las emisoras de radio solo usan el fundido al pausar.</p>
+  return `<section class="panel"><h2>Transiciones y fundidos</h2>
+      <p>Cómo empieza, termina y pasa de una canción a otra. Las emisoras de radio solo usan el fundido al pausar.</p>
       ${ok ? '' : '<p class="note-box">Este navegador no deja que la página cambie el volumen (pasa en iPhone y iPad), así que los fundidos y la mezcla cruzada no se pueden aplicar aquí. Tus ajustes se guardan para tus otros dispositivos.</p>'}
       <div class="sp-controls" data-fx-box>
         <label class="lbl">Transición entre canciones<span class="field"><select data-fx="mode" ${dis}>
@@ -926,8 +963,8 @@ function fadesPanel() {
         <small>Un fundido corto al pausar y al volver a reproducir, en vez de un corte.</small></span></label>
       <label class="switch${ok ? '' : ' disabled'}"><input type="checkbox" data-fx="manual" ${f.manual ? 'checked' : ''} ${dis}><span><b>Mezclar también al saltar de canción</b>
         <small>Al pulsar siguiente o anterior, o al elegir otra canción, la que suena se desvanece en vez de cortarse${f.mode === 'cross' ? ` (con un solape de hasta ${fades.MANUAL_MAX} s)` : ' (durante 1 s)'}.</small></span></label>
-      <p class="muted" style="margin:10px 0 0">Las canciones muy cortas usan fundidos proporcionales: nunca pasan más del 40 % de su duración fundiéndose.</p>
-      <div class="actions" style="margin-top:12px"><button class="btn" data-act="fx-reset">${icon('sync')}Restaurar transiciones</button></div>`;
+      <p class="muted small" style="margin:10px 0 0">En canciones muy cortas los fundidos nunca ocupan más del 40 % de su duración.</p>
+      <div class="actions" style="margin-top:12px"><button class="btn ghost" data-act="fx-reset">${icon('sync')}Restaurar transiciones</button></div></section>`;
 }
 async function setFx(patch) {
   S.settings.fx = fades.settings({ ...fades.settings(), ...patch });
@@ -939,7 +976,7 @@ on('fx-changed', () => { if (location.hash.startsWith('#/ajustes')) refresh(); }
 
 function spatialPanel() {
   const sp = spatial.settings(), ok = spatial.supported(), st = spatial.status(), off = ok && sp.on ? '' : 'disabled';
-  return `<h2 style="margin-top:22px">Audio espacial (8D)</h2>
+  return `<section class="panel"><h2>Audio espacial (8D)</h2>
       <p>Crea una sensación de movimiento del sonido al escuchar canciones de tu biblioteca. Se recomienda utilizar auriculares.</p>
       <label class="switch${ok ? '' : ' disabled'}"><input type="checkbox" data-sp="on" ${sp.on && ok ? 'checked' : ''} ${ok ? '' : 'disabled'}><span><b>Activar audio espacial</b>
         <small>${ok ? 'Se aplica al vuelo, solo a las canciones de tu biblioteca. No cambia tus archivos, y las emisoras de radio y la música de Explorar suenan siempre como son.' : 'Este navegador no admite el procesamiento de audio necesario.'}</small></span></label>
@@ -951,9 +988,9 @@ function spatialPanel() {
         <label class="lbl">Velocidad <b data-sp-val="speed">${sp.speed} %</b><input type="range" class="sp-range" data-sp="speed" min="0" max="100" step="1" value="${sp.speed}" style="--p:${sp.speed}%" ${off} aria-label="Velocidad del audio espacial">
           <small data-sp-speed>${spatialSpeedText(sp)}</small></label>
       </div>
-      <div class="actions" style="margin-top:12px"><button class="btn" data-act="sp-reset">${icon('sync')}Restaurar ajustes</button></div>
-      <p class="muted" style="margin:12px 0 0">El efecto depende del archivo y de dónde está. Las canciones guardadas en este dispositivo siempre se pueden procesar; las que suenan directamente desde la nube, solo si su servidor lo permite. Cuando una canción no se puede procesar, suena el audio original sin avisos.
-        ${st.last ? `<span data-sp-status>Última canción${st.last.title ? ` («${esc(st.last.title)}»)` : ''}: ${SPATIAL_WHY[st.last.reason] || 'audio original'}.</span>` : ''}</p>`;
+      <div class="actions" style="margin-top:12px"><button class="btn ghost" data-act="sp-reset">${icon('sync')}Restaurar ajustes</button></div>
+      <p class="muted small" style="margin:12px 0 0">El efecto depende del archivo y de dónde está. Las canciones guardadas en este dispositivo siempre se pueden procesar; las que suenan directamente desde la nube, solo si su servidor lo permite. Cuando una canción no se puede procesar, suena el audio original sin avisos.
+        ${st.last ? `<span data-sp-status>Última canción${st.last.title ? ` («${esc(st.last.title)}»)` : ''}: ${SPATIAL_WHY[st.last.reason] || 'audio original'}.</span>` : ''}</p></section>`;
 }
 const spatialSpeedText = sp => { const f = spatial.freqOf(sp); return `Una vuelta completa cada ${Math.round(1 / f)} segundos.`; };
 async function setSpatial(patch) {
@@ -967,6 +1004,64 @@ async function setSpatial(patch) {
   else spatial.apply();
 }
 on('spatial-changed', () => { spatial.apply(); if (location.hash.startsWith('#/ajustes')) refresh(); });
+// Ayuda: guía para crear y conectar un bucket. Cada paso se marca solo al detectar que ya está hecho.
+function helpSection({ u, bks, own, O, inCloud, keySteps, bucketForm }) {
+  const connected = bks.length > 0, keyOk = !!O && own.length > 0;
+  const path = helpPath || (connected && !own.length && !O ? 'guest' : 'own');
+  const ext = (href, text) => `<a class="link" href="${href}" target="_blank" rel="noopener">${text}</a>`;
+  const go = (href, text, ic = 'chevR') => `<a class="btn sm" href="${href}">${text}${icon(ic)}</a>`;
+  const loginStep = { title: 'Inicia sesión en Fiora', tag: 'Recomendado', done: !!u,
+    body: `<p>Con tu cuenta, la conexión al bucket, tus playlists, favoritos y ajustes te siguen a cualquier dispositivo: solo tendrás que hacer esta guía una vez.</p><div class="actions">${go('#/ajustes/cuenta', u ? 'Ver mi cuenta' : 'Iniciar sesión o crear cuenta')}</div>` };
+  const steps = path === 'own' ? [
+    loginStep,
+    { title: 'Crea tu cuenta de Oracle Cloud', done: connected,
+      body: `<p>Regístrate en ${ext('https://www.oracle.com/cloud/free/', 'Oracle Cloud Free Tier')}. Oracle pide una tarjeta para verificar la cuenta; los recursos marcados como <i>Always Free</i> no se cobran. Revisa sus condiciones y límites al registrarte.</p>` },
+    { title: 'Crea el bucket', done: connected,
+      body: `<ol class="steps"><li>Entra en ${ext('https://cloud.oracle.com/', 'la consola de Oracle Cloud')}.</li>
+        <li>Menú ☰ → <b>Storage</b> (Almacenamiento) → <b>Buckets</b> → <b>Create Bucket</b>.</li>
+        <li>Ponle un nombre (por ejemplo, <code>musica</code>), deja el nivel <b>Standard</b> y la visibilidad <b>privada</b>, y pulsa <b>Create</b>.</li></ol>` },
+    { title: 'Crea la URL de acceso', done: connected,
+      body: `<ol class="steps"><li>Abre el bucket y entra en <b>Pre-Authenticated Requests</b> → <b>Create Pre-Authenticated Request</b>.</li>
+        <li>Destino: <b>Bucket</b>. Acceso: <b>Permit object reads and writes</b>. Marca <b>Enable Object Listing</b>.</li>
+        <li>Pon una fecha de caducidad lejana y pulsa <b>Create</b>.</li>
+        <li>Copia la URL: <b>Oracle solo la muestra una vez</b>. Funciona como una contraseña, así que no la compartas.</li></ol>` },
+    { title: 'Conecta el bucket a Fiora', done: connected,
+      body: connected ? `<p>Conectado: ${bks.map(b => `«${esc(b.name)}»`).join(', ')}.</p><div class="actions">${go('#/ajustes/nube', 'Ver mis buckets')}</div>` : `<p>Pega aquí la URL que acabas de copiar.</p>${bucketForm}` },
+    { title: 'Añade tu clave de API de Oracle', tag: 'Si el bucket es tuyo', done: keyOk,
+      body: `<p>Sin ella el bucket es de solo lectura. Con ella puedes <b>subir música</b>, cambiar los archivos, crear enlaces para compartir y usar el modo desarrollador. Se guarda solo en este dispositivo: añádela únicamente en dispositivos tuyos.</p>
+        ${keyOk ? `<div class="actions">${go('#/ajustes/desarrollador', 'Ver la clave')}</div>` : connected ? keySteps : '<p class="muted small">Disponible cuando el bucket esté conectado.</p>'}` },
+    { title: 'Sube tu música', done: inCloud > 0,
+      body: `<p>Añade canciones desde tu dispositivo y súbelas a la nube desde <b>Nube</b>. A partir de ahí suenan en todos tus dispositivos y puedes descargarlas para escucharlas sin conexión.</p>
+        <div class="actions">${ADD_BTN}${connected ? go('#/ajustes/nube', 'Ir a Nube') : ''}</div>` },
+  ] : [
+    { title: 'Pide un enlace de solo lectura', done: connected,
+      body: '<p>Quien creó el bucket lo genera en <b>Ajustes → Nube → Compartir</b>, uno para cada persona. Con él puedes escuchar y descargar, pero no subir, cambiar ni borrar nada.</p>' },
+    loginStep,
+    { title: 'Pega el enlace', done: connected,
+      body: connected ? `<p>Conectado: ${bks.map(b => `«${esc(b.name)}»`).join(', ')}.</p>` : `<p>Ponle un nombre que te ayude a reconocerlo (por ejemplo, «Música de Ana») y pega el enlace.</p>${bucketForm}` },
+    { title: 'Escucha', done: connected && inCloud > 0,
+      body: `<p>Las canciones aparecen en tu biblioteca al sincronizar. Tus playlists, favoritos y escuchas se guardan en tu cuenta, nunca en su bucket, y nadie más los ve.</p><div class="actions">${go('#/biblioteca', 'Ir a la biblioteca')}</div>` },
+  ];
+  const done = steps.filter(s => s.done).length, next = steps.findIndex(s => !s.done);
+  return `<section class="panel tuto-box"><h2>Conecta tu música</h2>
+      <p>Fiora guarda tu música en un <b>bucket</b>: una carpeta en la nube de Oracle que solo tú controlas.</p>
+      <div class="seg tuto-path" role="tablist">
+        <button role="tab" data-act="help-path" data-path="own" aria-selected="${path === 'own'}" class="${path === 'own' ? 'on' : ''}">${icon('cloud')}Crear mi bucket</button>
+        <button role="tab" data-act="help-path" data-path="guest" aria-selected="${path === 'guest'}" class="${path === 'guest' ? 'on' : ''}">${icon('user')}Tengo un enlace</button></div>
+      <div class="tuto-progress" aria-label="${done} de ${steps.length} pasos hechos"><div class="meter"><i style="width:${(done / steps.length) * 100}%"></i></div>
+        <small>${done === steps.length ? '¡Todo listo!' : `${done} de ${steps.length} pasos`}</small></div>
+      <ol class="tuto">${steps.map((s, i) => `<li class="tuto-step${s.done ? ' done' : ''}${i === next ? ' cur' : ''}" data-step="${i + 1}"><details ${i === next ? 'open' : ''}>
+        <summary><span class="tuto-n">${s.done ? icon('check') : i + 1}</span><span class="tuto-t"><b>${s.title}</b>${s.tag ? `<small>${s.tag}</small>` : ''}</span>${icon('chevD')}</summary>
+        <div class="tuto-body">${s.body}</div></details></li>`).join('')}</ol></section>
+    <section class="panel"><h2>Preguntas frecuentes</h2>
+      <details class="faq"><summary>¿Cuánto cuesta?</summary><p>Fiora es gratuita y no cobra nada. El espacio lo pone Oracle: su nivel gratuito incluye almacenamiento de objetos; si superas sus límites, Oracle aplica sus tarifas. Consulta sus condiciones actuales en su web.</p></details>
+      <details class="faq"><summary>¿Qué diferencia hay entre la URL del bucket y la clave de API?</summary><p>La <b>URL</b> conecta el bucket para escuchar y sincronizar. La <b>clave de API</b> demuestra que el bucket es tuyo y permite cambiarlo: subir, borrar, compartir y editar metadatos. Quien solo escucha no la necesita.</p></details>
+      <details class="faq"><summary>¿Dónde se guardan la URL y la clave?</summary><p>La URL se guarda en este dispositivo y, si has iniciado sesión, en tu cuenta para conectarla en tus otros dispositivos. La clave de API se guarda solo en este dispositivo, nunca en tu cuenta ni en el bucket.</p></details>
+      <details class="faq"><summary>¿Cómo comparto mi música sin dar mi URL?</summary><p>Con la clave de API añadida, en <b>Nube</b> aparece «Compartir»: crea un enlace de solo lectura para cada persona, con caducidad, y revócalo cuando quieras.</p></details>
+      <details class="faq"><summary>He perdido la URL del bucket</summary><p>Oracle no la vuelve a mostrar. Crea otra en <b>Pre-Authenticated Requests</b> del mismo bucket y conéctala: la música sigue ahí. Si alguien pudo verla, borra la antigua en Oracle.</p></details>
+      <details class="faq"><summary>No me deja subir canciones</summary><p>El bucket está en solo lectura en este dispositivo. Si es tuyo, añade la clave de API de Oracle (paso «Añade tu clave de API»). Si te lo compartieron, solo se puede escuchar.</p></details>
+    </section>`;
+}
 // Grupos de los buckets: con quién se pueden compartir playlists y con qué nombre te ven.
 function groupsPanel() {
   if (!account.user()) return '';
@@ -1590,12 +1685,12 @@ async function writeFiles(list, { fields = null, stop = () => false } = {}) {
 // ------------------------------------------------- canciones repetidas (desarrollador)
 const dupKeep = {};   // copia elegida a mano en cada grupo: clave -> id
 function viewDuplicates() {
-  if (!devOn()) return show(empty('settings', 'Solo en modo desarrollador', 'Activa el modo desarrollador en Ajustes para revisar las canciones repetidas.', `<a class="btn primary" href="#/ajustes">Ir a Ajustes</a>`));
+  if (!devOn()) return show(empty('settings', 'Solo en modo desarrollador', 'Activa el modo desarrollador en Ajustes para revisar las canciones repetidas.', `<a class="btn primary" href="#/ajustes/desarrollador">Ir a Ajustes</a>`));
   const groups = lib.findDuplicates(dupKeep);
   const extra = groups.flatMap(g => g.tracks.slice(1));
   const ignored = (S.settings.dupIgnore || []).length;
   const back = ignored ? `<p class="muted" style="margin-top:18px">${plural(ignored, 'grupo marcado', 'grupos marcados')} como «no son repetidas». <button class="chip" data-act="dup-unignore">Volver a revisarlos</button></p>` : '';
-  if (!groups.length) return show(`<div class="head"><h1>Canciones repetidas</h1></div>${empty('heart', 'No hay canciones repetidas', 'Ninguna canción de tu biblioteca tiene el mismo título y los mismos artistas que otra.', `<a class="btn" href="#/ajustes">Volver a Ajustes</a>`)}${back}`);
+  if (!groups.length) return show(`<div class="head"><h1>Canciones repetidas</h1></div>${empty('heart', 'No hay canciones repetidas', 'Ninguna canción de tu biblioteca tiene el mismo título y los mismos artistas que otra.', `<a class="btn" href="#/ajustes/desarrollador">Volver a Ajustes</a>`)}${back}`);
   const inCloud = extra.filter(t => t.cloudName).length;
   show(`<div class="head"><h1>Canciones repetidas</h1></div>
     <div class="panel"><p style="margin-top:0">${plural(groups.length, 'canción tiene', 'canciones tienen')} más de una copia. De cada una se conserva la copia con portada; si todas la tienen (o ninguna), la más reciente. Toca «Conservar» para elegir otra.</p>
@@ -1855,6 +1950,7 @@ const ACTIONS = {
     try { await groups.setName(g.id, name); toast('Nombre guardado'); } catch (e) { toast(e.message, 6000); }
   },
   async 'fx-reset'() { await setFx({ ...fades.DEFAULTS }); toast('Transiciones restauradas'); refresh(); },
+  'help-path'(el) { helpPath = el.dataset.path; refresh(); },
   async 'sp-reset'() { await setSpatial({ mode: spatial.DEFAULTS.mode, intensity: spatial.DEFAULTS.intensity, speed: spatial.DEFAULTS.speed }); toast('Ajustes de audio espacial restaurados'); refresh(); },
   async 'share-revoke'(el) {
     const b = cloud.buckets().find(x => x.id === el.dataset.bid);
@@ -1947,6 +2043,7 @@ document.addEventListener('submit', async e => {
   const form = e.target.closest('[data-form]');
   if (!form) return;
   e.preventDefault();
+  form.dataset.sent = '1';   // ya enviado: no impide volver a pintar Ajustes
   const kind = form.dataset.form;
   if (EX.forms[kind]) return EX.forms[kind](form);
   if (kind === 'ai-key') {
@@ -2366,7 +2463,7 @@ document.addEventListener('change', async e => {
     if (spk === 'on' || spk === 'mode') refresh();
     return;
   }
-  if (e.target.matches?.('[data-ai-provider]')) { aiConf().provider = e.target.value; await saveKV('settings', false); return refresh(); }
+  if (e.target.matches?.('[data-ai-provider]')) { e.target.form.dataset.sent = '1'; aiConf().provider = e.target.value; await saveKV('settings', false); return refresh(); }
   const key = e.target.dataset?.toggle;
   if (!key) return;
   if (key === 'dev' && e.target.checked && !devReady()) { e.target.checked = false; return toast('El modo desarrollador necesita la clave de API de Oracle con permiso sobre un bucket conectado', 6000); }

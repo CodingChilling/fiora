@@ -143,33 +143,33 @@ const GROUPS = [
   const tracks = () => page.evaluate(async () => [...(await import('./js/store.js')).S.tracks.values()].map(t => ({ title: t.title, coverId: t.coverId || '', tried: !!t.coverTried, source: t.coverSource || '', cloud: t.cloudName || '' })));
 
   // --- cuenta, bucket con su clave de API, modo desarrollador y la IA de los géneros
-  await page.goto(APP + '#/ajustes'); await page.waitForSelector('[data-form="login"]');
+  await page.goto(APP + '#/ajustes/cuenta'); await page.waitForSelector('[data-form="login"]');
   await page.fill('[data-form="login"] [name=email]', 'portadas@example.com'); await page.fill('[data-form="login"] [name=password]', 'secreta123');
   await page.click('[data-form="login"] button[value="in"]');
   await until(async () => !!(await import('./js/account.js')).user());
-  await page.goto(APP + '#/ajustes');
+  await page.goto(APP + '#/ajustes/nube');
   if (await page.$('details.more summary')) await page.click('details.more summary');
   await page.fill('[data-form="par"] [name=name]', 'Mi música'); await page.fill('[data-form="par"] [name=url]', OWNER_PAR);
   await page.click('[data-form="par"] button');
   await until(async () => (await import('./js/store.js')).S.tracks.size >= 10, null, 30000);
-  await page.goto(APP + '#/ajustes');
+  await page.goto(APP + '#/ajustes/desarrollador');
   await page.click('details.key-steps summary');
   await page.fill('[data-form="oci"] textarea', fs.readFileSync(path.join(KEYS, 'config.txt'), 'utf8'));
   await page.setInputFiles('[data-form="oci"] [name=pem]', path.join(KEYS, 'key.pem'));
   await page.click('[data-form="oci"] button');
-  await page.waitForSelector('[data-form="share"]', { timeout: 15000 });
+  await page.waitForSelector('[data-act="oci-forget"]', { timeout: 15000 });
   await page.evaluate(async ai => {
     const { S, saveKV } = await import('./js/store.js');
     S.settings.dev = true;
     S.settings.ai = { provider: 'custom', url: ai, keys: {}, models: { custom: 'modelo-de-prueba' }, lists: {} };
     await saveKV('settings', false);
   }, AI);
-  await page.goto(APP + '#/inicio'); await page.goto(APP + '#/ajustes'); await page.waitForSelector('[data-act="ai-covers"]');
+  await page.goto(APP + '#/inicio'); await page.goto(APP + '#/ajustes/desarrollador'); await page.waitForSelector('[data-act="ai-covers"]');
   let all = await tracks();
   const without = all.filter(t => !t.coverId).length;
   const btn = await page.innerText('[data-act="ai-covers"]');
   check(new RegExp(`Buscar portada de ${without} canciones sin portada`).test(btn), `1. Modo desarrollador: «${btn.trim()}»`);
-  check(/MusicBrainz/.test(await page.innerText('#view')), '   con la explicación de dónde salen las portadas');
+  check(/MusicBrainz/.test(await page.textContent('#view')), '   con la explicación de dónde salen las portadas');
 
   // el menú de una canción sin portada también lo ofrece
   await page.goto(APP + '#/biblioteca/canciones'); await page.waitForSelector('.row');
@@ -181,7 +181,7 @@ const GROUPS = [
   const pending = without - 3;   // Safaera y Yo Perreo Sola (Apple) y Luna (YouTube Music) no necesitan la IA
 
   // --- búsqueda de verdad
-  await page.goto(APP + '#/inicio'); await page.goto(APP + '#/ajustes');
+  await page.goto(APP + '#/inicio'); await page.goto(APP + '#/ajustes/desarrollador');
   await page.click('[data-act="ai-covers"]');
   await page.waitForSelector('#sheet[open]');
   const dlg = await page.innerText('#sheet');
@@ -247,7 +247,7 @@ const GROUPS = [
   await page.waitForTimeout(800);
   const shown = await page.locator('.row', { hasText: 'Saoko' }).first().evaluate(r => { const c = r.querySelector('.cover'); return !!(c && (c.querySelector('img') || /url\(/.test(c.style.backgroundImage))); });
   check(shown, '10. La portada aparece en la biblioteca');
-  await page.goto(APP + '#/ajustes'); await page.waitForSelector('[data-act="ai-covers"]');
+  await page.goto(APP + '#/ajustes/desarrollador'); await page.waitForSelector('[data-act="ai-covers"]');
   const btn2 = await page.innerText('[data-act="ai-covers"]');
   const left = (await tracks()).filter(t => !t.coverId && !t.tried).length;
   check(left === 0 && /No quedan canciones sin portada/.test(btn2), `   No queda ninguna por buscar: «${btn2.trim()}»`);
@@ -257,7 +257,7 @@ const GROUPS = [
   await ctx2.route(SB + '/**', async route => { try { await route.fulfill({ response: await route.fetch({ url: route.request().url().replace(SB, API) }) }); } catch { await route.abort('failed').catch(() => {}); } });
   await page.evaluate(async () => { await (await import('./js/account.js')).sync(); });
   const p2 = await ctx2.newPage();
-  await p2.goto(APP + '#/ajustes'); await p2.waitForSelector('[data-form="login"]');
+  await p2.goto(APP + '#/ajustes/cuenta'); await p2.waitForSelector('[data-form="login"]');
   await p2.fill('[data-form="login"] [name=email]', 'portadas@example.com'); await p2.fill('[data-form="login"] [name=password]', 'secreta123');
   await p2.click('[data-form="login"] button[value="in"]');
   const got2 = await (async () => { const t = Date.now(); while (Date.now() - t < 30000) { const r = await p2.evaluate(async () => { const { S } = await import('./js/store.js'), l = await import('./js/library.js'); const t = [...S.tracks.values()].find(x => x.title === 'Saoko'); return t?.coverId ? !!(await l.coverUrl(t)) : false; }).catch(() => false); if (r) return true; await p2.waitForTimeout(500); } return false; })();
@@ -270,7 +270,7 @@ const GROUPS = [
   await until(async () => [...(await import('./js/store.js')).S.tracks.values()].some(t => t.title === 'Canción nueva'));
   await page.evaluate(async () => (await import('./js/ai.js')).setTimeoutMs(7000));
   aiHang = true;
-  await page.goto(APP + '#/ajustes'); await page.click('[data-act="ai-covers"]');
+  await page.goto(APP + '#/ajustes/desarrollador'); await page.click('[data-act="ai-covers"]');
   await page.waitForSelector('#sheet[open]'); await page.click('#sheet[open] button:has-text("Buscar portadas")');
   const counting = await until(() => /Identificando con IA: .*\(\d+ s\)/.test(document.querySelector('#toasts').innerText), null, 10000);
   const ended = await until(() => /sin ayuda de la IA/.test(document.querySelector('#toasts').innerText), null, 30000);

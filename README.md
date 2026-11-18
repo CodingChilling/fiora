@@ -17,7 +17,7 @@ Tu música, sin suscripciones. Una app web instalable (PWA) para escuchar tu pro
 - **Audio espacial (8D)**, opcional: un efecto de movimiento del sonido para las canciones de tu biblioteca, pensado para auriculares. Se configura solo en **Perfil → Ajustes → Audio y reproducción** y no cambia tus archivos. Más abajo, [Audio espacial (8D)](#audio-espacial-8d).
 - **Letras** sincronizadas (incrustadas en el archivo o de [LRCLIB](https://lrclib.net)) y carátulas.
 - **Para ti**: mezcla diaria, mezclas por ambiente y por hora del día, redescubre y radio a partir de una canción. Aprenden de lo que terminas, lo que saltas y lo que escuchas seguido; todo se calcula en tu dispositivo.
-- **Perfil**: tu identidad musical en un sitio: quién eres, tu criatura sonora, todas tus estadísticas (minutos por día, horas y días en que más escuchas, y tus artistas, canciones, álbumes, géneros y ambientes más oídos) y tu evolución. Los **Ajustes** están dentro de Perfil, en el engranaje de arriba a la derecha.
+- **Perfil**: tu identidad musical en un sitio: quién eres, tu criatura sonora, todas tus estadísticas (minutos por día, horas y días en que más escuchas, y tus artistas, canciones, álbumes, géneros y ambientes más oídos) y tu evolución. Los **Ajustes** están dentro de Perfil, en el engranaje de arriba a la derecha: una portada con cada sección resumida en una línea (Cuenta, Nube, Audio y reproducción, Este dispositivo, Criatura sonora, Modo desarrollador y Ayuda) y una página para cada una; en escritorio, con un menú lateral para pasar de una a otra.
 - **Estadísticas por pestañas** (en Perfil): además del resumen de siempre, **Tiempo** (calendario de calor del año, reloj de 24 horas, rachas, récords e hitos, sesiones y comparación con la semana anterior), **Gustos** (décadas y año medio de tu música, ambiente por franja del día, río de géneros y concentración por artista), **Biblioteca** (cuánto has explorado, favoritas olvidadas con «Reproducir todas», canciones que nunca o siempre saltas y crecimiento) y **Conexiones** (red de canciones que pones seguidas y mapa de radios). **Resumen del mes** en tarjetas deslizables, exportable como imagen. Todo se calcula en el dispositivo con datos que ya existían; no se registra nada nuevo. Las escuchas por canción no se guardan por mes, así que la canción y el artista del resumen son «de siempre», y se dice.
 - **Tu criatura sonora**: un animal, entre 15, que representa cómo escuchas, dibujado como una escultura 3D de miles de partículas que reaccionan al cursor, al dedo y al sonido. Con explicación basada en tus cifras, ADN musical, metamorfosis, bestiario y constelación de recuerdos. Más abajo, [Tu criatura sonora](#tu-criatura-sonora).
 - **Géneros y ambiente**: cada canción puede tener varios géneros y etiquetas de lo que transmite (alegre, melancólica, enérgica…).
@@ -34,6 +34,8 @@ No hay servidor propio ni seguimiento: es HTML, CSS y JavaScript sin paso de com
 4. Ábrela en el móvil o el ordenador y usa **Instalar app** / **Añadir a pantalla de inicio**.
 
 ## Conectar Oracle Cloud
+
+Dentro de la app, **Ajustes → Ayuda** tiene una guía paso a paso con dos caminos: **Crear mi bucket** (cuenta de Oracle, bucket, URL de acceso, conectarlo, clave de API y subir música) y **Tengo un enlace** (para quien recibe un enlace de solo lectura). Cada paso trae lo necesario ahí mismo (el formulario para pegar la URL o la clave) y se marca solo cuando la app detecta que está hecho. Abajo hay preguntas frecuentes. Resumido:
 
 1. En la consola de Oracle Cloud: **Storage → Buckets → Create Bucket** (déjalo privado).
 2. Dentro del bucket: **Pre-Authenticated Requests → Create Pre-Authenticated Request**.
@@ -150,7 +152,7 @@ Mientras no se ejecute, la app lo detecta, lo indica en Ajustes y sigue funciona
 
 **Sin conexión.** Los cambios se guardan primero en el dispositivo y se suben solos al volver la conexión. Si una subida se corta, la foto se queda en el dispositivo como «Pendiente de subir» y se reintenta. La cabecera de cada playlist muestra si está guardada, guardándose, pendiente o con un error (con un botón para reintentar).
 
-**Pruebas.** En [`tests/playlists`](tests/playlists/README.md) hay pruebas de la migración (incluido RLS) en PostgreSQL y pruebas de la app de punta a punta. Las de compartir el bucket están en [`tests/sharing`](tests/sharing/README.md).
+**Pruebas.** Ajustes y la guía del bucket se prueban en [`tests/settings`](tests/settings/README.md). En [`tests/playlists`](tests/playlists/README.md) hay pruebas de la migración (incluido RLS) en PostgreSQL y pruebas de la app de punta a punta. Las de compartir el bucket están en [`tests/sharing`](tests/sharing/README.md).
 
 ## Modo desarrollador y etiquetado con IA
 
@@ -222,7 +224,7 @@ La puntuación no es un porcentaje de afinidad; la app muestra su desglose regla
 - Una **entrada por mes** para el bestiario (animal, puntuación y cifras principales) y la criatura actual.
 - Tus preferencias de la experiencia.
 - En Supabase van a tres tablas con RLS (`fiora_habit_days`, `fiora_creature_log`, `fiora_creature_state`): solo su dueño las lee. Nunca van al bucket.
-- En **Ajustes → Tu criatura sonora** puedes desactivarla (deja de guardarse el resumen; las estadísticas siguen), quitar animaciones, hábitat o reacción al sonido, elegir el período principal y **eliminar sus datos** sin tocar tus estadísticas.
+- En **Ajustes → Criatura sonora** puedes desactivarla (deja de guardarse el resumen; las estadísticas siguen), quitar animaciones, hábitat o reacción al sonido, elegir el período principal y **eliminar sus datos** sin tocar tus estadísticas.
 
 **La figura 3D**
 

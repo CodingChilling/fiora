@@ -157,7 +157,7 @@ export function initProfile(c) {
       <div class="pf-who"><h2>${esc(name)}</h2>
         <small>${u ? `${esc(u.email)}${since ? ` · ${since}` : ''}` : 'Sin sesión: tus datos están solo en este dispositivo'}</small>
         <small>${plural(d.total, 'canción', 'canciones')} · ${plural(livePlaylists().filter(p => !p.shared).length, 'playlist', 'playlists')} · ${d.hours.toLocaleString('es', { maximumFractionDigits: 1 })} h escuchadas</small></div>
-      ${u ? '' : `<a class="btn" href="#/ajustes">${icon('user')}Iniciar sesión</a>`}</section>`;
+      ${u ? '' : `<a class="btn" href="#/ajustes/cuenta">${icon('user')}Iniciar sesión</a>`}</section>`;
   }
   function creatureCard(cur) {
     if (!habits.enabled()) {
