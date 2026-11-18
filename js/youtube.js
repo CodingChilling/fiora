@@ -48,8 +48,11 @@ let cur = null;            // servidor que está funcionando
 async function servers() {
   const list = [];
   if (own()) list.push(own());
-  for (const b of await covers.pipedServers().catch(() => [])) if (!list.includes(b)) list.push(b);
-  return list.filter(b => !bad.has(b) || b === own());
+  for (const b of await covers.pipedAllServers().catch(() => [])) if (!list.includes(b)) list.push(b);
+  const ok = list.filter(b => !bad.has(b) || b === own());
+  if (ok.length) return ok;
+  bad.clear();                 // todos fallaron antes: se les da otra oportunidad (quizá ya funcionan)
+  return list;
 }
 const abs = (base, url) => (url && !/^https?:/.test(url) ? new URL(url, base + '/').href : url || '');
 async function json(url) {
@@ -70,39 +73,51 @@ let picking = null;
 function ask(fn) {
   if (!cur && picking) return picking.catch(() => {}).then(() => ask(fn));
   const p = askNow(fn);
-  if (!cur) picking = p.finally(() => { picking = null; });
+  if (!cur) picking = p.then(() => {}, () => {}).finally(() => { picking = null; });
   return p;
 }
 async function askNow(fn) {
-  const tried = [];
-  let last = null;
-  const order = [...new Set([own(), cur, ...(await servers())].filter(Boolean))];
-  for (const base of order.slice(0, 5)) {
+  const tried = [], errors = [];
+  const list = await servers();
+  if (cur && !list.includes(cur)) cur = null;     // p. ej. el servidor propio que se acaba de quitar
+  const order = [...new Set([own(), cur, ...list].filter(Boolean))];
+  for (const base of order.slice(0, 6)) {
     tried.push(base);
+    let answered = false;
     for (const kind of kinds.has(base) ? [kinds.get(base)] : ['piped', 'invidious']) {
       try {
         const out = await fn(base, kind);
         kinds.set(base, kind); cur = base;
         return out;
       } catch (e) {
-        last = e;
-        if (e.unavailable) throw e;            // el vídeo no existe o es privado: da igual el servidor
+        errors.push(e);
+        // El servidor funciona pero dice que el vídeo no existe: se pregunta a otro por si acaso,
+        // sin descartar este. Si YouTube le exige demostrar que no es un robot, el bloqueado es el servidor.
+        if (e.why === 'dead') { answered = true; kinds.set(base, kind); break; }
       }
     }
-    if (base === cur) cur = null;
-    if (base !== own()) { bad.add(base); covers.pipedBad(base); }
+    if (base === cur && !answered) cur = null;
+    if (!answered && base !== own()) { bad.add(base); covers.pipedBad(base); }
+    if (errors.filter(e => e.why === 'dead').length >= 2) break;      // dos servidores coinciden: no está disponible
   }
-  const e = new Error(order.length ? `Ningún servidor de descarga ha respondido (${tried.length} probados)${last?.message ? `: ${last.message}` : ''}` : 'No hay servidores de descarga disponibles');
+  const dead = errors.filter(e => e.why === 'dead'), bot = errors.some(e => e.why === 'bot');
+  const detail = [...new Set(errors.map(e => e.message).filter(Boolean))].slice(0, 2).join(' / ');
+  let e;
+  if (dead.length && dead.length >= Math.min(2, errors.filter(x => x.why).length)) e = new Error('El vídeo no está disponible (privado, borrado o bloqueado en tu país)');
+  else if (bot) e = new Error(`YouTube está bloqueando a los servidores de descarga que se han probado (les pide demostrar que no son un robot). Prueba otra vez más tarde o pon un servidor propio en «Servidor de descarga».${detail ? ` Respuesta: ${detail}` : ''}`);
+  else e = new Error(order.length ? `Ningún servidor de descarga ha respondido (${tried.length} probados)${detail ? `: ${detail}` : ''}` : 'No hay servidores de descarga disponibles');
   e.servers = true;
   throw e;
 }
-const unavailable = msg => { const e = new Error(msg); e.unavailable = true; return e; };
-const deadVideo = m => /unavailable|private|removed|not available|no disponible|copyright|age|sign in|login/i.test(m || '');
+// Qué quiere decir el error de un servidor: el vídeo no existe ('dead') o YouTube bloquea al servidor ('bot').
+const whyOf = m => (/\bbot\b|sign in|log ?in|confirm you|po.?token|captcha|rate.?limit|too many requests|\b429\b|blocked|\bip\b/i.test(m || '') ? 'bot'
+  : /unavailable|private|removed|deleted|terminated|copyright|does not exist|not found|no disponible/i.test(m || '') ? 'dead' : '');
 
 /** Prueba un servidor propio: devuelve 'piped' o 'invidious', o lanza un error. */
 export async function testServer(base) {
   base = String(base || '').trim().replace(/\/+$/, '');
-  if (!/^https:\/\//.test(base)) throw new Error('La dirección debe empezar por https://');
+  // https, o un servidor en este mismo ordenador (http://localhost), que el navegador también permite.
+  if (!/^(https:\/\/|http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$))/.test(base)) throw new Error('La dirección debe empezar por https:// (o ser http://localhost en este ordenador)');
   try { const r = await json(`${base}/trending?region=ES`); if (Array.isArray(r)) return 'piped'; } catch { /* no es Piped */ }
   try { const r = await json(`${base}/api/v1/stats`); if (r?.software || r?.version) return 'invidious'; } catch { /* tampoco */ }
   throw new Error('No responde como un servidor de Piped ni de Invidious (o no permite consultas desde el navegador)');
@@ -128,7 +143,7 @@ export async function video(id) {
   return ask(async (base, kind) => {
     let d;
     try { d = await json(kind === 'piped' ? `${base}/streams/${id}` : `${base}/api/v1/videos/${id}?local=true`); }
-    catch (e) { if (e.content && deadVideo(e.message)) throw unavailable('El vídeo no está disponible (privado, borrado, con restricción de edad o bloqueado)'); throw e; }
+    catch (e) { if (e.content) e.why = whyOf(e.message); throw e; }
     const v = kind === 'piped' ? fromPiped(base, d) : fromInvidious(base, d);
     if (!v.title && !v.audio.length) throw new Error('Respuesta vacía');
     return { ...v, id, server: base };

@@ -364,3 +364,5 @@ export async function identifySong({ title, artist }) {
   const yt = await pipedFind({ artist, title });
   return yt ? { cover: yt.blob, from: 'youtube' } : null;
 }
+/** Todos los servidores de Piped conocidos, también los que han fallado (las descargas llevan su propia cuenta). */
+export async function pipedAllServers() { await pipedServers(); return (await piped.list).slice(); }

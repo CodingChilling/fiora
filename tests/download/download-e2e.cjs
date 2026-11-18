@@ -27,7 +27,7 @@ ff('-f', 'lavfi', '-i', 'color=c=black:s=480x360', '-vf', 'drawbox=x=0:y=45:w=48
 const APPLE_JPG = fs.readFileSync(path.join(TMP, 'apple.jpg')), HQ = fs.readFileSync(path.join(TMP, 'hq.jpg'));
 
 // --- el «YouTube» simulado
-const P1 = 'https://piped1.prueba', P2 = 'https://piped2.prueba', MIO = 'https://mio.prueba', PROXY = 'https://proxy.prueba';
+const P0 = 'https://piped0.prueba', P1 = 'https://piped1.prueba', P2 = 'https://piped2.prueba', MIO = 'https://mio.prueba', PROXY = 'https://proxy.prueba';
 const VIDEOS = {
   AAAAAAAAAAA: { title: 'ROSALÍA - DESPECHÁ (Official Video)', uploader: 'ROSALÍA', duration: 6, audio: 'm4a' },
   BBBBBBBBBBB: { title: 'Canción Libre', uploader: 'Grupo Local - Topic', duration: 5, audio: 'opus' },
@@ -46,11 +46,14 @@ const streamsOf = (base, id) => {
   };
 };
 const log = [];
-let allDown = false, slowAudio = false;
+let allDown = false, slowAudio = false, botAll = false;
+const BOT = { error: 'Sign in to confirm you’re not a bot', message: 'Sign in to confirm you’re not a bot. This helps protect our community.' };
 const json = (route, body, status = 200) => route.fulfill({ status, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify(body) });
 
 async function mock(ctx) {
-  await ctx.route('https://piped-instances.kavin.rocks/**', r => json(r, [{ api_url: P1 }, { api_url: P2 }]));
+  await ctx.route('https://piped-instances.kavin.rocks/**', r => json(r, [{ api_url: P0 }, { api_url: P1 }, { api_url: P2 }]));
+  // Un servidor al que YouTube ha bloqueado: contesta, pero con «demuestra que no eres un robot».
+  await ctx.route(`${P0}/**`, r => { const p = new URL(r.request().url()).pathname; log.push(`p0 ${p}`); return p.startsWith('/streams/') ? json(r, BOT, 500) : r.fulfill({ status: 502, body: '' }); });
   await ctx.route(/pipedapi\.|api\.piped\./, r => r.fulfill({ status: 502, body: 'no' }));
   await ctx.route(`${P1}/**`, r => { log.push(`p1 ${new URL(r.request().url()).pathname}`); r.fulfill({ status: 502, body: 'caído' }); });
   for (const [base, kind] of [[P2, 'piped'], [MIO, 'invidious']]) {
@@ -71,6 +74,7 @@ async function mock(ctx) {
         }
         if (p === '/trending') return json(r, []);
         let m = /^\/streams\/(\w{11}|[\w-]{11})$/.exec(p);
+        if (m && botAll) return json(r, BOT, 500);
         if (m) { const v = VIDEOS[m[1]]; return !v || v.unavailable ? json(r, { error: 'Video unavailable', message: 'This video is unavailable' }, 500) : json(r, streamsOf(base, m[1])); }
         m = /^\/playlists\/(\w+)$/.exec(p);
         if (m && LIST[m[1]]) { const l = LIST[m[1]]; return json(r, { name: l.name, uploader: l.uploader, relatedStreams: l.pages[0].map(id => ({ url: `/watch?v=${id}`, title: VIDEOS[id].title, uploaderName: VIDEOS[id].uploader, duration: VIDEOS[id].duration, thumbnail: `https://img.prueba/vi/${id}/hqdefault.jpg` })), nextpage: 'pagina2' }); }
@@ -163,6 +167,7 @@ async function mock(ctx) {
   await search('https://www.youtube.com/watch?v=AAAAAAAAAAA&list=PLprueba'); await page.waitForSelector('.dl-choose');
   check(/4 canciones/.test(await page.innerText('.dl-choose')) && /Mi lista de prueba/.test(await page.innerText('.dl-choose')), '4. Un vídeo dentro de una playlist pregunta: «Solo esta canción» o «Toda la playlist (4 canciones)» (dos páginas leídas)');
   check(log.filter(l => l.startsWith('p1')).length <= 2 && log.some(l => l === 'p2 /streams/AAAAAAAAAAA'), '   El servidor caído se descarta y se usa el siguiente');
+  check(log.some(l => l === 'p0 /streams/AAAAAAAAAAA') && !(await page.$('.dl-error')), '   Un servidor bloqueado por YouTube («no eres un robot») no corta la búsqueda: se prueba el siguiente');
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'elegir.png') });
   await page.click('[data-act="dl-mode"][data-mode="one"]');
   check(await until(() => /MOTOMAMI/.test(document.querySelector('.dl-item small')?.textContent || '')), '   «Solo esta canción»: una ficha');
@@ -298,11 +303,18 @@ async function mock(ctx) {
   pr = probe(saved2);
   check(pr.format.tags?.title === 'Otra Más' && pr.format.tags?.artist === 'Banda De Prueba, Ana Prueba', `    Descarga por Invidious con metadatos (${await page.evaluate(() => window.__dlNames.at(-1))})`);
 
+  // ===================================================================== YouTube bloquea a todos
+  botAll = true;
+  await page.evaluate(async () => { const { S, saveKV } = await import('./js/store.js'); S.settings.ytServer = ''; await saveKV('settings', false); });
+  await search('https://www.youtube.com/watch?v=BBBBBBBBBBB'); await page.waitForSelector('.dl-error', { timeout: 60000 });
+  check(/bloqueando/.test(await page.innerText('.dl-error')) && /robot/.test(await page.innerText('.dl-error')), `15b. Si YouTube bloquea a los servidores, lo dice (no «vídeo no disponible»): «${(await page.innerText('.dl-error')).slice(0, 110)}…»`);
+  botAll = false;
+
   // ===================================================================== todo caído
   allDown = true;
   await page.evaluate(async () => { const { S, saveKV } = await import('./js/store.js'); S.settings.ytServer = ''; await saveKV('settings', false); });
   await search('https://www.youtube.com/watch?v=AAAAAAAAAAA'); await page.waitForSelector('.dl-error', { timeout: 60000 });
-  check(/Ningún servidor de descarga/.test(await page.innerText('.dl-error')), `15. Si no responde ningún servidor, lo dice: «${await page.innerText('.dl-error')}»`);
+  check(/Ningún servidor de descarga|bloqueando a los servidores/.test(await page.innerText('.dl-error')), `15. Si no responde ningún servidor, lo dice: «${await page.innerText('.dl-error')}»`);
   allDown = false;
 
   check(!(await wide()), '16. Sin desbordamiento horizontal a 390 px');
