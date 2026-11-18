@@ -1167,7 +1167,11 @@ async function exportFile(t) {
   catch (e) { return note.done(`No se pudo obtener el archivo: ${e.message}`, 6000); }
   const ext = (t.fileName || '').match(/\.[a-z0-9]{2,5}$/i)?.[0] || '.mp3';
   const name = `${[t.artist, t.title].filter(Boolean).join(' - ')}${ext}`.replace(/[\\/:*?"<>|]/g, '_');
-  const file = new File([blob], name, { type: blob.type || 'audio/mpeg' });
+  return saveFile(new File([blob], name, { type: blob.type || 'audio/mpeg' }), note);
+}
+/** Guarda un archivo en el dispositivo (descargas; en iPhone/iPad, con el menú Compartir). */
+async function saveFile(file, note = toast('Preparando el archivo…', 0)) {
+  const name = file.name;
   // En iPhone/iPad instalada como app no hay descargas directas: se usa el menú Compartir → "Guardar en Archivos".
   const ios = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   if (ios && navigator.canShare?.({ files: [file] })) {
@@ -2033,6 +2037,7 @@ const PF = initProfile({ esc, plural, toast, openSheet, sheet, confirmDlg, show,
 const EX = initExplore({
   esc, enc, plural, toast, openSheet, sheet, menu, show, rows, cover, empty, setHTML, watch: watchSentinels, ACTIONS, playable,
   saveToLibrary, trackMenu: t => trackMenu(t, {}), confirmDlg, ask, PL, go: h => go(h), refresh: () => refresh(), saveKV,
+  saveFile, uploadTo, emit,
 });
 
 document.addEventListener('click', e => {

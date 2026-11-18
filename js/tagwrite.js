@@ -321,7 +321,9 @@ async function parseMp4(read, total) {
 }
 async function writeMp4(blob, f, cover) {
   const { top, mv, moov } = await parseMp4(blobReader(blob), blob.size);
-  if (top.some(x => x.type === 'moof')) throw new Error('MP4 fragmentado: no se puede editar');
+  // MP4 fragmentado (el M4A de YouTube): se admite si moov va antes que los fragmentos, que es lo normal.
+  const frag = top.some(x => x.type === 'moof');
+  if (frag && top.some(x => x.type === 'moof' && x.start < mv.start)) throw new Error('MP4 fragmentado con los fragmentos delante: no se puede editar');
   let udta = moov.children.find(c => c.type === 'udta');
   if (!udta) moov.children.push(udta = mk('udta', []));
   let meta = udta.children.find(c => c.type === 'meta');
@@ -350,9 +352,43 @@ async function writeMp4(blob, f, cover) {
   let out = serialize(moov);
   const delta = out.length - mv.size;
   if (delta && top.some(x => x.type === 'mdat' && x.start > mv.start)) { shiftOffsets(moov, delta); out = serialize(moov); }
-  const result = new Blob([blob.slice(0, mv.start), out, blob.slice(mv.start + mv.size)], { type: blob.type || 'audio/mp4' });
+  const rest = frag && delta ? await shiftFragments(blob, top.filter(x => x.start > mv.start), delta) : [blob.slice(mv.start + mv.size)];
+  const result = new Blob([blob.slice(0, mv.start), out, ...rest], { type: blob.type || 'audio/mp4' });
   result.tagRange = [mv.start, mv.start + out.length];
   return result;
+}
+/**
+ * En un MP4 fragmentado, las posiciones absolutas que haya detrás de moov se desplazan `delta`
+ * bytes: el «base_data_offset» de tfhd (si el fragmento lo indica) y las de tfra (índice final).
+ * Las de sidx y las relativas a moof no cambian.
+ */
+async function shiftFragments(blob, boxes, delta) {
+  const parts = [];
+  const add64 = (d, p) => { const v = readU32(d, p) * 4294967296 + readU32(d, p + 4) + delta; d.set(u32(Math.floor(v / 4294967296)), p); d.set(u32(v >>> 0), p + 4); };
+  for (const x of boxes) {
+    if (x.type !== 'moof' && x.type !== 'mfra') { parts.push(blob.slice(x.start, x.start + x.size)); continue; }
+    const d = await bytes(blob, x.start, x.start + x.size);
+    const walk = (a, b) => {
+      for (let o = a; o + 8 <= b;) {
+        const size = readU32(d, o), type = String.fromCharCode(...d.subarray(o + 4, o + 8));
+        if (size < 8 || o + size > b) break;
+        if (type === 'traf') walk(o + 8, o + size);
+        else if (type === 'tfhd' && (readU32(d, o + 8) & 1)) add64(d, o + 16);        // version/flags, track_ID, base_data_offset
+        else if (type === 'tfra') {
+          const v = d[o + 8], lens = readU32(d, o + 16), n = readU32(d, o + 20);
+          const step = (v ? 16 : 8) + ((lens >> 4) & 3) + 1 + ((lens >> 2) & 3) + 1 + (lens & 3) + 1;
+          for (let i = 0, p = o + 24; i < n; i++, p += step) {
+            const at = p + (v ? 8 : 4);
+            if (v) add64(d, at); else d.set(u32(readU32(d, at) + delta), at);
+          }
+        }
+        o += size;
+      }
+    };
+    walk(8, d.length);
+    parts.push(d);
+  }
+  return parts;
 }
 
 // --------------------------------------------------------------------- lectura

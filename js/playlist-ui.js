@@ -1320,8 +1320,8 @@ export function initPlaylists(c) {
   }
 
   // ================================================================ crear y añadir
-  async function newPlaylist(firstTracks = []) {
-    const name = await c.ask({ title: 'Nueva playlist', placeholder: 'Nombre de la playlist', ok: 'Crear' });
+  async function newPlaylist(firstTracks = [], value = '') {
+    const name = await c.ask({ title: 'Nueva playlist', placeholder: 'Nombre de la playlist', ok: 'Crear', value });
     if (!name) return null;
     const p = data.normalize({ id: 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, trackIds: [], createdAt: Date.now() });
     data.addTracks(p, firstTracks.map(t => t.id));

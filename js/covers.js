@@ -339,3 +339,28 @@ export async function generated({ title = '', artist = '' }) {
   for (const [l, y] of lines(unknownArtist(artist) ? '' : artist, '500 32px system-ui, sans-serif', size - 64, 1)) g.fillText(l, 48, y);
   return new Promise(r => c.toBlob(b => r(b), 'image/jpeg', 0.9));
 }
+
+// --- para las descargas de YouTube (js/youtube.js) ------------------------
+export { get, pipedServers };
+/** Marca un servidor de Piped como caído (no se vuelve a probar en esta sesión). */
+export const pipedBad = base => { piped.bad.add(base); if (pipedCur) pipedCur = null; };
+
+/**
+ * Datos de una canción en Apple: {album, albumArtist, year, trackNo, genre, cover(Blob)} si hay una
+ * coincidencia exacta de título y artista; si no, intenta al menos la portada cuadrada de YouTube
+ * Music ({cover}). null si no se encuentra nada fiable.
+ */
+export async function identifySong({ title, artist }) {
+  if (!searchable(title, artist)) return null;
+  const res = await itunes({ term: `${artist} ${title}`, entity: 'song' });
+  const hit = (res || []).find(x => sameTitle(x.trackName, title) && sameArtist([{ name: x.artistName }], artist));
+  if (hit) {
+    const cover = await appleImage(artOf(hit));
+    return {
+      album: String(hit.collectionName || '').replace(/\s*-\s*(Single|EP)$/i, ''), albumArtist: hit.collectionArtistName || hit.artistName || '',
+      year: +(String(hit.releaseDate || '').slice(0, 4)) || 0, trackNo: hit.trackNumber || 0, genre: hit.primaryGenreName || '', cover, from: 'apple',
+    };
+  }
+  const yt = await pipedFind({ artist, title });
+  return yt ? { cover: yt.blob, from: 'youtube' } : null;
+}
