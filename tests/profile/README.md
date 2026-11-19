@@ -3,7 +3,6 @@
 | Archivo | Qué prueba |
 |---|---|
 | `creature-test.mjs` | El motor (`js/creature.js`) con **perfiles de escucha sintéticos**: cada uno de los 15 patrones produce su animal y una explicación con sus cifras; datos insuficientes y escucha sin patrón no asignan ninguno; el secundario exige evidencia; escuchar más horas con el mismo reparto da la misma puntuación; ADN musical; metamorfosis sin oscilaciones; 15 definiciones y 15 geometrías distintas y en 3D; unión de un mismo día entre dispositivos. |
-| `creature-rls.sql` | La migración `20261117120000_creature.sql` en PostgreSQL con dos cuentas y un anónimo: cada una solo ve y cambia lo suyo, límites de tamaño, borrado de los datos de la criatura y que un dispositivo que no sabe del borrado no vuelva a subir lo anterior. |
 | `profile-e2e.cjs` | La app de punta a punta con Playwright (escritorio y móvil, con WebGL por software): navegación Perfil/Ajustes, ajustes y estadísticas conservados, escucha real anotada en el resumen diario, asignación y explicación, las 15 criaturas dibujadas en 3D, partículas que reaccionan al cursor y al dedo y vuelven con inercia, giro y zoom, pausa de animaciones y hábitat, reacción al sonido real, ADN, secundario, metamorfosis, bestiario, constelación, exportación a PNG, sincronización con Supabase entre dos dispositivos, otra cuenta sin acceso, alternativa sin WebGL, «reducir movimiento», desactivar la criatura y eliminar sus datos sin tocar las estadísticas, y consola sin errores. |
 | `stats-test.mjs` | Los cálculos de las estadísticas por pestañas (`js/stats-extra.js`) con datos fabricados: calendario que cruza de año, rachas con huecos, semana frente a la anterior, sesiones, décadas con canciones sin año, ambiente por franja, río de géneros, concentración y bloques, biblioteca explorada, favoritas olvidadas, saltos, crecimiento, parejas de canciones y resumen de un mes con y sin datos. |
 | `stats-e2e.cjs` | Las pestañas en la app (escritorio y móvil) con los datos de `seed-stats.cjs`: cada bloque se pinta con los valores calculados, avisos cuando faltan datos, etiquetas al señalar un día, «Reproducir todas», red manejable con ratón y teclado, mapa de radios, pestaña recordada, resumen del mes con cambio de mes y exportación a PNG, sin desplazamiento horizontal en el móvil y sin errores en consola. Solo necesita la app en `:8765`. |
@@ -18,11 +17,7 @@ node creature-test.mjs
 node stats-test.mjs
 ```
 
-```bash
-psql -d <base con ../playlists/supabase-shim.sql y las migraciones> -f creature-rls.sql
-```
-
-`profile-e2e.cjs` usa los mismos servidores que las pruebas de playlists (ver `../playlists/README.md`): la app en `:8765` y `sb-server.mjs` en `:8766` sobre una base recién creada con las cuatro migraciones, además de los audios de `../playlists/fixtures`.
+`profile-e2e.cjs` usa los mismos servidores que las pruebas de playlists (ver `../playlists/README.md`): la app en `:8765` y `sb-server.mjs` en `:8766` sobre una base recién creada, además de los audios de `../playlists/fixtures`.
 
 ```bash
 node profile-e2e.cjs

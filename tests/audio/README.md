@@ -13,7 +13,7 @@
 node spatial-graph.cjs
 ```
 
-`spatial-e2e.cjs` necesita además el emulador de Supabase en `:8766` (base recién creada con las migraciones), el de radios en `:8767` (`../explore/rb-server.mjs`) y el de Oracle en `:8769` (`../sharing/oracle-server.mjs`, que tiene `/__nocors?on=1` para simular un bucket sin cabeceras CORS).
+`spatial-e2e.cjs` necesita además el emulador de Supabase en `:8766` (base recién creada), el de radios en `:8767` (`../explore/rb-server.mjs`) y el de Oracle en `:8769` (`../sharing/oracle-server.mjs`, que tiene `/__nocors?on=1` para simular un bucket sin cabeceras CORS).
 
 ```bash
 node spatial-e2e.cjs

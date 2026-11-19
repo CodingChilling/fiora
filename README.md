@@ -67,11 +67,11 @@ Qué puede hacer: escuchar y descargar tus canciones. Qué no: subir, cambiar ni
 
 En la misma pantalla ves los enlaces vigentes y caducados, y puedes **revocar** cualquiera: deja de funcionar al momento. Como mucho hay 5 enlaces vigentes a la vez. Lo que alguien ya haya descargado en su dispositivo no se puede borrar a distancia. Solo se listan los enlaces creados por Fiora; los demás (por ejemplo, la URL de tus dispositivos) se gestionan en la consola de Oracle, en **Bucket → Pre-Authenticated Requests**.
 
-> **Si antes compartiste la URL de lectura y escritura de tu bucket**, quien la tenga puede seguir escribiendo en él y pudo leer la copia de tus datos (`_fiora/datos.json`). Revócala en la consola de Oracle (**Bucket → Pre-Authenticated Requests → Delete**), crea otra para tus dispositivos, pégala en **Ajustes → Nube** y da a cada persona un enlace de solo lectura. Si sus apps llegaron a mezclar tus playlists con las suyas y las guardaron en su cuenta, [`supabase/compartido-limpieza.sql`](supabase/compartido-limpieza.sql) las localiza.
+> **Si antes compartiste la URL de lectura y escritura de tu bucket**, quien la tenga puede seguir escribiendo en él y pudo leer la copia de tus datos (`_fiora/datos.json`). Revócala en la consola de Oracle (**Bucket → Pre-Authenticated Requests → Delete**), crea otra para tus dispositivos, pégala en **Ajustes → Nube** y da a cada persona un enlace de solo lectura.
 
 ## Compartir playlists
 
-Las personas que conectan un mismo bucket con su propia cuenta forman su **grupo**, y dentro de él cada una puede compartir sus playlists con quien quiera. Hay que ejecutar una vez [`supabase/migrations/20261116120000_shared_playlists.sql`](supabase/migrations/20261116120000_shared_playlists.sql) en el SQL Editor (después de las otras dos; es idempotente).
+Las personas que conectan un mismo bucket con su propia cuenta forman su **grupo**, y dentro de él cada una puede compartir sus playlists con quien quiera.
 
 - **Cómo se forma el grupo.** El dispositivo con la clave de API de Oracle del bucket guarda en él `_fiora/grupo.json`, con un identificador y una clave aleatorios (nada personal). Quien puede leer el bucket, también con un enlace de solo lectura, presenta esa clave a Supabase al sincronizar y entra en el grupo. Supabase solo guarda la huella (SHA-256) de la clave.
 - **Cómo te ven.** Cada persona elige su nombre para el grupo, en **Ajustes → Nube → Playlists compartidas** o la primera vez que comparte. Nunca se muestra el correo.
@@ -101,58 +101,26 @@ Las personas que conectan un mismo bucket con su propia cuenta forman su **grupo
 Con una cuenta, tus playlists, favoritos, estadísticas, emisoras, ajustes y la conexión a Oracle se guardan y se recuperan al entrar desde cualquier dispositivo. Las cuentas viven en un proyecto gratuito de [Supabase](https://supabase.com):
 
 1. Crea un proyecto en supabase.com.
-2. En **SQL Editor**, ejecuta:
-
-   ```sql
-   create table public.fiora_datos (
-     user_id uuid primary key default auth.uid() references auth.users on delete cascade,
-     datos jsonb not null default '{}'::jsonb,
-     actualizado timestamptz not null default now()
-   );
-   alter table public.fiora_datos enable row level security;
-   create policy "Cada usuario solo ve y cambia sus datos"
-     on public.fiora_datos for all to authenticated
-     using (auth.uid() = user_id) with check (auth.uid() = user_id);
-   ```
-
-3. En **Authentication → URL Configuration**, pon como *Site URL* la dirección de la app (`https://<tu-usuario>.github.io/fiora/`), para que los enlaces de confirmación y de cambio de contraseña vuelvan a ella.
-4. Copia la **Project URL** y la clave pública (**anon** o **publishable**) de *Project Settings → API* y:
+2. En **Authentication → URL Configuration**, pon como *Site URL* la dirección de la app (`https://<tu-usuario>.github.io/fiora/`), para que los enlaces de confirmación y de cambio de contraseña vuelvan a ella.
+3. Copia la **Project URL** y la clave pública (**anon** o **publishable**) de *Project Settings → API* y:
    - pégalas en **Ajustes → Cuenta** dentro de la app (se guardan solo en ese dispositivo), o
    - escríbelas en `js/config.js` para que valgan en todos los dispositivos.
 
-La clave pública está pensada para ir en el navegador: lo que protege los datos es la política de la tabla, que solo deja a cada usuario leer y escribir su propia fila. **No uses nunca la clave `service_role` / `secret`.**
+La clave pública está pensada para ir en el navegador: cada usuario solo puede leer y escribir sus propios datos. **No uses nunca la clave `service_role` / `secret`.**
 
 Por defecto Supabase pide confirmar el correo al crear la cuenta. Si la app es solo para ti, puedes desactivarlo en *Authentication → Sign In / Providers → Email → Confirm email*.
 
 ## Playlists en Supabase
 
-Las playlists se guardan en tablas propias de tu proyecto de Supabase y sus imágenes en Supabase Storage, para que portadas, fotos, capítulos, notas y estadísticas te acompañen en todos tus dispositivos. **Hay que preparar Supabase una vez**:
+Las playlists se guardan en tablas propias de tu proyecto de Supabase y sus imágenes en Supabase Storage, para que portadas, fotos, capítulos, notas y estadísticas te acompañen en todos tus dispositivos.
 
-1. En Supabase → **SQL Editor**, abre y ejecuta el archivo [`supabase/migrations/20261114120000_playlists.sql`](supabase/migrations/20261114120000_playlists.sql) de este repositorio (o `supabase db push` si usas la CLI). Es idempotente: se puede repetir sin perder nada, y no toca `fiora_datos`.
-2. Vuelve a abrir la app. En **Ajustes → Cuenta** verás «Playlists: Guardado en tu cuenta». La primera vez, las playlists que ya tenías se suben solas, con sus canciones y su orden.
-
-Mientras no se ejecute, la app lo detecta, lo indica en Ajustes y sigue funcionando como antes (las playlists se guardan en el dispositivo, en `fiora_datos` y en el bucket de Oracle). No se pierde nada.
-
-**Qué crea la migración**
-
-| Tabla / objeto | Para qué |
-|---|---|
-| `fiora_playlists` | Nombre, descripción, emoji, frase, ánimo, etiquetas, destacadas, colores, portada (ruta y encuadre), módulos y preferencias, fechas y marca de eliminada. |
-| `fiora_playlist_tracks` | Canciones de cada playlist (por su id estable), su **orden manual**, capítulo y fecha en que se añadieron. Una canción no se repite en una playlist. |
-| `fiora_playlist_sections` | Capítulos: nombre, descripción, orden y si están plegados. |
-| `fiora_playlist_photos` | Fotos del carrusel: ruta en Storage, miniatura, tamaño, tipo, dimensiones, descripción y orden. Máximo 15 (también si se escribe directamente en la tabla). |
-| `fiora_playlist_notes` | Notas personales sobre canciones de una playlist. |
-| `fiora_playlist_plays` | Escuchas por playlist, canción y **día** (veces y segundos). Nada más: ni horas exactas ni dispositivo. |
-| `fiora_save_playlist`, `fiora_load_playlists`, `fiora_count_plays` | Guardan una playlist completa en una transacción (si otro dispositivo guardó algo más nuevo, no lo pisa), la cargan y suman escuchas. Devuelven las rutas de imágenes que dejan de usarse para borrarlas de Storage (sin archivos huérfanos). |
-| Bucket `fiora-playlists` | **Privado**, máximo **16 MB** por archivo y solo imágenes (JPEG, PNG, WebP, GIF, AVIF). Carpetas `{tu id}/{playlist}/covers/…` y `…/photos/…`. |
-
-**Seguridad.** Todas las tablas tienen RLS: cada usuario solo puede leer, crear, cambiar o borrar sus propias filas, y las funciones se ejecutan con los permisos de quien llama (`security invoker`). En Storage, cada usuario solo puede leer, subir, sustituir y borrar archivos dentro de su carpeta; nadie más ve tus fotos, ni siquiera con la URL. Los usuarios anónimos no tienen acceso. Las imágenes se descargan con la sesión del usuario y se guardan en caché en el dispositivo. En PostgreSQL nunca se guardan imágenes, solo sus rutas y datos.
+**Seguridad.** Cada usuario solo puede leer, crear, cambiar o borrar sus propios datos. En Storage, cada usuario solo puede leer, subir, sustituir y borrar archivos dentro de su carpeta; nadie más ve tus fotos, ni siquiera con la URL. Los usuarios anónimos no tienen acceso. Las imágenes se descargan con la sesión del usuario y se guardan en caché en el dispositivo. En la base de datos nunca se guardan imágenes, solo sus rutas y datos.
 
 **Fotos de más de 16 MB.** El límite está en `js/config.js` (`IMAGE_MAX_BYTES`) y es el mismo que el del bucket. Antes de subir, la app comprueba que el archivo sea de verdad una imagen (por su contenido, no por la extensión), su tamaño y sus dimensiones. Si una foto supera los 16 MB, avisa y deja elegir: usarla **solo en este dispositivo** (se guarda en IndexedDB, nunca se sube y lleva la marca «Solo local»), reducirla y subirla (solo si lo eliges), elegir otra o cancelar. Los demás dispositivos ven la portada sincronizada o la predeterminada. Si el navegador no garantiza que guardará la foto, la app lo dice.
 
 **Sin conexión.** Los cambios se guardan primero en el dispositivo y se suben solos al volver la conexión. Si una subida se corta, la foto se queda en el dispositivo como «Pendiente de subir» y se reintenta. La cabecera de cada playlist muestra si está guardada, guardándose, pendiente o con un error (con un botón para reintentar).
 
-**Pruebas.** Ajustes y la guía del bucket se prueban en [`tests/settings`](tests/settings/README.md). En [`tests/playlists`](tests/playlists/README.md) hay pruebas de la migración (incluido RLS) en PostgreSQL y pruebas de la app de punta a punta. Las de compartir el bucket están en [`tests/sharing`](tests/sharing/README.md).
+**Pruebas.** Ajustes y la guía del bucket se prueban en [`tests/settings`](tests/settings/README.md). En [`tests/playlists`](tests/playlists/README.md) hay pruebas de la app de punta a punta. Las de compartir el bucket están en [`tests/sharing`](tests/sharing/README.md).
 
 ## Modo desarrollador y etiquetado con IA
 
@@ -183,7 +151,7 @@ Con el modo activado, el menú ⋯ de cada canción tiene «Editar metadatos».
 
 ## Tu criatura sonora
 
-Está en **Perfil**. Es una interpretación visual de hábitos musicales observables, no un perfil psicológico. Para tenerla en todos tus dispositivos hay que ejecutar una vez [`supabase/migrations/20261117120000_creature.sql`](supabase/migrations/20261117120000_creature.sql) en el SQL Editor (es idempotente); sin ella funciona igual, guardada solo en el dispositivo.
+Está en **Perfil**. Es una interpretación visual de hábitos musicales observables, no un perfil psicológico. Con sesión iniciada se guarda en tu cuenta; sin ella funciona igual, guardada solo en el dispositivo.
 
 **Los 15 animales**
 
@@ -335,19 +303,9 @@ Una sola sección del menú con tres vistas: **Para ti** (lo más visual: ambien
 
 **Pasaporte musical** (opcional, se desactiva en su pantalla): un país se sella cuando escuchas una emisora suya un tiempo mínimo seguido (30 s, 1, 2 o 5 minutos; por defecto 1 minuto, sin contar pausas). Abrir una ficha no cuenta. Solo se guarda el país, cuándo se descubrió y con qué emisora.
 
-**Emisoras favoritas, colecciones, pasaporte y preferencias en Supabase.** Sin sesión todo funciona y se guarda en el dispositivo; con sesión se sincroniza. Hay que ejecutar una vez [`supabase/migrations/20261115120000_explore.sql`](supabase/migrations/20261115120000_explore.sql) en el SQL Editor (después de la de playlists; es idempotente). Mientras no se ejecute, Radios lo indica y todo sigue guardándose en el dispositivo.
+**Emisoras favoritas, colecciones, pasaporte y preferencias en Supabase.** Sin sesión todo funciona y se guarda en el dispositivo; con sesión se sincroniza. Cada usuario solo ve y cambia lo suyo, y todo se borra al eliminar la cuenta. Las portadas de las colecciones van al bucket `fiora-playlists` con el mismo límite de 16 MB y la misma opción de usarlas solo en el dispositivo. Así, las emisoras favoritas dejan de viajar en la copia general de la cuenta: así, una emisora quitada en un dispositivo ya no reaparece.
 
-| Tabla / función | Para qué |
-|---|---|
-| `fiora_radio_favorites` | Emisoras favoritas: el identificador y una ficha mínima de referencia (nombre, URL del stream, logo, país, etiquetas), nunca audio. |
-| `fiora_radio_collections`, `fiora_radio_collection_items` | Colecciones: nombre, descripción, portada opcional y emisoras en tu orden. |
-| `fiora_passport` | Un sello por país: primera y última vez, y la emisora. |
-| `fiora_explore_prefs` | Mezclador, tu país, pasaporte, modo del Atlas, intervalos y el último viaje. |
-| `fiora_load_explore`, `fiora_radio_fav`, `fiora_save_radio_collection`, `fiora_passport_stamp`, `fiora_save_explore_prefs` | Cargar y guardar (las colecciones y preferencias no pisan una versión más nueva de otro dispositivo). |
-
-Todas con RLS (cada usuario solo ve y cambia lo suyo; el rol anónimo no tiene acceso), funciones `security invoker`, límites de tamaño y borrado en cascada al eliminar la cuenta. Las portadas de las colecciones van al bucket `fiora-playlists` con el mismo límite de 16 MB y la misma opción de usarlas solo en el dispositivo. Con esta migración, las emisoras favoritas dejan de viajar en la copia general de la cuenta: así, una emisora quitada en un dispositivo ya no reaparece.
-
-**Pruebas.** En [`tests/explore`](tests/explore/README.md): la migración con RLS en PostgreSQL y la app de punta a punta contra emuladores de Radio Browser, los catálogos y Supabase.
+**Pruebas.** En [`tests/explore`](tests/explore/README.md): la app de punta a punta contra emuladores de Radio Browser, los catálogos y Supabase.
 
 ## Catálogos de música libre
 
@@ -402,7 +360,6 @@ Y abre `http://localhost:8000`.
 | `js/creature3d.js` | Escena 3D de partículas con Three.js: física, gestos, hábitats, metamorfosis y constelación |
 | `js/playlist-ui.js` | Playlists: vista, editor por categorías, carrusel y visor, capítulos, filtros, reordenar, recomendaciones, estadísticas, modos |
 | `js/images.js` | Imágenes de las playlists: validación, miniaturas, colores con contraste, Supabase Storage, caché y fotos solo locales |
-| `supabase/migrations/` | Migraciones para Supabase: playlists, Explorar, playlists compartidas y criatura sonora (tablas, RLS, funciones, bucket) |
 | `js/tagwrite.js` | Escritura de metadatos dentro de MP3, FLAC y M4A |
 | `js/vault.js` | Cifrado de las claves de IA con una clave del dispositivo no exportable |
 | `js/groups.js`, `js/merge.js` | Grupo de cada bucket (para compartir playlists) y fusión de cambios hechos a la vez |

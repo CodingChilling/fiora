@@ -1,0 +1,2 @@
+# Archivos SQL: solo en local, nunca en el repositorio
+*.sql
