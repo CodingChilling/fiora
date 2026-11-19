@@ -1,5 +1,5 @@
 // Grupo de un bucket: las cuentas que pueden leer ese bucket de Oracle, para compartir playlists
-// entre ellas (supabase/migrations/…_shared_playlists.sql).
+// entre ellas.
 //
 // Quien creó el bucket (con la clave de API de Oracle en su dispositivo) guarda en él
 // `_fiora/grupo.json` = {v, group, key}: el id del grupo y una clave aleatoria. Cualquiera que pueda
@@ -16,7 +16,7 @@ const FILE = '_fiora/grupo.json';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 // {[bucketId]: {id, status: 'ok'|'none'|'bad_key'|'error', name, owner, members}}
 let state = {};
-let mode = 'unknown';   // 'ready' · 'missing' (falta la migración) · 'unknown'
+let mode = 'unknown';   // 'ready' · 'missing' (Supabase sin preparar) · 'unknown'
 const save = () => db.put('kv', 'groups', state).catch(() => {});
 
 async function rpc(fn, args) {

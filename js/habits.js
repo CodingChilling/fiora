@@ -1,7 +1,7 @@
 // Hábitos de escucha para «Tu criatura sonora»: un resumen agregado POR DÍA (contadores, sin
 // canciones, sin artistas y sin horas exactas), el historial de criaturas y las preferencias de la
 // experiencia. Vive en este dispositivo y, con sesión, en tablas propias de Supabase protegidas con
-// RLS (supabase/migrations/20261117120000_creature.sql). Nunca va al bucket.
+// RLS. Nunca va al bucket.
 //
 // Qué guarda cada día (claves cortas para ocupar poco):
 //   p escuchas · s segundos de las canciones contadas · ls segundos escuchados de verdad (canciones y radio)

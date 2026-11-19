@@ -465,7 +465,7 @@ export function initProfile(c) {
       ${sw('habitat', p.habitat, 'Hábitat', 'El ambiente de partículas que acompaña a cada criatura.')}
       ${sw('sound', p.sound, 'Reaccionar al sonido', 'Solo con canciones descargadas en la app: se analiza el archivo en este dispositivo.')}
       <label class="lbl" style="margin-top:12px">Período principal<span class="field"><select data-cr-pref="period">${Object.entries(C.PERIODS).map(([k, v]) => `<option value="${k}" ${k === p.period ? 'selected' : ''}>${v}</option>`).join('')}</select></span></label>
-      ${u && st.mode === 'missing' ? `<div class="sub-panel"><b>Falta preparar Supabase para la criatura</b><small>Ahora se guarda solo en este dispositivo. Para tenerla en todos, ejecuta una vez <code>supabase/migrations/20261117120000_creature.sql</code> en Supabase → SQL Editor. No borra nada.</small></div>` : ''}
+      ${u && st.mode === 'missing' ? `<div class="sub-panel"><b>Falta preparar Supabase para la criatura</b><small>Ahora se guarda solo en este dispositivo, porque la base de datos de la cuenta aún no está preparada para ella. No se pierde nada.</small></div>` : ''}
       <p class="muted" style="margin-top:12px">${u ? (st.mode === 'ready' ? 'Se guarda en tu cuenta, en tablas que solo tú puedes leer.' : 'Se guarda en este dispositivo.') : 'Sin sesión, se guarda solo en este dispositivo.'} ${plural(Object.keys(habits.H.days).length, 'día', 'días')} de resúmenes · ${plural(CD.bestiary().length, 'mes', 'meses')} de historial.</p>
       <div class="actions"><a class="btn" href="#/criatura">${icon('spark')}Ver mi criatura</a><button class="btn ghost danger" data-act="cr-erase">${icon('trash')}Eliminar los datos de la criatura</button></div></div>`;
   }

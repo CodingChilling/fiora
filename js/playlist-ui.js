@@ -1275,7 +1275,7 @@ export function initPlaylists(c) {
     if (data.status().mode !== 'ready') return toast('Para compartir hace falta conexión y Supabase preparado (ver Ajustes)', 6000);
     const note = toast('Buscando con quién…', 0);
     await groups.sync().catch(() => {});
-    if (groups.status() === 'missing') return note.done('Falta preparar Supabase para compartir: ejecuta supabase/migrations/20261116120000_shared_playlists.sql (ver Ajustes)', 9000);
+    if (groups.status() === 'missing') return note.done('Falta preparar Supabase para compartir playlists (ver Ajustes → Nube)', 9000);
     const gs = groups.list();
     let lists;
     try { lists = await Promise.all(gs.map(g => groups.members(g.id))); }

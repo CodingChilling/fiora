@@ -1,10 +1,10 @@
 // Datos de las playlists y su sincronización con Supabase.
 //
-// Fuente de verdad: las tablas de Supabase (supabase/migrations/…_playlists.sql), a través de las
+// Fuente de verdad: las tablas de Supabase, a través de las
 // funciones fiora_load_playlists / fiora_save_playlist / fiora_count_plays (con RLS).
 // En el dispositivo: IndexedDB (almacén `playlists`) como copia para trabajar sin conexión, más
 // una cola de cambios pendientes que se reintenta sola.
-// Sin sesión, o si aún no se ha aplicado la migración, todo sigue funcionando como antes (copia
+// Sin sesión, o si Supabase aún no está preparado, todo sigue funcionando como antes (copia
 // en `fiora_datos`, la fila de la cuenta) y no se pierde nada. Nunca se guardan en el bucket.
 //
 // Lo que es solo de este dispositivo (fotos de más de 16 MB, subidas pendientes, orden local del
@@ -117,7 +117,7 @@ export const saveLocalState = () => db.put('kv', 'plLocal', local).catch(() => {
 
 // ------------------------------------------------------------ estado de la sincronización
 const st = { mode: 'local', pending: new Set(), lastPull: 0, fullPulled: false, error: '', busy: false, uploading: 0, retryIn: 0 };
-// mode: 'local' (sin sesión) · 'checking' · 'ready' · 'missing' (falta la migración) · 'offline'
+// mode: 'local' (sin sesión) · 'checking' · 'ready' · 'missing' (Supabase sin preparar) · 'offline'
 export const status = () => ({ mode: st.mode, pending: st.pending.size, error: st.error, busy: st.busy, uploading: st.uploading });
 const announce = () => emit('plsync', status());
 const persist = () => db.put('kv', 'plsync', { pending: [...st.pending], lastPull: st.lastPull }).catch(() => {});
@@ -203,7 +203,7 @@ export async function pull() {
     await syncFavs();
     if (changed) emit('playlists');
   } catch (e) {
-    if (isMissing(e)) { st.mode = 'missing'; st.error = 'Falta aplicar en Supabase la migración de las playlists'; }
+    if (isMissing(e)) { st.mode = 'missing'; st.error = 'Supabase aún no está preparado para las playlists'; }
     else if (e.network) st.mode = 'offline';
     else { st.error = e.message; console.warn('Playlists: no se pudieron traer', e); }
   } finally { st.busy = false; announce(); }
@@ -240,7 +240,7 @@ export async function push() {
   } catch (e) {
     failed = true;
     if (e.network) st.mode = 'offline';
-    else if (isMissing(e)) { st.mode = 'missing'; st.error = 'Falta aplicar en Supabase la migración de las playlists'; }
+    else if (isMissing(e)) { st.mode = 'missing'; st.error = 'Supabase aún no está preparado para las playlists'; }
     else st.error = `No se pudo guardar: ${e.message}`;
   } finally { st.busy = false; announce(); }
   if (failed && st.mode !== 'missing') { backoff = Math.min(backoff * 2, 120000); schedulePush(backoff); }

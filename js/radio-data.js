@@ -1,6 +1,6 @@
 // Datos propios de Explorar: emisoras favoritas, colecciones de radios, pasaporte musical,
 // preferencias e historial reciente. Primero se guardan en el dispositivo (funciona sin cuenta) y,
-// con sesión iniciada, se sincronizan con Supabase (migración 20261115120000_explore.sql).
+// con sesión iniciada, se sincronizan con Supabase.
 //
 // Cómo se sincroniza: el estado local es «lo último que dio Supabase + cambios pendientes». Cada
 // cambio se anota en una cola de operaciones que se envía en orden; al traer de Supabase se aplica
@@ -17,7 +17,7 @@ let ops = [];               // [{t:'fav', s, on, at} | {t:'coll', id} | {t:'stam
 let history = [];           // últimas emisoras escuchadas (solo en este dispositivo, máx. 20)
 let recent = [];            // uuids de las últimas emisoras propuestas por la ruleta/sorpresa (solo local)
 const st = { mode: 'local', busy: false, error: '', pulled: false };
-// mode: 'local' (sin sesión) · 'checking' · 'ready' · 'missing' (falta la migración) · 'offline'
+// mode: 'local' (sin sesión) · 'checking' · 'ready' · 'missing' (Supabase sin preparar) · 'offline'
 
 export const status = () => ({ mode: st.mode, error: st.error, pending: ops.length, busy: st.busy });
 const save = () => Promise.all([db.put('kv', 'explore', D), db.put('kv', 'exploreOps', ops)]).catch(() => {});
@@ -174,7 +174,7 @@ export async function pull() {
     applyRemote(r);
     mirror(); await save(); changed('all');
   } catch (e) {
-    if (isMissing(e)) { st.mode = 'missing'; st.error = 'Falta aplicar en Supabase la migración de Explorar'; }
+    if (isMissing(e)) { st.mode = 'missing'; st.error = 'Supabase aún no está preparado para Explorar'; }
     else if (e.network) st.mode = 'offline';
     else { st.error = e.message; console.warn('Explorar: no se pudo traer', e); }
   } finally { st.busy = false; emit('explore-sync', status()); }
@@ -221,7 +221,7 @@ export async function push() {
   } catch (e) {
     failed = true;
     if (e.network) st.mode = 'offline';
-    else if (isMissing(e)) { st.mode = 'missing'; st.error = 'Falta aplicar en Supabase la migración de Explorar'; }
+    else if (isMissing(e)) { st.mode = 'missing'; st.error = 'Supabase aún no está preparado para Explorar'; }
     else if (e.status >= 400 && e.status < 500 && e.status !== 401 && e.status !== 408 && e.status !== 429) {
       console.warn('Explorar: operación rechazada, se descarta', o, e);
       done(o); await save(); failed = false;   // datos que Supabase no acepta: no se reintenta para siempre

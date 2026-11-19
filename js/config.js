@@ -11,7 +11,7 @@ export const JAMENDO_CLIENT_ID = '';
 
 // --- Playlists en Supabase -------------------------------------------------------
 // Límite por imagen (portadas y fotos del carrusel): el mismo que tiene el bucket en Supabase
-// Storage (`file_size_limit` en supabase/migrations/…_playlists.sql). 16 MB = 16 × 1024 × 1024.
+// Storage (`file_size_limit` del bucket). 16 MB = 16 × 1024 × 1024.
 export const IMAGE_MAX_BYTES = 16 * 1024 * 1024;
 export const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif'];
 export const PLAYLIST_BUCKET = 'fiora-playlists';

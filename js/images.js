@@ -147,7 +147,7 @@ function storageError(r, data, what) {
   const e = new Error(
     r.status === 413 || /maximum allowed size|too large/i.test(msg) ? `La imagen supera el límite de ${LIMIT_TEXT} del almacenamiento`
       : /mime type|not supported/i.test(msg) ? 'El almacenamiento no admite ese tipo de imagen'
-        : /bucket not found|NoSuchBucket/i.test(msg + (data?.code || '')) ? 'Falta preparar el almacenamiento en Supabase (ejecuta la migración de las playlists)'
+        : /bucket not found|NoSuchBucket/i.test(msg + (data?.code || '')) ? 'Falta preparar el almacenamiento de imágenes en Supabase'
           : r.status === 401 || r.status === 403 ? 'No tienes permiso para guardar esa imagen (vuelve a iniciar sesión)'
             : `Supabase respondió ${r.status} al ${what}${data?.message ? `: ${data.message}` : ''}`);
   e.status = r.status;

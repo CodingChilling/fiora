@@ -76,7 +76,7 @@ export async function merge(remote) {
   if (histChanged) await saveKV('hist', false);
   if (transChanged) await saveKV('trans', false);
   if (editsChanged) { await saveKV('edits', false); emit('library'); }
-  // Con la migración de Explorar aplicada, las emisoras favoritas viven en sus tablas (radio-data.js):
+  // Con Supabase preparado para Explorar, las emisoras favoritas viven en sus tablas (radio-data.js):
   // la copia antigua no se mezcla (si no, una emisora quitada volvía a aparecer).
   if (!S.radioManaged) {
     const seen = new Set(S.stations.map(s => s.id));

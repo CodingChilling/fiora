@@ -832,11 +832,11 @@ async function viewSettings(sec) {
     ? `<p>Has iniciado sesión como <b>${esc(u.email)}</b>. Tus playlists, favoritos, estadísticas, emisoras, ajustes y la conexión a la nube se guardan en tu cuenta${S.settings.accountSync ? ` · último guardado: ${new Date(S.settings.accountSync).toLocaleString('es')}` : ''}.</p>
        <p class="pl-account">Playlists: ${PL.syncChip()}</p>
        ${pldata.status().mode === 'missing' ? `<div class="sub-panel"><b>Falta preparar Supabase para las playlists</b>
-         <small>Las playlists se siguen guardando como hasta ahora. Para guardarlas en tablas propias (con portadas, fotos, capítulos, notas y estadísticas en tu cuenta), ejecuta una vez el archivo <code>supabase/migrations/20261114120000_playlists.sql</code> del repositorio en Supabase → SQL Editor. No borra nada.</small>
+         <small>Las playlists se siguen guardando como hasta ahora. La base de datos de la cuenta aún no está preparada para guardarlas con portadas, fotos, capítulos, notas y estadísticas. No se pierde nada.</small>
          <div class="actions"><button class="btn" data-act="pl-retry">${icon('sync')}Volver a comprobar</button></div></div>` : ''}
        <p class="pl-account">Explorar (emisoras favoritas, colecciones y pasaporte): ${exploreChip()}</p>
        ${rdata.status().mode === 'missing' ? `<div class="sub-panel"><b>Falta preparar Supabase para Explorar</b>
-         <small>Tus emisoras favoritas, colecciones, pasaporte y preferencias se guardan en este dispositivo. Para tenerlas en todos, ejecuta una vez <code>supabase/migrations/20261115120000_explore.sql</code> en Supabase → SQL Editor. No borra nada.</small>
+         <small>Tus emisoras favoritas, colecciones, pasaporte y preferencias se guardan en este dispositivo, porque la base de datos de la cuenta aún no está preparada para ellas. No se pierde nada.</small>
          <div class="actions"><button class="btn" data-act="explore-retry">${icon('sync')}Volver a comprobar</button></div></div>` : ''}
        <div class="actions"><button class="btn primary" data-act="account-sync">${icon('sync')}Guardar y sincronizar</button><button class="btn ghost" data-act="sign-out">Cerrar sesión</button></div>`
     : account.available()
@@ -1066,7 +1066,7 @@ function helpSection({ u, bks, own, O, inCloud, keySteps, bucketForm }) {
 function groupsPanel() {
   if (!account.user()) return '';
   if (groups.status() === 'missing') return `<div class="sub-panel"><b>Falta preparar Supabase para compartir playlists</b>
-    <small>Para compartir playlists con quienes comparten tus buckets, ejecuta una vez <code>supabase/migrations/20261116120000_shared_playlists.sql</code> en Supabase → SQL Editor. No borra nada.</small></div>`;
+    <small>La base de datos de la cuenta aún no está preparada para compartir playlists con quienes comparten tus buckets.</small></div>`;
   const list = cloud.buckets().map(b => ({ b, g: groups.of(b.id) })).filter(x => x.g?.status === 'ok');
   if (!list.length) return '';
   return `<div class="sub-panel"><b>Playlists compartidas</b>
