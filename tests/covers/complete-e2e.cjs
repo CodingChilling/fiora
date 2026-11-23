@@ -36,6 +36,9 @@ const AI_KNOWS = { 'luz de luna': { album: 'Noches', artist: 'Lunares', year: 20
 
 (async () => {
   await fetch(ORACLE + '/__reset');
+  // El emulador trae tres canciones de ejemplo; se vacían (un archivo vacío cuenta como borrado) para contar solo las de la prueba.
+  const pre = (await (await fetch(OWNER_PAR)).json()).objects.filter(x => /\.(wav|mp3|flac|m4a)$/i.test(x.name));
+  for (const x of pre) await fetch(OWNER_PAR + x.name.split('/').map(encodeURIComponent).join('/'), { method: 'PUT', body: new Uint8Array(0) });
   for (const [name, buf] of Object.entries(FILES)) await fetch(OWNER_PAR + name.split('/').map(encodeURIComponent).join('/'), { method: 'PUT', body: buf });
   const b = await chromium.launch();
   const errs = [], aiSongs = [], appleTerms = [], tagged = [];

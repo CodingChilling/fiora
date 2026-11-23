@@ -6,6 +6,9 @@ const AUDIO_EXT = /\.(mp3|m4a|aac|flac|ogg|oga|opus|wav|webm)$/i;
 export const isAudioName = name => AUDIO_EXT.test(name);
 
 /** Deduce artista / álbum / título de una ruta tipo "Artista/Álbum/01 - Título.mp3". */
+// Carpetas que pone la propia app al subir a la nube cuando falta el dato (cloud.js): «Varios» si no
+// se sabe el artista y «Sueltas» si la canción no tiene álbum. No son ni artista ni álbum.
+export const NO_ALBUM_DIR = /^sueltas$/i, NO_ARTIST_DIR = /^varios$/i;
 export function fromFilename(path) {
   const parts = path.split('/').filter(Boolean);
   let base = parts.pop().replace(AUDIO_EXT, '');
@@ -17,6 +20,8 @@ export function fromFilename(path) {
   if (dash.length >= 2) { artist = dash.shift().trim(); title = dash.join(' - ').trim(); }
   if (parts.length >= 2) { album = parts[parts.length - 1]; artist = artist || parts[parts.length - 2]; }
   else if (parts.length === 1) album = parts[0];
+  if (NO_ALBUM_DIR.test(album) || NO_ARTIST_DIR.test(album)) album = '';
+  if (NO_ARTIST_DIR.test(artist) && parts.length >= 2 && NO_ARTIST_DIR.test(parts[parts.length - 2])) artist = '';
   return { title, artist, album, trackNo };
 }
 

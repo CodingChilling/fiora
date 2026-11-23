@@ -30,7 +30,7 @@ function song(file, tags, freq) {
 // En la raíz del bucket: sin carpeta de la que sacar el álbum.
 const FILES = {
   'ROSALÍA - DESPECHÁ.mp3': song('a.mp3', { title: 'DESPECHÁ', artist: 'ROSALÍA' }, 300),                       // Apple la tiene
-  'Grupo Raro - Canción Escondida.flac': song('b.flac', { title: 'Canción Escondida', artist: 'Grupo Raro' }, 350), // solo MusicBrainz
+  'Grupo Raro/Sueltas/Grupo Raro - Canción Escondida.flac': song('b.flac', { title: 'Canción Escondida', artist: 'Grupo Raro' }, 350), // solo MusicBrainz
   'Solista - Hit.mp3': song('c.mp3', { title: 'Hit', artist: 'Solista', date: '1999' }, 400),                      // single y álbum: gana el álbum
   'Track 05.mp3': song('d.mp3', { title: 'Track 05' }, 450),                                                       // nadie sabe nada
   'Luz de Luna.mp3': song('e.mp3', { title: 'Luz de Luna', artist: 'Unknown Artist' }, 500),                        // la IA sabe el artista; Apple lo confirma
@@ -40,6 +40,9 @@ const AI_KNOWS = { 'luz de luna': { album: 'Noches', artist: 'Lunares', year: 20
 
 (async () => {
   await fetch(ORACLE + '/__reset');
+  // El emulador trae tres canciones de ejemplo; se vacían (un archivo vacío cuenta como borrado) para contar solo las de la prueba.
+  const pre = (await (await fetch(OWNER_PAR)).json()).objects.filter(x => /\.(wav|mp3|flac|m4a)$/i.test(x.name));
+  for (const x of pre) await fetch(OWNER_PAR + x.name.split('/').map(encodeURIComponent).join('/'), { method: 'PUT', body: new Uint8Array(0) });
   for (const [name, buf] of Object.entries(FILES)) await fetch(OWNER_PAR + name.split('/').map(encodeURIComponent).join('/'), { method: 'PUT', body: buf });
   const b = await chromium.launch();
   const errs = [], aiSongs = [], appleTerms = [];
@@ -100,7 +103,7 @@ const AI_KNOWS = { 'luz de luna': { album: 'Noches', artist: 'Lunares', year: 20
   }, AI);
   let all = await tracks();
   const MINE = ['DESPECHÁ', 'Canción Escondida', 'Hit', 'Track 05', 'Luz de Luna', 'Inventada'];
-  check(MINE.every(n => all.some(t => t.title === n && !t.album)), '0. Seis canciones sin álbum en la nube (más las del emulador, que ya lo tienen)');
+  check(MINE.every(n => all.some(t => t.title === n && !t.album)), '0. Seis canciones sin álbum en la nube ');
 
   // --- el botón
   await page.goto(APP + '#/inicio'); await page.goto(APP + '#/ajustes/desarrollador'); await page.waitForSelector('[data-act="ai-albums"]');

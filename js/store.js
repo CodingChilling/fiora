@@ -1,7 +1,7 @@
 // Estado en memoria de la app (metadatos); los audios y carátulas viven en IndexedDB.
 import { TAG_KEYS } from './tagwrite.js';
 import * as db from './db.js';
-import { splitArtists, splitGenres } from './tags.js';
+import { splitArtists, splitGenres, NO_ALBUM_DIR, NO_ARTIST_DIR } from './tags.js';
 
 export const S = {
   tracks: new Map(),   // id -> pista
@@ -40,6 +40,13 @@ export async function load() {
     }
     if (!t.genres) { t.genres = splitGenres(t.genre); t.genre = t.genres[0] || ''; changed = true; }
     if (!t.moods) { t.moods = []; changed = true; }
+    // Versiones anteriores tomaban por álbum (o artista) las carpetas que la app pone al subir sin ese
+    // dato («Sueltas», «Varios»). Si no lo puso el usuario a mano, se quita.
+    const edited = S.edits[t.id]?.f || {};
+    if (t.album && NO_ALBUM_DIR.test(t.album) && !('album' in edited)) { t.album = ''; changed = true; }
+    if (t.cloudName && NO_ARTIST_DIR.test(t.cloudName.split('/')[0]) && t.artists?.length === 1 && NO_ARTIST_DIR.test(t.artists[0]) && !('artists' in edited)) {
+      t.artists = ['Artista desconocido']; t.artist = t.artists[0]; changed = true;
+    }
     if (applyEdit(t)) changed = true;
     if (changed) db.put('tracks', t.id, t);
   }

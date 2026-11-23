@@ -65,8 +65,21 @@ const check = (c, m) => { if (c) { ok++; console.log('ok  ', m); } else { fails+
   const snap = await page.evaluate(async () => (await import('./js/sync.js')).snapshot(true).prefs.hiddenBuckets);
   check(JSON.stringify(snap.v) === '["b1"]' && snap.at > 0, '   Se guarda en la cuenta con las demás preferencias');
 
+  // --- canciones guardadas por versiones anteriores con «Sueltas» (la carpeta de las que no tienen álbum) como álbum
+  await page.evaluate(async () => {
+    const st = await import('./js/store.js');
+    const mk = (id, album, cloudName, artists) => ({ id, title: 'Suelta ' + id, artists, artist: artists.join(', '), album, genres: [], moods: [], duration: 100, addedAt: Date.now(), hasBlob: false, cloudName, bucketId: 'b1' });   // en el bucket oculto: no cambian las cuentas de abajo
+    await st.saveTrack(mk('s1', 'Sueltas', 'Pianista/Sueltas/s1.mp3', ['Pianista']));
+    await st.saveTrack(mk('s2', 'Sueltas', 'Varios/Sueltas/s2.mp3', ['Varios']));
+    await st.saveTrack(mk('s3', 'Sueltas', 'Pianista/Sueltas/s3.mp3', ['Pianista']));
+    await st.setEdit(st.S.tracks.get('s3'), { album: 'Sueltas' });   // este lo puso el usuario a mano: se respeta
+  });
   // --- se conserva al recargar
   await page.goto(APP + '#/biblioteca/canciones'); await page.reload(); await page.waitForSelector('.lib-buckets');
+  const sueltas = await page.evaluate(async () => { const { S } = await import('./js/store.js'); return ['s1', 's2', 's3'].map(id => [S.tracks.get(id).album, S.tracks.get(id).artist]); });
+  check(sueltas[0][0] === '' && sueltas[1][0] === '' && sueltas[1][1] === 'Artista desconocido' && sueltas[2][0] === 'Sueltas',
+    `4b. «Sueltas» y «Varios» (carpetas de la app) ya no cuentan como álbum ni artista; lo puesto a mano se respeta: ${JSON.stringify(sueltas)}`);
+  await page.evaluate(async () => { const st = await import('./js/store.js'); for (const id of ['s1', 's2', 's3']) { st.S.tracks.delete(id); } st.emit('library'); }); await page.waitForTimeout(400);
   c = await chips();
   check(!c[0].on && c[1].on && (await titles()).length === 4, '5. Se conserva al recargar');
 
