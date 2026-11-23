@@ -1540,3 +1540,11 @@ ol.tuto { list-style: none; margin: 0; padding: 0; }
 .set-body > .set-hero { margin-bottom: 16px; }
 .tuto-path button { white-space: nowrap; }
 @media (max-width: 380px) { .tuto-path button { font-size: 13px; padding: 8px 6px; } .tuto-path button .ic { display: none; } }
+/* Biblioteca: ver u ocultar los buckets */
+.lib-buckets { margin: -4px 0 10px; }
+.bucket-chip { display: inline-flex; align-items: center; gap: 6px; }
+.bucket-chip .ic { width: 16px; height: 16px; }
+.bucket-chip small { font-size: 12px; opacity: .65; font-variant-numeric: tabular-nums; }
+.bucket-chip.on { background: color-mix(in srgb, var(--accent) 18%, var(--surface)); color: var(--text); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.bucket-chip.on .ic { color: var(--accent); }
+.bucket-chip.off { color: var(--muted); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--muted) 60%, transparent); }

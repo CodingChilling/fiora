@@ -224,5 +224,12 @@ export function albumArtistOf(t) {
   return (t.album && S.tracks.has(t.id) && commonArtist.get(t.album.toLowerCase())) || artistsOf(t)[0];
 }
 
-export const allTracks = () => [...S.tracks.values()];
+/** Bucket de una canción de la nube (las antiguas, sin bucketId, son del primero). */
+export const trackBucketId = t => (t.cloudName ? t.bucketId || S.settings.buckets?.[0]?.id || '' : '');
+/** ¿Está oculta? Las canciones de un bucket se pueden ocultar en la Biblioteca sin desconectarlo. */
+export const isHidden = t => !!S.settings.hiddenBuckets?.length && !!t.cloudName && S.settings.hiddenBuckets.includes(trackBucketId(t));
+/** Todas las canciones, también las de los buckets ocultos (ajustes, nube, estadísticas, modo desarrollador). */
+export const everyTrack = () => [...S.tracks.values()];
+/** Las canciones que se ven: sin las de los buckets ocultos. */
+export const allTracks = () => (S.settings.hiddenBuckets?.length ? everyTrack().filter(t => !isHidden(t)) : everyTrack());
 export const collator = new Intl.Collator('es', { sensitivity: 'base', numeric: true });

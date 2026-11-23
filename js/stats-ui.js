@@ -1,7 +1,7 @@
 // Estadísticas de Perfil por pestañas: Resumen (las de siempre), Tiempo, Gustos, Biblioteca y
 // Conexiones, y el «Resumen del mes». Los números salen de stats-extra.js; aquí solo se pintan.
 // Los gráficos son HTML y SVG propios, con una tabla «Ver los datos» como alternativa.
-import { S, allTracks, artistsOf, isFav, dayKey } from './store.js';
+import { S, everyTrack as allTracks, artistsOf, isFav, dayKey } from './store.js';
 import * as habits from './habits.js';
 import * as rdata from './radio-data.js';
 import * as lib from './library.js';

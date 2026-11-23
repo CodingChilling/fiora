@@ -2,7 +2,7 @@
 // resumen de hábitos, calcula la criatura de un período, mantiene la criatura «oficial» con su
 // historial (bestiario) y reúne los recuerdos de la constelación. No guarda nada por su cuenta:
 // lo persistente vive en habits.js.
-import { S, allTracks, artistsOf, albumArtistOf, dayKey, livePlaylists } from './store.js';
+import { S, everyTrack as allTracks, artistsOf, albumArtistOf, dayKey, livePlaylists } from './store.js';
 import * as habits from './habits.js';
 import * as rdata from './radio-data.js';
 import * as pldata from './playlists-data.js';

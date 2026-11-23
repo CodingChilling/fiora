@@ -1,5 +1,5 @@
 // Interfaz de Fiora: navegación, pantallas, menús y reproductor.
-import { fileOutdated, S, load, on, emit, isFav, toggleFav, allTracks, livePlaylists, savePlaylist, saveKV, saveTrack, collator, artistsOf, albumArtistOf, setEdit, MOODS, daypart, genreOptions } from './store.js';
+import { fileOutdated, S, load, on, emit, isFav, toggleFav, allTracks, everyTrack, trackBucketId, livePlaylists, savePlaylist, saveKV, saveTrack, collator, artistsOf, albumArtistOf, setEdit, MOODS, daypart, genreOptions } from './store.js';
 import * as db from './db.js';
 import * as ai from './ai.js';
 import * as covers from './covers.js';
@@ -618,7 +618,35 @@ function libraryList(tab) {
 const LETTERS = new Set(['title', 'artist', 'album']);
 
 const LIB_ADD = `<button class="btn primary add" data-act="add-music" aria-label="Añadir música">${icon('plus')}<span>Añadir música</span></button>`;
+// Ver u ocultar las canciones de cada bucket sin desconectarlo (un toque en su botón).
+function bucketToggles() {
+  const bks = cloud.buckets();
+  if (!bks.length) return '';
+  const count = new Map();
+  for (const t of everyTrack()) { const b = trackBucketId(t); if (b) count.set(b, (count.get(b) || 0) + 1); }
+  const shown = bks.filter(b => count.get(b.id));
+  if (!shown.length) return '';
+  const hidden = new Set(S.settings.hiddenBuckets || []);
+  return `<div class="chips lib-buckets" role="group" aria-label="Buckets que se ven en la biblioteca">${shown.map(b => {
+    const on = !hidden.has(b.id);
+    return `<button class="chip bucket-chip ${on ? 'on' : 'off'}" data-act="lib-bucket" data-bid="${esc(b.id)}" aria-pressed="${on}" title="${on ? 'Ocultar' : 'Mostrar'} las canciones de «${esc(b.name)}»">${icon(on ? 'cloud' : 'x')}${esc(b.name)}<small>${num(count.get(b.id))}</small></button>`;
+  }).join('')}</div>`;
+}
+async function toggleBucket(id) {
+  const h = new Set(S.settings.hiddenBuckets || []);
+  if (h.has(id)) h.delete(id); else h.add(id);
+  S.settings.hiddenBuckets = [...h];
+  S.settings.hiddenBucketsAt = Date.now();
+  await saveKV('settings', false);
+  emit('dirty'); emit('library');
+  const b = cloud.buckets().find(x => x.id === id);
+  toast(h.has(id) ? `Canciones de «${b?.name || 'ese bucket'}» ocultas` : `Canciones de «${b?.name || 'ese bucket'}» visibles`);
+}
 function viewLibrary(tab) {
+  if (S.tracks.size && !allTracks().length) {   // todo lo que hay está en buckets ocultos
+    return show(`<div class="head lib-head"><div><h1>Biblioteca</h1></div>${LIB_ADD}</div>${bucketToggles()}
+      ${empty('cloud', 'Tus buckets están ocultos', 'Toca un bucket de arriba para volver a ver sus canciones.')}`);
+  }
   if (!S.tracks.size) {
     return show(`<div class="head"><h1>Biblioteca</h1></div>${empty('library', 'Aquí aparecerá tu música',
       'Elige archivos o una carpeta entera (MP3, FLAC, M4A, OGG…). Se guardan en este dispositivo para escucharlos sin conexión.',
@@ -629,8 +657,9 @@ function viewLibrary(tab) {
     tab = LIB_TABS.some(([id]) => id === S.settings.libTab) ? S.settings.libTab : 'canciones';
     history.replaceState(null, '', `#/biblioteca/${tab}`);
   } else if (S.settings.libTab !== tab) { S.settings.libTab = tab; saveKV('settings', false); }
-  const n = { canciones: S.tracks.size, albumes: albums().length, artistas: artists().length };
+  const n = { canciones: allTracks().length, albumes: albums().length, artistas: artists().length };
   show(`<div class="head lib-head"><div><h1>Biblioteca</h1><p class="muted lib-sum">${libSummary()}</p></div>${LIB_ADD}</div>
+    ${bucketToggles()}
     <div class="bar-mark"></div>
     <div class="lib-bar">
       <label class="field lib-search">${icon('search')}<input id="lib-q" type="search" placeholder="Buscar canciones, artistas, álbumes…" aria-label="Buscar en tu biblioteca" value="${esc(libQuery)}" autocomplete="off" enterkeyhint="search">
@@ -757,7 +786,7 @@ const SET_SECS = [['cuenta', 'user', 'Cuenta', 25], ['nube', 'cloud', 'Nube', 20
 let helpPath = null;   // camino elegido en la guía del bucket («own» o «guest»)
 async function viewSettings(sec) {
   const est = await lib.storageEstimate();
-  const tracks = allTracks();
+  const tracks = everyTrack();
   const offline = tracks.filter(t => t.hasBlob).length;
   const onlyLocal = tracks.filter(t => t.hasBlob && !t.cloudName && !t.url).length;
   const inCloud = tracks.filter(t => t.cloudName).length;
@@ -1617,7 +1646,7 @@ async function keepAwake() {
 async function updateCloudFiles() {
   if (!devOn()) return;
   if (bulk) return;
-  const inCloud = allTracks().filter(t => t.cloudName);
+  const inCloud = everyTrack().filter(t => t.cloudName);
   const list = inCloud.filter(t => cloud.canWriteFile(t));
   const report = { at: Date.now(), updated: [], fine: [], failed: [], skipped: inCloud.filter(t => !cloud.canWriteFile(t)).map(t => [t.title, /\.(mp3|flac|m4a|m4b|mp4)$/i.test(t.fileName) ? 'su bucket no está conectado' : `formato ${(t.fileName.match(/\.(\w+)$/) || [, '?'])[1].toUpperCase()} sin etiquetas`]) };
   if (!list.length) return toast(inCloud.length ? 'Ninguna canción de la nube está en MP3, FLAC o M4A' : 'No hay canciones en la nube');
@@ -1820,6 +1849,7 @@ const ACTIONS = {
   },
   fav(el) { const r = rowInfo(el); if (r?.track) toggleFav(r.track.id); },
   more(el) { const r = rowInfo(el); if (r?.track) trackMenu(r.track, r.opts, r.i); },
+  'lib-bucket'(el) { toggleBucket(el.dataset.bid); },
   'play-all'() { const l = firstList().filter(playable); if (l.length) { if (P.shuffle) player.toggleShuffle(); player.playQueue(l); } },
   'download-all'() { const l = firstList().filter(needsDownload); if (l.length) downloadMany(l); },
   'shuffle-all'() { const l = firstList().filter(playable); if (l.length) { if (!P.shuffle) player.toggleShuffle(); player.playQueue(l, Math.floor(Math.random() * l.length)); } },
@@ -1855,7 +1885,7 @@ const ACTIONS = {
     if (n) toast(`${plural(n, 'canción pasada', 'canciones pasadas')} a tu cola`);
   },
   'cloud-sync'() { cloudSync(); },
-  'cloud-upload-all'() { if (cloud.uploadTarget()) uploadMany(allTracks().filter(t => t.hasBlob && !t.cloudName && !t.url)); },
+  'cloud-upload-all'() { if (cloud.uploadTarget()) uploadMany(everyTrack().filter(t => t.hasBlob && !t.cloudName && !t.url)); },
   async 'bucket-remove'(el) {
     const b = cloud.buckets().find(x => x.id === el.dataset.bid);
     if (!b || !(await confirmDlg(`¿Desconectar «${b.name}»?`, 'Sus canciones que no estén descargadas desaparecerán de la biblioteca hasta que vuelvas a conectarlo. No se borra nada en Oracle.', 'Desconectar'))) return;
@@ -1882,7 +1912,7 @@ const ACTIONS = {
   'cloud-tags'() { updateCloudFiles(); },
   'cloud-report'() { showReport(); },
   'cloud-tags-stop'() { if (bulk) { bulk.stop = true; toast('Deteniendo al terminar el archivo actual…'); } },
-  'write-files'() { if (!devOn()) return; const l = allTracks().filter(t => fileOutdated(t) && cloud.canWriteFile(t)); if (l.length) offerWrite(l); },
+  'write-files'() { if (!devOn()) return; const l = everyTrack().filter(t => fileOutdated(t) && cloud.canWriteFile(t)); if (l.length) offerWrite(l); },
   'lib-unfilter'(el) { clearFilter(el.dataset.k, el.dataset.v); paintLibrary(); },
   'lib-clear'() { resetFilters(); paintLibrary(); },
   async 'explore-retry'() { await rdata.pull(); refresh(); },
@@ -1983,7 +2013,7 @@ const ACTIONS = {
   },
   async 'ai-covers'() {
     if (!devOn()) return;
-    const list = allTracks().filter(needsCover);
+    const list = everyTrack().filter(needsCover);
     const A = aiConf(), service = ai.PROVIDERS[A.provider].name;
     if (!list.length || !(await confirmDlg(`¿Buscar la portada de ${plural(list.length, 'canción', 'canciones')}?`,
       `Se enviarán el título, los artistas, el álbum y el año de cada canción a ${service} con tu clave (puede tener un coste en tu cuenta), y el nombre del disco y del artista a Apple (iTunes), a YouTube Music (a través de Piped) y a MusicBrainz para descargar la portada. Si no hay portada del disco, se usa una del mismo álbum o artista, o se genera una. Se escriben en los archivos y se suben a la nube.`, 'Buscar portadas'))) return;
@@ -1991,7 +2021,7 @@ const ACTIONS = {
   },
   async 'ai-tag-all'() {
     if (!devOn()) return;
-    const list = allTracks().filter(needsTags);
+    const list = everyTrack().filter(needsTags);
     const A = aiConf(), o = { provider: A.provider, model: A.models[A.provider] || (A.provider === 'anthropic' ? ai.DEFAULT_MODEL : '') }, service = ai.PROVIDERS[o.provider].name;
     if (!list.length || !(await confirmDlg(`¿Etiquetar ${plural(list.length, 'canción', 'canciones')} con IA?`,
       `Se enviarán el título, los artistas, el álbum y el año de cada canción a ${service} con tu clave (modelo ${o.model}). Puede tener un coste que se carga a tu cuenta de ese servicio.`, 'Etiquetar'))) return;
@@ -2531,7 +2561,7 @@ async function start() {
   cloud.migrate();
   await sealAiKeys().catch(e => console.warn('No se pudieron cifrar las claves de IA', e));
   if (devOn()) {
-    const pending = allTracks().filter(t => fileOutdated(t) && cloud.canWriteFile(t)).length;
+    const pending = everyTrack().filter(t => fileOutdated(t) && cloud.canWriteFile(t)).length;
     if (pending) setTimeout(() => toast(`${plural(pending, 'canción tiene', 'canciones tienen')} géneros u otros cambios que aún no están en su archivo. Guárdalos en Ajustes → Modo desarrollador.`, 9000), 1500);
   }
   const linked = await account.init();   // puede venir de un enlace de correo de Supabase

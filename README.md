@@ -47,6 +47,8 @@ Dentro de la app, **Ajustes → Ayuda** tiene una guía paso a paso con dos cami
 
 Puedes conectar **varios buckets** a la vez (por ejemplo, para repartir la música o ampliar espacio): repite los pasos y añádelos en **Ajustes → Nube → Conectar otro bucket**. Toda la música aparece junta en la biblioteca, y eliges a cuál van las subidas.
 
+**Ver u ocultar un bucket.** Arriba de la **Biblioteca** hay un botón por bucket con el número de canciones. Un toque oculta sus canciones, sin desconectarlo, en la biblioteca (canciones, álbumes, artistas y géneros), en la búsqueda, en las mezclas, en los ambientes y en las recomendaciones; otro toque las vuelve a mostrar. Las playlists, las estadísticas y los ajustes siguen contando con ellas, y la elección se guarda en tu cuenta. Pruebas en `tests/library/buckets-e2e.cjs`.
+
 Con **Reducir el tamaño al subir, sin perder calidad**, los archivos WAV se convierten a FLAC antes de subirlos: el sonido es idéntico muestra a muestra y ocupan en torno a la mitad. MP3, M4A, OGG y FLAC ya están comprimidos (reducirlos más sí perdería calidad), así que se suben tal cual.
 
 En cada dispositivo tuyo, pega la misma URL para ver la misma biblioteca. Para **subir, cambiar o borrar** música desde la app hace falta además la clave de API de Oracle en ese dispositivo (**Ajustes → Modo desarrollador**; ver [Modo desarrollador](#modo-desarrollador-y-etiquetado-con-ia)): sin ella, el bucket es de solo lectura en ese dispositivo. También puedes subir directamente con la consola de Oracle; se organiza como `Artista/Álbum/archivo`.

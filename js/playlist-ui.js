@@ -2,7 +2,7 @@
 // destacadas, canciones con capítulos, estadísticas, «Descubre más», notas), editor por
 // categorías, visor de fotos y modos de reproducción. Los datos y la sincronización con Supabase
 // están en playlists-data.js; las imágenes, en images.js.
-import { S, on, savePlaylist, livePlaylists, isFav, toggleFav, artistsOf, collator, MOODS, dropFromPlaylist } from './store.js';
+import { S, on, savePlaylist, livePlaylists, isFav, toggleFav, artistsOf, collator, MOODS, dropFromPlaylist, isHidden } from './store.js';
 import * as data from './playlists-data.js';
 import * as img from './images.js';
 import * as lib from './library.js';
@@ -453,7 +453,7 @@ export function initPlaylists(c) {
     const n = base.length, surprise = mode === 'surprise';
     const scored = [];
     for (const t of S.tracks.values()) {
-      if (inPl.has(t.id) || !playable(t)) continue;
+      if (inPl.has(t.id) || !playable(t) || isHidden(t)) continue;
       const art = Math.max(0, ...artistsOf(t).map(a => (A.get(a) || 0) / n));
       const alb = t.album ? (AL.get(t.album) || 0) / n : 0;
       const gen = (t.genres || []).reduce((s, g) => s + (G.get(g.toLowerCase()) || 0) / n, 0);
