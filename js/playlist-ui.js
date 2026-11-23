@@ -2,6 +2,7 @@
 // destacadas, canciones con capítulos, estadísticas, «Descubre más», notas), editor por
 // categorías, visor de fotos y modos de reproducción. Los datos y la sincronización con Supabase
 // están en playlists-data.js; las imágenes, en images.js.
+import * as modes from './modes.js';
 import { S, on, savePlaylist, livePlaylists, isFav, toggleFav, artistsOf, collator, MOODS, dropFromPlaylist, isHidden } from './store.js';
 import * as data from './playlists-data.js';
 import * as img from './images.js';
@@ -513,27 +514,8 @@ export function initPlaylists(c) {
   // ================================================================ modos de reproducción
   const ctxOf = p => ({ playlist: p.id });
   function playOrder(p) { return tracksOf(p).filter(playable); }
-  /** Sorpresa: aleatorio, dejando para el final lo que has escuchado hace poco. */
-  function surpriseOrder(p) {
-    const hours = p.settings.surpriseHours || 24, now = Date.now();
-    return playOrder(p).map(t => { const ago = (now - stat(t, 'last')) / 3600000; return [t, Math.random() + (stat(t, 'last') && ago < hours ? 2 + (1 - ago / hours) : 0)]; })
-      .sort((a, b) => a[1] - b[1]).map(x => x[0]);
-  }
-  // Ambiente: inicio tranquilo → más energía → momento intenso → final relajado, según «lo que transmite».
-  const CALM = ['relajada', 'íntima', 'soñadora', 'melancólica', 'nostálgica', 'triste', 'romántica'];
-  const LIFT = ['alegre', 'bailable', 'festiva', 'motivadora'];
-  const PEAK = ['enérgica', 'épica', 'agresiva', 'oscura'];
-  function ambientPlan(p) {
-    const list = playOrder(p), tagged = list.filter(t => t.moods?.length);
-    if (list.length < 6) return { ok: false, why: 'El modo ambiente necesita al menos 6 canciones' };
-    if (tagged.length < Math.max(6, list.length * 0.6)) return { ok: false, why: `Solo ${tagged.length} de ${list.length} canciones tienen «lo que transmite». Etiquétalas (modo desarrollador o IA) para usar el modo ambiente.` };
-    const score = t => { const m = t.moods; return PEAK.filter(x => m.includes(x)).length * 2 + LIFT.filter(x => m.includes(x)).length - CALM.filter(x => m.includes(x)).length * 1.5; };
-    const sorted = tagged.map(t => [t, score(t) + Math.random() * 0.3]).sort((a, b) => a[1] - b[1]).map(x => x[0]);
-    const calm = sorted.slice(0, Math.ceil(sorted.length * 0.35)), rest = sorted.slice(calm.length);
-    const lift = rest.slice(0, Math.ceil(rest.length / 2)), peak = rest.slice(lift.length);
-    const half = Math.ceil(calm.length / 2);
-    return { ok: true, list: [...calm.slice(0, half), ...lift, ...peak, ...calm.slice(half).reverse()] };
-  }
+  const surpriseOrder = p => modes.surpriseOrder(playOrder(p), p.settings.surpriseHours || 24);
+  const ambientPlan = p => modes.ambientPlan(playOrder(p));
 
   // ================================================================ visor de fotos
   let viewer = null;

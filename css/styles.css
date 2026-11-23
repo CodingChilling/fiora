@@ -1549,3 +1549,31 @@ ol.tuto { list-style: none; margin: 0; padding: 0; }
 .bucket-chip.on .ic { color: var(--accent); }
 .bucket-chip.off { color: var(--muted); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--muted) 60%, transparent); }
 .sub-panel.ai-all { margin-top: 14px; border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); background: color-mix(in srgb, var(--accent) 8%, var(--surface-2)); }
+
+/* Información de artistas y canciones (MusicBrainz, Wikidata, Wikipedia) */
+.kb { margin-top: 28px; max-width: 760px; }
+.kb h3 { font-size: 15px; margin: 18px 0 6px; }
+.kb h4 { font-size: 14px; margin: 14px 0 4px; color: var(--muted); }
+.kb p { line-height: 1.6; margin: 8px 0; }
+.kb-wait { display: flex; align-items: center; gap: 10px; }
+.spinner { width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--accent); animation: kb-spin .8s linear infinite; flex: none; }
+@keyframes kb-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
+.kb-photo { float: right; width: min(38%, 180px); aspect-ratio: 1; object-fit: cover; border-radius: 14px; margin: 4px 0 12px 16px; background: var(--surface-2); }
+.kb-facts { margin: 8px 0 12px; display: grid; gap: 6px; }
+.kb-facts > div { display: grid; grid-template-columns: minmax(110px, 30%) 1fr; gap: 12px; }
+.kb-facts dt { color: var(--muted); font-size: 13.5px; }
+.kb-facts dd { margin: 0; }
+.kb-wiki { clear: both; }
+.kb-sec { border-top: 1px solid var(--line); }
+.kb-sec summary { cursor: pointer; padding: 10px 0; font-weight: 650; }
+.kb-people { margin: 4px 0 8px; padding-left: 20px; }
+.kb-people li { margin: 3px 0; }
+.kb-lang, .kb-note { display: inline-block; font-size: 13px; font-weight: 650; padding: 3px 10px; border-radius: 99px; background: var(--surface-2); color: var(--muted); }
+.kb-note { color: var(--text); }
+.kb-src { clear: both; margin-top: 16px !important; font-size: 12.5px; color: var(--muted); }
+.kb-sheet { max-height: 85vh; overflow: auto; }
+.kb-now { margin-top: 0; padding: 0 2px 20px; }
+@media (max-width: 520px) { .kb-facts > div { grid-template-columns: 1fr; gap: 0; } .kb-photo { width: 120px; } }
+#now .top .seg { flex-wrap: nowrap; }
+@media (max-width: 480px) { #now .top .seg button { padding: 7px 10px; } }

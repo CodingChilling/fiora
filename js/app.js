@@ -1,4 +1,6 @@
 // Interfaz de Fiora: navegación, pantallas, menús y reproductor.
+import * as kb from './knowledge.js';
+import * as modes from './modes.js';
 import { fileOutdated, S, load, on, emit, isFav, toggleFav, allTracks, everyTrack, trackBucketId, livePlaylists, savePlaylist, saveKV, saveTrack, collator, artistsOf, albumArtistOf, setEdit, MOODS, daypart, genreOptions } from './store.js';
 import * as db from './db.js';
 import * as ai from './ai.js';
@@ -325,8 +327,9 @@ function viewTag(kind, name) {
       <div class="info"><div class="kind">${mood ? 'Ambiente' : 'Género'}</div><h1 style="text-transform:${mood ? 'capitalize' : 'none'}">${esc(name)}</h1><p>${plural(tracks.length, 'canción', 'canciones')}${mood ? ' · primero las que más te gustan' : ''}</p>${playButtons(tracks)}</div></div>
     ${tracks.length ? rows(tracks) : empty('disc', 'Sin canciones', 'Ninguna canción tiene esta etiqueta todavía.')}`);
 }
+const modeBtns = (cls = 'btn') => `<button class="${cls}" data-act="play-surprise" title="Aleatorio, dejando para el final lo que has escuchado hace poco" aria-label="Modo sorpresa">${icon('dice')}<span>Sorpresa</span></button><button class="${cls}" data-act="play-ambient" title="De lo tranquilo a lo intenso, y vuelta a la calma (según «lo que transmite»)" aria-label="Modo ambiente">${icon('wave')}<span>Ambiente</span></button>`;
 const playButtons = tracks => (tracks.length
-  ? `<div class="actions"><button class="btn primary" data-act="play-all">${icon('play')}Reproducir</button><button class="btn" data-act="shuffle-all">${icon('shuffle')}Aleatorio</button>${downloadAllBtn(tracks)}</div>` : '');
+  ? `<div class="actions"><button class="btn primary" data-act="play-all">${icon('play')}Reproducir</button><button class="btn" data-act="shuffle-all">${icon('shuffle')}Aleatorio</button>${modeBtns()}${downloadAllBtn(tracks)}</div>` : '');
 
 // ---------------------------------------------------------------- biblioteca
 function albums(tracks = allTracks()) {
@@ -536,7 +539,9 @@ function songTools(list, active) {
   const rest = active.filter(([, k]) => !isQuick(k));
   return `<div class="lib-tools">
       <div class="lib-play">${list.length ? `<button class="play-fab" data-act="play-all" aria-label="Reproducir" title="Reproducir">${icon('play')}</button>
-        <button class="icon-btn shuf" data-act="shuffle-all" aria-label="Reproducir en aleatorio" title="Aleatorio">${icon('shuffle')}</button>` : ''}
+        <button class="icon-btn shuf" data-act="shuffle-all" aria-label="Reproducir en aleatorio" title="Aleatorio">${icon('shuffle')}</button>
+        <button class="icon-btn shuf" data-act="play-surprise" aria-label="Modo sorpresa" title="Sorpresa: aleatorio, dejando para el final lo que has escuchado hace poco">${icon('dice')}</button>
+        <button class="icon-btn shuf" data-act="play-ambient" aria-label="Modo ambiente" title="Ambiente: de lo tranquilo a lo intenso, y vuelta a la calma">${icon('wave')}</button>` : ''}
         ${countLine(plural(list.length, 'canción', 'canciones'), list.length ? totalTime(list) : '')}</div>
       <div class="lib-sort">${sortBtn('canciones')}
         <button class="btn sm ${active.length ? 'on' : ''}" data-act="lib-filter" aria-label="Filtrar${active.length ? ` (${active.length} activos)` : ''}">${icon('filter')}<span class="lbl">Filtrar</span>${active.length ? `<span class="count">${active.length}</span>` : ''}</button></div>
@@ -744,7 +749,85 @@ function viewArtist(name) {
   show(`<div class="hero">${cover({ album: name, coverId: tracks.find(t => t.coverId)?.coverId, coverUrl: tracks.find(t => t.coverUrl)?.coverUrl }, 'round')}
       <div class="info"><div class="kind">Artista</div><h1>${esc(name)}</h1><p>${plural(tracks.length, 'canción', 'canciones')}</p>${playButtons(tracks)}</div></div>
     ${albs.length ? `<h2>Álbumes</h2><div class="strip">${albs.map(albumCard).join('')}</div>` : ''}
-    <h2>Canciones</h2>${rows(tracks)}`);
+    <h2>Canciones</h2>${rows(tracks)}
+    <section class="kb" data-kb-artist="${esc(name)}"><h2>Sobre ${esc(name)}</h2><p class="muted kb-wait"><span class="spinner"></span>Buscando información…</p></section>`);
+  const box = $('[data-kb-artist]');
+  kb.artistInfo(name, { albums: albs.map(a => a.title), titles: tracks.slice(0, 3).map(t => t.title) }).then(d => {
+    if (box.isConnected) setHTML(box, `<h2>Sobre ${esc(d.name || name)}</h2>${artistKB(d)}`);
+  });
+}
+
+// ----------------------------------------------- información de artistas y canciones (knowledge.js)
+const kbArtist = n => (allTracks().some(t => artistsOf(t).includes(n)) ? `<a class="link" href="#/artista/${enc(n)}">${esc(n)}</a>` : esc(n));
+const kbParas = text => String(text || '').split(/\n{2,}|\n(?=§ )/).map(x => x.trim()).filter(Boolean).map(x => {
+  if (!x.startsWith('§ ')) return `<p>${esc(x).replace(/\n/g, '<br>')}</p>`;
+  const [head, ...rest] = x.split('\n');          // «§ Subsección» y, debajo, su texto
+  return `<h4>${esc(head.slice(2))}</h4>${rest.join('\n').trim() ? `<p>${esc(rest.join('\n').trim()).replace(/\n/g, '<br>')}</p>` : ''}`;
+}).join('');
+// Si la foto del artista no carga, se quita (sin recuadro roto).
+document.addEventListener('error', e => { if (e.target?.classList?.contains('kb-photo')) e.target.remove(); }, true);
+const kbFacts = (list, skip = new Set()) => {
+  const l = list.filter(f => !skip.has(f.label));
+  return l.length ? `<dl class="kb-facts">${l.map(f => `<div><dt>${esc(f.label)}</dt><dd>${f.values.map(esc).join(' · ')}${f.more ? ` <span class="muted">y ${f.more} más</span>` : ''}</dd></div>`).join('')}</dl>` : '';
+};
+function kbWiki(w) {
+  if (!w) return '';
+  const paras = w.intro.split(/\n{2,}/).filter(Boolean);
+  return `<div class="kb-wiki">${w.lang !== 'es' ? '<p class="kb-lang">Solo disponible en inglés</p>' : ''}
+    ${kbParas(paras.slice(0, 2).join('\n\n'))}
+    ${paras.length > 2 ? `<details class="kb-sec"><summary>Seguir leyendo</summary>${kbParas(paras.slice(2).join('\n\n'))}</details>` : ''}
+    ${w.sections.map(x => `<details class="kb-sec"><summary>${esc(x.title)}</summary>${kbParas(x.text)}</details>`).join('')}</div>`;
+}
+const kbSources = d => {
+  const src = [d.mbid && `<a class="link" href="https://musicbrainz.org/${d.group !== undefined ? 'artist' : 'recording'}/${esc(d.mbid)}" target="_blank" rel="noopener">MusicBrainz</a>`,
+    d.wikidata && `<a class="link" href="${esc(d.wikidata)}" target="_blank" rel="noopener">Wikidata</a>`,
+    d.wiki && `<a class="link" href="${esc(d.wiki.url)}" target="_blank" rel="noopener">Wikipedia${d.wiki.lang !== 'es' ? ' (en inglés)' : ''}: «${esc(d.wiki.title)}»</a>`].filter(Boolean);
+  return src.length ? `<p class="kb-src">Fuentes: ${src.join(' · ')}.${d.wiki ? ' El texto de Wikipedia se publica con licencia <a class="link" href="https://creativecommons.org/licenses/by-sa/4.0/deed.es" target="_blank" rel="noopener">CC BY-SA 4.0</a>.' : ''}</p>` : '';
+};
+const kbStatus = (d, what) => ({
+  offline: '<p class="muted">Sin conexión: esta información se consulta en internet.</p>',
+  error: `<p class="muted">No se pudo consultar ahora${d.message ? ` (${esc(d.message)})` : ''}. Inténtalo más tarde.</p>`,
+  none: `<p class="muted">No hay información verificada sobre ${what} en MusicBrainz, Wikidata ni Wikipedia.</p>`,
+  ambiguous: `<p class="muted">Hay ${d.count} artistas con este nombre en MusicBrainz y no se ha podido saber cuál es este, así que no se muestra nada para no confundirlos.</p>`,
+}[d.status] || '');
+function artistKB(d) {
+  if (d.status !== 'ok') return kbStatus(d, 'este artista');
+  const yrs = m => (m.begin || m.end ? ` <span class="muted">(${m.begin || '?'}–${m.ended || m.end ? m.end || '?' : 'hoy'})</span>` : '');
+  const people = (title, list) => (list.length ? `<h3>${title}</h3><ul class="kb-people">${list.map(m => `<li>${kbArtist(m.name)}${m.roles.length ? ` <span class="muted">· ${m.roles.map(esc).join(', ')}</span>` : ''}${yrs(m)}</li>`).join('')}</ul>` : '');
+  const mbFacts = [];
+  if (!d.facts.length) {
+    if (d.life?.begin) mbFacts.push({ label: d.group ? 'Formación' : 'Nacimiento', values: [d.life.begin] });
+    if (d.beginArea || d.area) mbFacts.push({ label: 'Origen', values: [d.beginArea || d.area] });
+    if (d.life?.ended && d.life.end) mbFacts.push({ label: d.group ? 'Disolución' : 'Fallecimiento', values: [d.life.end] });
+  }
+  const now = d.members.filter(m => !m.ended), past = d.members.filter(m => m.ended);
+  const body = `${d.wiki?.thumb ? `<img class="kb-photo" src="${esc(d.wiki.thumb)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ''}
+    ${d.disambiguation ? `<p class="muted">${esc(d.disambiguation)}</p>` : ''}
+    ${kbFacts([...mbFacts, ...d.facts])}
+    ${kbWiki(d.wiki)}
+    ${people('Miembros', now)}${people('Antiguos miembros', past)}${people('Ha formado parte de', d.memberOf)}
+    ${d.links.length ? `<p>${d.links.map(u => `<a class="link" href="${esc(u)}" target="_blank" rel="noopener">${icon('compass')}Web oficial</a>`).join(' ')}</p>` : ''}`;
+  const empty_ = !d.wiki && !d.facts.length && !d.members.length && !d.memberOf.length;
+  return `${body}${empty_ ? '<p class="muted">Solo se ha encontrado su ficha en MusicBrainz, sin biografía ni más datos verificados.</p>' : ''}${kbSources(d)}`;
+}
+function songKB(d) {
+  if (d.status !== 'ok') return kbStatus(d, 'esta canción (es normal en las menos conocidas)');
+  const credLabels = new Set(d.credits.map(c => c.label));
+  return `${d.cover ? `<p class="kb-note">Es una versión: la canción original${d.work ? ` («${esc(d.work)}»)` : ''} se publicó antes, con otros intérpretes.</p>` : ''}
+    ${d.live ? '<p class="kb-note">Esta grabación es en directo.</p>' : ''}
+    ${d.credits.length ? `<h3>Créditos</h3>${kbFacts(d.credits)}` : ''}
+    ${d.samples.length ? `<h3>Usa fragmentos de</h3><ul class="kb-people">${d.samples.map(x => `<li>«${esc(x.title)}»${x.artist ? ` <span class="muted">· ${esc(x.artist)}</span>` : ''}</li>`).join('')}</ul>` : ''}
+    ${d.facts.length ? `<h3>Datos</h3>${kbFacts(d.facts, credLabels)}` : ''}
+    ${d.wiki ? `<h3>Historia</h3>${kbWiki(d.wiki)}` : '<p class="muted">No hay un artículo de Wikipedia sobre esta canción.</p>'}
+    ${!d.credits.length && !d.facts.length && !d.wiki && !d.samples.length ? '<p class="muted">Está en MusicBrainz, pero sin créditos ni más datos verificados.</p>' : ''}
+    ${kbSources(d)}`;
+}
+const songQuery = t => ({ title: t.title, artist: artistsOf(t)[0] || t.artist || '', album: t.album || '' });
+function songSheet(t) {
+  openSheet(`<div class="dlg kb-sheet"><div class="sheet-head">${cover(t)}<div><b>${esc(t.title)}</b><small>${esc(t.artist || '')}</small></div></div>
+    <div class="kb" data-kb-song><p class="muted kb-wait"><span class="spinner"></span>Buscando información…</p></div>
+    <div class="actions"><button class="btn" data-x>Cerrar</button></div></div>`, e => { if (e.target.closest('[data-x]')) sheet.close(); });
+  kb.songInfo(songQuery(t)).then(d => { const box = $('[data-kb-song]', sheet); if (box && sheet.open) setHTML(box, songKB(d)); });
 }
 
 // ----------------------------------------------------------------- playlists
@@ -1923,6 +2006,7 @@ function trackMenu(t, o = {}, i = -1) {
     lib_ && devOn() && aiIsReady() && !t.coverId && !t.coverUrl && { icon: 'disc', label: 'Buscar portada', fn: () => findCovers([t]) },
     lib_ && devOn() && aiIsReady() && needsAlbum(t) && { icon: 'library', label: 'Buscar álbum', fn: () => findAlbums([t]) },
     lib_ && { icon: 'heart', label: isFav(t.id) ? 'Quitar de favoritas' : 'Me gusta', fn: () => toggleFav(t.id) },
+    !t.radio && { icon: 'note', label: 'Sobre esta canción', fn: () => songSheet(t) },
     lib_ && { icon: 'spark', label: 'Radio de esta canción', fn: () => { player.playQueue(recs.songRadio(t)); toast('Mezcla creada a partir de la canción'); } },
     lib_ && t.album && { icon: 'disc', label: 'Ir al álbum', fn: () => go(`#/album/${enc(lib.albumKey(t))}`) },
     lib_ && {
@@ -1981,6 +2065,18 @@ const ACTIONS = {
   fav(el) { const r = rowInfo(el); if (r?.track) toggleFav(r.track.id); },
   more(el) { const r = rowInfo(el); if (r?.track) trackMenu(r.track, r.opts, r.i); },
   'lib-bucket'(el) { toggleBucket(el.dataset.bid); },
+  'play-surprise'() {
+    const l = modes.surpriseOrder(firstList().filter(playable), S.settings.surpriseHours || 24);
+    if (!l.length) return;
+    if (P.shuffle) player.toggleShuffle();
+    player.playQueue(l); toast('Modo sorpresa: lo que escuchaste hace poco, al final');
+  },
+  'play-ambient'() {
+    const plan = modes.ambientPlan(firstList().filter(playable));
+    if (!plan.ok) return toast(plan.why, 7000);
+    if (P.shuffle) player.toggleShuffle();
+    player.playQueue(plan.list); toast('Modo ambiente: de lo tranquilo a lo intenso, y vuelta a la calma');
+  },
   'play-all'() { const l = firstList().filter(playable); if (l.length) { if (P.shuffle) player.toggleShuffle(); player.playQueue(l); } },
   'download-all'() { const l = firstList().filter(needsDownload); if (l.length) downloadMany(l); },
   'shuffle-all'() { const l = firstList().filter(playable); if (l.length) { if (!P.shuffle) player.toggleShuffle(); player.playQueue(l, Math.floor(Math.random() * l.length)); } },
@@ -2419,7 +2515,7 @@ addEventListener('drop', e => {
 // ------------------------------------------------------- mini reproductor
 const mini = $('#mini');
 const now = $('#now');
-let nowMode = 'cover';       // cover | lyrics | queue
+let nowMode = 'cover';       // cover | lyrics | info | queue
 let seeking = false;
 const REPEAT_LABEL = { off: 'Repetir', all: 'Repitiendo todo', one: 'Repitiendo una' };
 
@@ -2477,7 +2573,7 @@ function renderNow() {
     EX.fillLive(now, t);
     return;
   }
-  const modes = [['cover', 'Carátula'], ['lyrics', 'Letra'], ['queue', 'Cola']];
+  const modes = [['cover', 'Carátula'], ['lyrics', 'Letra'], ['info', 'Info'], ['queue', 'Cola']];
   setHTML(now, `<div class="top">
       <button class="icon-btn" data-act="close-now" aria-label="Cerrar">${icon('down')}</button>
       <div class="seg">${modes.map(([m, l]) => `<button data-act="now-mode" data-mode="${m}">${l}</button>`).join('')}</div>
@@ -2512,6 +2608,17 @@ async function renderNowPane() {
   });
   stage.hidden = nowMode !== 'cover';
   pane.hidden = nowMode === 'cover';
+  if (nowMode === 'info') {
+    const t = P.current;
+    if (!t) return;
+    if (t.radio) { pane.innerHTML = '<div class="lyrics-empty"><div>Emisión en directo: no hay información de canciones.</div></div>'; return; }
+    setHTML(pane, `<div class="kb kb-now" data-kb-now="${esc(t.id)}"><h2 style="margin-top:0">${esc(t.title)}</h2><p class="muted kb-wait"><span class="spinner"></span>Buscando información…</p></div>`);
+    pane.scrollTop = 0;
+    const d = await kb.songInfo(songQuery(t));
+    const box = $(`[data-kb-now="${CSS.escape(t.id)}"]`, pane);
+    if (box && nowMode === 'info' && P.current?.id === t.id) setHTML(box, `<h2 style="margin-top:0">${esc(t.title)}</h2>${songKB(d)}`);
+    return;
+  }
   if (nowMode === 'queue') {
     const t = P.current, from = P.index + 1;
     const upcoming = P.queue.slice(from, from + 300);
@@ -2539,7 +2646,7 @@ async function renderNowPane() {
     lyr.data = data;
     lyr.retry = !!(data.failed || data.offline);
   }
-  if (nowMode === 'queue' || !lyr.data || P.current?.id !== lyr.id) return;
+  if (nowMode === 'queue' || nowMode === 'info' || !lyr.data || P.current?.id !== lyr.id) return;
   lyr.active = -1;
   const d = lyr.data;
   if (d.synced) pane.innerHTML = `<div class="lyrics">${d.synced.map((l, i) => `<p data-l="${i}">${esc(l.text) || '♪'}</p>`).join('')}</div>`;
@@ -2554,7 +2661,7 @@ now.addEventListener('click', e => {
 });
 function syncLyrics() {
   const lines = lyr.data?.synced;
-  if (!lines || now.hidden || nowMode === 'queue' || P.current?.id !== lyr.id) return;
+  if (!lines || now.hidden || nowMode === 'queue' || nowMode === 'info' || P.current?.id !== lyr.id) return;
   const time = P.audio.currentTime + 0.25;
   let i = -1;
   while (i + 1 < lines.length && lines[i + 1].t <= time) i++;
@@ -2674,7 +2781,7 @@ on('track', () => { renderMini(); renderNow(); markPlaying(); });
 on('state', syncState);
 on('time', syncTime);
 on('queue', () => { if (!now.hidden && nowMode === 'queue') renderNowPane(); });
-on('track', () => { if (!now.hidden && nowMode === 'queue') renderNowPane(); });
+on('track', () => { if (!now.hidden && (nowMode === 'queue' || nowMode === 'info')) renderNowPane(); });
 on('favs', id => {
   syncState();
   if (id) $$('.row').forEach(r => { if (r.dataset.id === id) $('.fav', r)?.classList.toggle('on', isFav(id)); });

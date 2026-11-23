@@ -159,6 +159,22 @@ Con el modo activado, el menú ⋯ de cada canción tiene «Editar metadatos».
 
   Las que no se encuentran se marcan como buscadas y el botón no las vuelve a enviar (ni a cobrar) en bloque; se pueden reintentar una a una desde su menú ⋯. Si los catálogos no contestan, no se marcan y se pueden volver a buscar más tarde.
 
+## Modos Sorpresa y Ambiente
+
+Además de en las playlists, están en la biblioteca: junto a Reproducir y Aleatorio en **Biblioteca → Canciones** (sobre lo que tengas filtrado o buscado) y en las páginas de álbum, artista, género, ambiente y las mezclas. No en Música libre ni en las radios.
+- **Sorpresa**: orden aleatorio, dejando para el final lo escuchado en las últimas 24 horas.
+- **Ambiente**: de lo tranquilo a lo intenso y vuelta a la calma, según «lo que transmite» de cada canción. Necesita al menos 6 canciones y que la mayoría estén etiquetadas; si no, el botón explica qué falta.
+
+## Artistas y canciones: información de fuentes contrastadas
+
+- **Sobre el artista**, al final de la página de cada artista: datos verificados (nacimiento o formación, origen, géneros, discográficas, premios con su año), biografía y sus secciones, miembros actuales y antiguos (con años e instrumentos), grupos de los que ha formado parte y web oficial.
+- **Sobre la canción**: pestaña **Info** de la pantalla Reproduciendo (junto a Letra y Cola) o menú ⋯ → «Sobre esta canción». Créditos (composición, letra, producción, grabación y mezcla, arreglos), si es una versión, de qué canciones usa fragmentos (samples), datos (publicación, disco, premios) e historia.
+- **Fuentes**: [MusicBrainz](https://musicbrainz.org) (CC0), [Wikidata](https://www.wikidata.org) (CC0) y [Wikipedia](https://www.wikipedia.org) (texto con licencia CC BY-SA 4.0), siempre citadas con su enlace. Se enlazan por identificador (MusicBrainz → Wikidata → Wikipedia), no por el nombre, para no confundir a dos artistas que se llaman igual: si hay varios con el mismo nombre, se elige el que tiene alguno de los discos o canciones de tu biblioteca y, si no se puede saber, se dice y no se muestra nada.
+- **No se inventa nada**: no se usa IA ni fuentes que escribe cualquiera. Si no hay información, se dice. Wikipedia primero en español; si solo existe en inglés, se muestra en inglés con el aviso «Solo disponible en inglés».
+- Se guarda en el dispositivo 30 días (sin conexión se ve lo ya consultado). Solo se envían a esos servicios el nombre del artista o el título y artista de la canción.
+
+Pruebas en `tests/library/knowledge-e2e.cjs` (con los tres servicios simulados).
+
 ## Tu criatura sonora
 
 Está en **Perfil**. Es una interpretación visual de hábitos musicales observables, no un perfil psicológico. Con sesión iniciada se guarda en tu cuenta; sin ella funciona igual, guardada solo en el dispositivo.
@@ -355,6 +371,8 @@ Y abre `http://localhost:8000`.
 | `js/app.js` | Pantallas, menús y navegación |
 | `js/player.js` | Reproductor, cola y controles del sistema; elige entre la ruta normal y la espacial |
 | `js/spatial.js` | Audio espacial (8D): grafo de Web Audio, modos, comprobación de compatibilidad |
+| `js/knowledge.js` | Información de artistas y canciones: MusicBrainz → Wikidata → Wikipedia, con caché de 30 días |
+| `js/modes.js` | Modos Sorpresa y Ambiente (playlists y biblioteca) |
 | `js/covers.js` | Portadas que faltan: búsqueda en Apple (iTunes Search API), YouTube Music (Piped) y MusicBrainz / Cover Art Archive, y portadas generadas |
 | `js/fades.js` | Fundidos y mezcla cruzada: ajustes, curvas y volumen de cada momento |
 | `js/library.js`, `js/tags.js` | Importación y lectura de etiquetas |

@@ -379,3 +379,6 @@ export async function albumOf({ title, artist, album = '' }) {
   if (g) return { album: g.name, albumArtist: g.artist, year: g.year, trackNo: 0, single: g.type === 'Single', from: 'musicbrainz' };
   return answered ? null : undefined;
 }
+
+// Consultas a MusicBrainz en la misma cola (una por segundo), para el perfil de artistas y canciones.
+export { mb as musicbrainz };
