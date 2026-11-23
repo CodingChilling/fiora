@@ -1,18 +1,19 @@
-// Información de calidad sobre artistas y canciones, solo de fuentes contrastadas y citadas:
-//   · MusicBrainz (CC0): identifica al artista o la grabación sin confundir homónimos, y da
-//     miembros, créditos (composición, letra, producción), versiones y samples.
-//   · Wikidata (CC0): datos verificados (fechas, lugares, géneros, discográficas, premios).
-//   · Wikipedia (CC BY-SA): biografía o historia, primero en español y, si no hay, en inglés.
-// Se enlazan por identificador (MusicBrainz → Wikidata → Wikipedia), no por coincidencia de nombre.
-// Si no hay información, se dice; no se rellena con nada.
+// Información sobre artistas y canciones, con varias fuentes y cada dato con la suya:
+//   · Wikidata (CC0): identifica al artista o la canción (sin confundir homónimos) y da los datos
+//     verificables (fechas, lugares, géneros, discográficas, premios, miembros, créditos).
+//   · Wikipedia en español y en inglés (CC BY-SA): biografía o historia y, sobre todo, las secciones
+//     con anécdotas (curiosidades, vida personal, antecedentes, grabación, legado…).
+//   · TheAudioDB (comunidad): biografías y descripciones escritas por sus usuarios, y fotos.
+//   · Discogs (comunidad): el perfil del artista, enlazado desde Wikidata.
+// Lo de las comunidades se marca como tal. Si no hay información, se dice; no se inventa nada.
 import * as db from './db.js';
-import { musicbrainz as mb, norm, sameTitle, sameArtist } from './covers.js';
+import { norm, sameTitle } from './covers.js';
 
 const TTL = 30 * 86400000;          // la información se guarda en el dispositivo 30 días
 const WAIT = 15000;
 const WD = 'https://www.wikidata.org';
-// Secciones de Wikipedia que no aportan al leer (listas de referencias, enlaces…)
-const SKIP = /^(referencias|notas|notas y referencias|enlaces externos|véase también|bibliografía|fuentes|lecturas? adicionales?|discografía|filmografía|premios y nominaciones|references|notes|external links|see also|further reading|bibliography|sources|citations|discography|filmography|awards and nominations|track listing|lista de canciones|personnel|créditos|charts|listas|certifications|certificaciones|release history|historial de lanzamientos|year-end charts|weekly charts|monthly charts)$/i;
+const AUDIODB = 'https://www.theaudiodb.com/api/v1/json/123';   // clave pública y gratuita de TheAudioDB
+const DISCOGS = 'https://api.discogs.com';
 
 async function getJSON(url) {
   const ac = new AbortController(), timer = setTimeout(() => ac.abort(), WAIT);
@@ -20,28 +21,23 @@ async function getJSON(url) {
     const r = await fetch(url, { signal: ac.signal });
     if (!r.ok) return null;
     return await r.json();
-  } finally { clearTimeout(timer); }
+  } catch { return null; }   // sin conexión, sin permiso del navegador (CORS) o el servicio no contesta: se sigue sin él
+  finally { clearTimeout(timer); }
 }
 async function cached(key, fn) {
   const hit = await db.get('kv', key).catch(() => null);
   if (hit && Date.now() - hit.at < TTL) return hit.data;
   const data = await fn();
-  if (data && data.status !== 'error') db.put('kv', key, { at: Date.now(), data }).catch(() => {});
+  if (data && data.status !== 'error' && data.status !== 'offline') db.put('kv', key, { at: Date.now(), data }).catch(() => {});
   return data;
 }
 const offline = () => !navigator.onLine;
 
 // ---------------------------------------------------------------- Wikidata
-const qOf = url => (/\/(Q\d+)$/.exec(url || '') || [])[1] || '';
-async function entity(q) {
-  const d = await getJSON(`${WD}/wiki/Special:EntityData/${q}.json`);
-  return d?.entities?.[q] || (d?.entities && Object.values(d.entities)[0]) || null;
-}
-/** El elemento de Wikidata que declara ese identificador de MusicBrainz (P434 artista, P435 obra, P4404 grabación). */
-async function byStatement(prop, mbid) {
-  const d = await getJSON(`${WD}/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(`haswbstatement:${prop}=${mbid}`)}&srlimit=2&format=json&origin=*`);
-  const hits = d?.query?.search || [];
-  return hits.length === 1 ? hits[0].title : '';
+async function entities(ids) {
+  if (!ids.length) return [];
+  const d = await getJSON(`${WD}/w/api.php?action=wbgetentities&ids=${ids.join('|')}&props=labels|descriptions|aliases|claims|sitelinks&languages=es|en&format=json&origin=*`);
+  return ids.map(id => d?.entities?.[id]).filter(e => e && !e.missing);
 }
 async function labels(ids) {
   const out = new Map();
@@ -51,7 +47,20 @@ async function labels(ids) {
   }
   return out;
 }
+/** Búsqueda en Wikidata (texto y condiciones como «haswbstatement:P175=Q…»): ids de los elementos. */
+async function search(query, n = 10) {
+  const d = await getJSON(`${WD}/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&srlimit=${n}&format=json&origin=*`);
+  return (d?.query?.search || []).map(x => x.title).filter(t => /^Q\d+$/.test(t));
+}
+async function searchName(name, lang) {
+  const d = await getJSON(`${WD}/w/api.php?action=wbsearchentities&search=${encodeURIComponent(name)}&language=${lang}&uselang=${lang}&type=item&limit=10&format=json&origin=*`);
+  return (d?.search || []).filter(x => norm(x.label) === norm(name) || norm(x.match?.text) === norm(name)).map(x => x.id);
+}
 const claims = (e, p) => (e?.claims?.[p] || []).filter(c => c.rank !== 'deprecated' && c.mainsnak?.datavalue);
+const ids = (e, p) => claims(e, p).map(c => c.mainsnak.datavalue.value?.id).filter(Boolean);
+const str = (e, p) => claims(e, p).map(c => c.mainsnak.datavalue.value).find(v => typeof v === 'string') || '';
+const label = e => e?.labels?.es?.value || e?.labels?.en?.value || '';
+const description = e => e?.descriptions?.es?.value || e?.descriptions?.en?.value || '';
 const MONTHS = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
 function fmtTime(v) {
   const m = /^([+-])(\d+)-(\d\d)-(\d\d)/.exec(v?.time || '');
@@ -61,17 +70,14 @@ function fmtTime(v) {
   if (p === 10 && mo) return `${MONTHS[mo - 1]} de ${y}`;
   return String(y);
 }
-/**
- * Ficha de datos de un elemento: [{label, values:[texto]}], solo con las propiedades pedidas que
- * tenga. `props`: [[propiedad, etiqueta, máximo]].
- */
+const yearOf = (e, p) => { const v = claims(e, p)[0]?.mainsnak.datavalue.value; return v ? +((/^[+-](\d+)/.exec(v.time) || [])[1]) || 0 : 0; };
+/** Ficha: [{key, label, values, more}], solo con las propiedades que tenga. `props`: [[propiedad, etiqueta, máximo]]. */
 async function facts(e, props) {
-  const ids = new Set();
-  for (const [p] of props) for (const c of claims(e, p)) if (c.mainsnak.datavalue.type === 'wikibase-entityid') ids.add(c.mainsnak.datavalue.value.id);
-  // año de los premios (calificador «fecha», P585)
-  const lab = await labels([...ids]);
+  const want = new Set();
+  for (const [p] of props) for (const c of claims(e, p)) if (c.mainsnak.datavalue.type === 'wikibase-entityid') want.add(c.mainsnak.datavalue.value.id);
+  const lab = await labels([...want]);
   const out = [];
-  for (const [p, label, max = 8] of props) {
+  for (const [p, name, max = 8] of props) {
     const vals = [];
     for (const c of claims(e, p)) {
       const dv = c.mainsnak.datavalue;
@@ -81,25 +87,25 @@ async function facts(e, props) {
       if (when) v += ` (${fmtTime({ ...when, precision: 9 })})`;
       if (!vals.includes(v)) vals.push(v);
     }
-    if (vals.length) out.push({ label, values: vals.slice(0, max), more: Math.max(0, vals.length - max) });
+    if (vals.length) out.push({ key: p, label: name, values: vals.slice(0, max), more: Math.max(0, vals.length - max) });
   }
   return out;
 }
 
 // ---------------------------------------------------------------- Wikipedia
-/** Artículo de Wikipedia de un elemento de Wikidata: en español si existe, si no en inglés. */
-async function wikipedia(e) {
-  for (const lang of ['es', 'en']) {
-    const title = e?.sitelinks?.[`${lang}wiki`]?.title;
-    if (!title) continue;
-    const d = await getJSON(`https://${lang}.wikipedia.org/w/api.php?action=query&prop=extracts|pageimages&explaintext=1&exsectionformat=wiki&piprop=thumbnail&pithumbsize=400&redirects=1&titles=${encodeURIComponent(title)}&format=json&origin=*`);
-    const page = Object.values(d?.query?.pages || {})[0];
-    if (!page?.extract) continue;
-    return { lang, title: page.title, url: `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(page.title.replace(/ /g, '_'))}`, thumb: page.thumbnail?.source || '', ...sections(page.extract) };
-  }
-  return null;
+// Secciones que se leen como historias o curiosidades (se destacan aparte).
+const STORY = /curiosidad|anécdota|trivia|vida personal|personal life|controversi|polémica|legado|legacy|influencia|influence|cultura popular|popular culture|antecedentes|background|origen|origins?\b|etimolog|nombre|name\b|grabación|recording|composición|composition|escritura|writing|inspiraci|inspiration|video ?musical|music video|vídeo|actuaciones|live performances?|versiones|cover versions|homenaje|tribute|recepción|reception|impacto|impact|estilo|style|artistry|imagen pública|public image|filantrop|philanthrop|activismo|activism/i;
+const SKIP = /^(referencias|notas|notas y referencias|enlaces externos|véase también|bibliografía|fuentes|lecturas? adicionales?|discografía|filmografía|premios y nominaciones|giras|references|notes|external links|see also|further reading|bibliography|sources|citations|discography|filmography|awards and nominations|tours|track listing|lista de canciones|personnel|créditos|credits|charts|listas|posicionamiento en listas|certifications|certificaciones|release history|historial de lanzamientos|year-end charts|weekly charts|monthly charts|accolades|band members|miembros|members|formats and track listings)$/i;
+
+async function wikipedia(e, lang) {
+  const title = e?.sitelinks?.[`${lang}wiki`]?.title;
+  if (!title) return null;
+  const d = await getJSON(`https://${lang}.wikipedia.org/w/api.php?action=query&prop=extracts|pageimages&explaintext=1&exsectionformat=wiki&piprop=thumbnail&pithumbsize=600&redirects=1&titles=${encodeURIComponent(title)}&format=json&origin=*`);
+  const page = Object.values(d?.query?.pages || {})[0];
+  if (!page?.extract) return null;
+  return { lang, title: page.title, url: `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(page.title.replace(/ /g, '_'))}`, thumb: page.thumbnail?.source || '', ...sections(page.extract) };
 }
-/** Separa el texto en introducción y secciones (las de nivel 2, con sus subsecciones dentro). */
+/** Introducción y secciones de nivel 2 (con sus subsecciones dentro, marcadas con «§»). */
 function sections(text) {
   const out = [];
   let intro = '', cur = null;
@@ -113,123 +119,158 @@ function sections(text) {
     if (cur) cur.text += line + '\n'; else intro += line + '\n';
   }
   const clean = s => s.replace(/\n{3,}/g, '\n\n').trim();
-  return { intro: clean(intro), sections: out.map(s => ({ title: s.title, text: clean(s.text) })).filter(s => s.text.replace(/§[^\n]*/g, '').trim().length > 40 && !SKIP.test(s.title)) };
+  return { intro: clean(intro), sections: out.map(s => ({ title: s.title, text: clean(s.text) })).filter(s => s.text.replace(/§[^\n]*/g, '').trim().length > 60 && !SKIP.test(s.title)) };
+}
+const WIKI_ES = { name: 'Wikipedia', kind: 'verificable' }, WIKI_EN = { name: 'Wikipedia (inglés)', kind: 'verificable' };
+/** Historias: las secciones con anécdotas, en español y, de las que no estén, en inglés. */
+function stories(es, en) {
+  const out = [];
+  const add = (w, src) => { for (const s of w?.sections || []) if (STORY.test(s.title)) out.push({ title: s.title, text: s.text, source: src.name, kind: src.kind, lang: w.lang, url: w.url }); };
+  add(es, WIKI_ES);
+  if (en && (!es || out.length < 3)) add(en, WIKI_EN);
+  return out.slice(0, 10);
+}
+
+// ---------------------------------------------------------------- TheAudioDB y Discogs
+async function audiodbArtist(name) {
+  const d = await getJSON(`${AUDIODB}/search.php?s=${encodeURIComponent(name)}`);
+  return (d?.artists || []).find(a => norm(a.strArtist) === norm(name)) || null;
+}
+async function audiodbTrack(artist, title) {
+  const d = await getJSON(`${AUDIODB}/searchtrack.php?s=${encodeURIComponent(artist)}&t=${encodeURIComponent(title)}`);
+  return (d?.track || []).find(t => sameTitle(t.strTrack, title) && norm(t.strArtist) === norm(artist)) || null;
+}
+const audiodbText = (x, field) => {
+  const es = String(x?.[`${field}ES`] || '').trim(), en = String(x?.[`${field}EN`] || '').trim();
+  return es ? { text: es, lang: 'es' } : en ? { text: en, lang: 'en' } : null;
+};
+/** Perfil de Discogs sin sus marcas ([a=Nombre], [url=…]texto[/url], [b]…). */
+const discogsText = s => String(s || '')
+  .replace(/\[url=[^\]]*\]([^[]*)\[\/url\]/gi, '$1').replace(/\[(?:a|l|m|r)=([^\]]+)\]/gi, '$1').replace(/\[(?:a|l|m|r)\d+\]/gi, '')
+  .replace(/\[\/?(?:b|i|u)\]/gi, '').replace(/\r/g, '').trim();
+async function discogs(e) {
+  const id = str(e, 'P1953');
+  if (!id) return null;
+  const d = await getJSON(`${DISCOGS}/artists/${encodeURIComponent(id)}`);
+  return d ? { id, url: `https://www.discogs.com/artist/${id}`, profile: discogsText(d.profile), members: (d.members || []).map(m => ({ name: String(m.name || '').replace(/\s*\(\d+\)$/, ''), active: m.active !== false })) } : null;
 }
 
 // ---------------------------------------------------------------- artistas
-const MUSIC_JOBS = new Set(['Q177220', 'Q639669', 'Q36834', 'Q488205', 'Q753110', 'Q855091', 'Q130857', 'Q2252262', 'Q183945', 'Q386854', 'Q806349', 'Q1259917', 'Q12800682', 'Q486748']);
-const GROUPS = new Set(['Q215380', 'Q5741069', 'Q2088357', 'Q9212979', 'Q281643', 'Q641066', 'Q1196726', 'Q56816954']);
-const isMusical = e => claims(e, 'P31').some(c => GROUPS.has(c.mainsnak.datavalue.value.id)) || claims(e, 'P106').some(c => MUSIC_JOBS.has(c.mainsnak.datavalue.value.id));
+const MUSIC_JOBS = new Set(['Q177220', 'Q639669', 'Q36834', 'Q488205', 'Q753110', 'Q855091', 'Q130857', 'Q2252262', 'Q183945', 'Q386854', 'Q806349', 'Q1259917', 'Q12800682', 'Q486748', 'Q2643890']);
+const GROUPS = new Set(['Q215380', 'Q5741069', 'Q2088357', 'Q9212979', 'Q281643', 'Q641066', 'Q1196726', 'Q56816954', 'Q109940']);
+const isGroup = e => ids(e, 'P31').some(q => GROUPS.has(q));
+const isMusical = e => isGroup(e) || ids(e, 'P106').some(q => MUSIC_JOBS.has(q));
+const fame = e => Object.keys(e.sitelinks || {}).length;
 
 /**
- * Busca el artista en MusicBrainz. Si hay varios con ese nombre, se queda con el que tenga alguno
- * de los discos o canciones de la biblioteca; si no se puede saber, lo dice ('ambiguous').
+ * El artista en Wikidata. Si hay varios músicos con ese nombre, se queda con el que tenga alguno de
+ * los discos o canciones de la biblioteca; si ninguno, con el más conocido (y se avisa).
  */
-async function findArtist(name, { albums = [], titles = [] }) {
-  const d = await mb(`artist/?query=${encodeURIComponent(`artist:"${name.replace(/"/g, '')}"`)}&fmt=json&limit=10`);
-  const same = (d?.artists || []).filter(a => (a.score ?? 100) >= 85 && (norm(a.name) === norm(name) || (a.aliases || []).some(x => norm(x.name) === norm(name))));
-  if (same.length <= 1) return { artist: same[0] || null };
-  for (const a of same.slice(0, 3)) {
-    for (const al of albums.slice(0, 2)) {
-      const r = await mb(`release-group/?query=${encodeURIComponent(`arid:${a.id} AND releasegroup:"${al.replace(/"/g, '')}"`)}&fmt=json&limit=5`);
-      if ((r?.['release-groups'] || []).some(g => sameTitle(g.title, al))) return { artist: a };
-    }
-    for (const ti of titles.slice(0, 2)) {
-      const r = await mb(`recording/?query=${encodeURIComponent(`arid:${a.id} AND recording:"${ti.replace(/"/g, '')}"`)}&fmt=json&limit=5`);
-      if ((r?.recordings || []).some(x => sameTitle(x.title, ti))) return { artist: a };
+async function findArtist(name, { albums = [], titles = [] } = {}) {
+  let cand = await searchName(name, 'es');
+  if (!cand.length) cand = await searchName(name, 'en');
+  const list = (await entities([...new Set(cand)].slice(0, 8))).filter(isMusical);
+  if (list.length <= 1) return { e: list[0] || null };
+  for (const e of list.slice(0, 4)) {
+    for (const what of [...albums.slice(0, 2), ...titles.slice(0, 2)]) {
+      if ((await search(`"${what.replace(/"/g, '')}" haswbstatement:P175=${e.id}`, 3)).length) return { e };
     }
   }
-  return { artist: null, ambiguous: same.length };
+  return { e: list.sort((a, b) => fame(b) - fame(a))[0], guess: list.length };
 }
 
 /** Perfil de un artista. `known`: {albums, titles} de la biblioteca, para no confundir homónimos. */
 export function artistInfo(name, known = {}) {
-  return cached(`kb:a:${norm(name)}`, async () => {
+  return cached(`kb2:a:${norm(name)}`, async () => {
     if (offline()) return { status: 'offline' };
     try {
-      const { artist, ambiguous } = await findArtist(name, known);
-      let mbData = null, q = '';
-      if (artist) {
-        mbData = await mb(`artist/${artist.id}?inc=url-rels+artist-rels&fmt=json`);
-        q = qOf((mbData?.relations || []).find(r => r.type === 'wikidata')?.url?.resource) || await byStatement('P434', artist.id);
+      const { e, guess } = await findArtist(name, known);
+      const [es, en, adb, dg] = await Promise.all([e && wikipedia(e, 'es'), e && wikipedia(e, 'en'), audiodbArtist(name), e && discogs(e)]);
+      if (!e && !adb) return { status: 'none' };
+      const group = e ? isGroup(e) : /^\d+$/.test(adb?.intMembers || '') && +adb.intMembers > 1;
+      // Miembros: los de Wikidata (con años) y, si no hay, los de Discogs.
+      let members = [];
+      if (e && group) {
+        const lab = await labels(ids(e, 'P527'));
+        members = claims(e, 'P527').map(c => ({ name: lab.get(c.mainsnak.datavalue.value.id) || '', begin: fmtTime({ ...(c.qualifiers?.P580?.[0]?.datavalue?.value || {}), precision: 9 }), end: fmtTime({ ...(c.qualifiers?.P582?.[0]?.datavalue?.value || {}), precision: 9 }) }))
+          .filter(m => m.name).map(m => ({ ...m, current: !m.end }));
       }
-      if (!artist && ambiguous) return { status: 'ambiguous', count: ambiguous };
-      if (!q && !artist) {
-        // Sin rastro en MusicBrainz: Wikidata por nombre, solo si hay un único músico o grupo con ese nombre exacto.
-        const s = await getJSON(`${WD}/w/api.php?action=wbsearchentities&search=${encodeURIComponent(name)}&language=es&uselang=es&type=item&limit=7&format=json&origin=*`);
-        const cands = (s?.search || []).filter(x => norm(x.label) === norm(name) || norm(x.match?.text) === norm(name));
-        const ok = [];
-        for (const c of cands.slice(0, 4)) { const e = await entity(c.id); if (e && isMusical(e)) ok.push(c.id); }
-        if (ok.length === 1) q = ok[0];
-      }
-      const e = q ? await entity(q) : null;
-      if (!artist && !e) return { status: 'none' };
-      const group = mbData?.type === 'Group' || claims(e, 'P31').some(c => GROUPS.has(c.mainsnak.datavalue.value.id));
-      const rels = mbData?.relations || [];
-      const member = (r, who) => ({ name: who.name, begin: (r.begin || '').slice(0, 4), end: (r.end || '').slice(0, 4), ended: !!r.ended, roles: (r.attributes || []).filter(x => !/original|founder/i.test(x)) });
-      const data = {
-        status: 'ok', name: mbData?.name || name, mbid: artist?.id || '', group, disambiguation: mbData?.disambiguation || '',
-        area: mbData?.area?.name || '', beginArea: mbData?.['begin-area']?.name || '',
-        life: mbData?.['life-span'] ? { begin: mbData['life-span'].begin || '', end: mbData['life-span'].end || '', ended: !!mbData['life-span'].ended } : null,
-        members: rels.filter(r => r.type === 'member of band' && r.direction === 'backward' && r.artist).map(r => member(r, r.artist)),
-        memberOf: rels.filter(r => r.type === 'member of band' && r.direction === 'forward' && r.artist).map(r => member(r, r.artist)),
-        links: rels.filter(r => r.type === 'official homepage' && r.url?.resource).map(r => r.url.resource).slice(0, 2),
-        facts: e ? await facts(e, group
-          ? [['P571', 'Formación', 1], ['P740', 'Origen', 2], ['P495', 'País', 2], ['P576', 'Disolución', 1], ['P136', 'Géneros', 6], ['P264', 'Discográficas', 5], ['P166', 'Premios', 12]]
-          : [['P569', 'Nacimiento', 1], ['P19', 'Lugar de nacimiento', 1], ['P570', 'Fallecimiento', 1], ['P20', 'Lugar de fallecimiento', 1], ['P1303', 'Instrumentos', 6], ['P136', 'Géneros', 6], ['P264', 'Discográficas', 5], ['P166', 'Premios', 12]]) : [],
-        wiki: e ? await wikipedia(e) : null,
-        wikidata: q ? `${WD}/wiki/${q}` : '',
+      if (!members.length && dg?.members.length) members = dg.members.map(m => ({ name: m.name, current: m.active }));
+      const bioAdb = audiodbText(adb, 'strBiography');
+      const story = stories(es, en);
+      if (dg?.profile && dg.profile.length > 120) story.push({ title: 'Según Discogs', text: dg.profile, source: 'Discogs', kind: 'comunidad', lang: /\b(the|and|was|with)\b/i.test(dg.profile) ? 'en' : 'es', url: dg.url });
+      if (bioAdb && (es || en)) story.push({ title: 'Según TheAudioDB', text: bioAdb.text, source: 'TheAudioDB', kind: 'comunidad', lang: bioAdb.lang, url: `https://www.theaudiodb.com/artist/${adb.idArtist}` });
+      const bio = es ? { text: es.intro, rest: es.sections.filter(s => !STORY.test(s.title)), source: 'Wikipedia', lang: 'es', url: es.url }
+        : bioAdb?.lang === 'es' ? { text: bioAdb.text, rest: [], source: 'TheAudioDB', lang: 'es', url: `https://www.theaudiodb.com/artist/${adb.idArtist}`, community: true }
+          : en ? { text: en.intro, rest: en.sections.filter(s => !STORY.test(s.title)), source: 'Wikipedia', lang: 'en', url: en.url }
+            : bioAdb ? { text: bioAdb.text, rest: [], source: 'TheAudioDB', lang: bioAdb.lang, url: `https://www.theaudiodb.com/artist/${adb.idArtist}`, community: true } : null;
+      const f = e ? await facts(e, group
+        ? [['P571', 'Formación', 1], ['P740', 'Origen', 2], ['P495', 'País', 2], ['P576', 'Disolución', 1], ['P136', 'Géneros', 6], ['P264', 'Discográficas', 5], ['P166', 'Premios', 12]]
+        : [['P569', 'Nacimiento', 1], ['P19', 'Lugar de nacimiento', 1], ['P570', 'Fallecimiento', 1], ['P1303', 'Instrumentos', 6], ['P136', 'Géneros', 6], ['P264', 'Discográficas', 5], ['P166', 'Premios', 12]]) : [];
+      const get = k => f.find(x => x.key === k);
+      const year = (e && (yearOf(e, group ? 'P571' : 'P569') || yearOf(e, 'P2031'))) || +(adb?.intFormedYear || adb?.intBornYear || 0) || 0;
+      const site = (e && str(e, 'P856')) || adb?.strWebsite || '';
+      const links = [site && { label: 'Web oficial', url: /^https?:/.test(site) ? site : `https://${site}` },
+        adb?.strFacebook && { label: 'Facebook', url: `https://${adb.strFacebook.replace(/^https?:\/\//, '')}` },
+        adb?.strTwitter && { label: 'X / Twitter', url: `https://${adb.strTwitter.replace(/^https?:\/\//, '')}` }].filter(Boolean);
+      const sources = [e && { name: 'Wikidata', kind: 'verificable', url: `${WD}/wiki/${e.id}` }, es && { name: 'Wikipedia', kind: 'verificable', url: es.url },
+        en && { name: 'Wikipedia (inglés)', kind: 'verificable', url: en.url }, adb && { name: 'TheAudioDB', kind: 'comunidad', url: `https://www.theaudiodb.com/artist/${adb.idArtist}` },
+        dg && { name: 'Discogs', kind: 'comunidad', url: dg.url }].filter(Boolean);
+      return {
+        status: 'ok', name: (e && label(e)) || adb?.strArtist || name, description: e ? description(e) : adb?.strStyle || '', group, guess: guess || 0,
+        photo: adb?.strArtistThumb || es?.thumb || en?.thumb || '', banner: adb?.strArtistFanart || adb?.strArtistWideThumb || '',
+        chips: [year && { icon: 'star', text: group ? `Desde ${year}` : `Nacimiento: ${year}` },
+          (get('P740') || get('P19'))?.values[0] && { icon: 'compass', text: (get('P740') || get('P19')).values[0] },
+          !get('P740') && !get('P19') && adb?.strCountry && { icon: 'compass', text: adb.strCountry },
+          (get('P136')?.values.slice(0, 3).join(', ') || adb?.strGenre) && { icon: 'disc', text: get('P136')?.values.slice(0, 3).join(', ') || adb.strGenre },
+          get('P166') && { icon: 'star', text: `${get('P166').values.length + get('P166').more} premios` },
+          members.length && { icon: 'user', text: `${members.filter(m => m.current).length || members.length} miembros` }].filter(Boolean),
+        facts: f, bio, stories: story, members, links, sources,
       };
-      return data;
     } catch (err) { return { status: 'error', message: err.message }; }
   });
 }
 
 // ---------------------------------------------------------------- canciones
-/** Información de una canción: créditos, versiones, samples, ficha de Wikidata y artículo de Wikipedia. */
+const SONG_TYPES = new Set(['Q7366', 'Q134556', 'Q105543609', 'Q2188189', 'Q55850593', 'Q207628']);
+/** Información de una canción: datos y créditos (Wikidata), historia y anécdotas (Wikipedia) y su descripción en TheAudioDB. */
 export function songInfo({ title, artist, album = '' }) {
-  return cached(`kb:s:${norm(artist)}|${norm(title)}`, async () => {
+  return cached(`kb2:s:${norm(artist)}|${norm(title)}`, async () => {
     if (offline()) return { status: 'offline' };
     try {
-      const d = await mb(`recording/?query=${encodeURIComponent(`recording:"${title.replace(/"/g, '')}" AND artist:"${artist.replace(/"/g, '')}"`)}&fmt=json&limit=15`);
-      const recs = (d?.recordings || []).filter(r => (r.score ?? 100) >= 85 && sameTitle(r.title, title) && sameArtist(r['artist-credit'], artist));
-      // Mejor la grabación del mismo disco; si no, la que más lanzamientos tiene (la original, no una rareza).
-      recs.sort((a, b) => (album ? (b.releases || []).some(x => sameTitle(x.title, album)) - (a.releases || []).some(x => sameTitle(x.title, album)) : 0) || (b.releases?.length || 0) - (a.releases?.length || 0));
-      const rec = recs[0];
-      let full = null, work = null, workFull = null;
-      if (rec) {
-        full = await mb(`recording/${rec.id}?inc=artist-rels+work-rels+url-rels+recording-rels&fmt=json`);
-        const perf = (full?.relations || []).find(r => r.type === 'performance' && r.work);
-        work = perf ? { id: perf.work.id, title: perf.work.title, cover: (perf.attributes || []).includes('cover'), live: (perf.attributes || []).includes('live') } : null;
-        if (work) workFull = await mb(`work/${work.id}?inc=artist-rels+url-rels&fmt=json`);
+      const a = await artistInfo(artist, { albums: album ? [album] : [], titles: [title] });
+      const aq = (a?.sources || []).find(s => s.name === 'Wikidata')?.url.split('/').pop() || '';
+      let e = null;
+      if (aq) {
+        const hits = await entities(await search(`"${title.replace(/"/g, '')}" haswbstatement:P175=${aq}`, 6));
+        e = hits.find(x => sameTitle(label(x), title) || Object.values(x.labels || {}).some(l => sameTitle(l.value, title))) || null;
       }
-      const wdUrl = r => (r?.relations || []).find(x => x.type === 'wikidata')?.url?.resource;
-      let q = qOf(wdUrl(workFull)) || qOf(wdUrl(full));
-      if (!q && work) q = await byStatement('P435', work.id);
-      if (!q && rec) q = await byStatement('P4404', rec.id);
-      const e = q ? await entity(q) : null;
-      if (!rec && !e) return { status: 'none' };
-      const people = (rels, types) => {
-        const m = new Map();
-        for (const r of rels || []) if (types.includes(r.type) && r.artist) m.set(r.artist.name, true);
-        return [...m.keys()];
-      };
-      const credits = [
-        ['Composición', people(workFull?.relations, ['composer', 'writer'])],
-        ['Letra', people(workFull?.relations, ['lyricist'])],
-        ['Producción', people(full?.relations, ['producer'])],
-        ['Grabación y mezcla', people(full?.relations, ['engineer', 'recording', 'mix', 'mastering'])],
-        ['Arreglos', people([...(full?.relations || []), ...(workFull?.relations || [])], ['arranger', 'instrument arranger', 'vocal arranger'])],
-      ].filter(([, v]) => v.length).map(([label, values]) => ({ label, values: values.slice(0, 10), more: Math.max(0, values.length - 10) }));
-      const samples = (full?.relations || []).filter(r => r.type === 'samples material' && r.direction === 'forward' && r.recording)
-        .map(r => ({ title: r.recording.title, artist: (r.recording['artist-credit'] || []).map(c => c.name).join(', ') }));
+      if (!e) {
+        // Sin el artista en Wikidata: una canción con ese título cuyo intérprete se llame igual.
+        const cand = (await entities((await searchName(title, 'es')).concat(await searchName(title, 'en')).slice(0, 8))).filter(x => ids(x, 'P31').some(q => SONG_TYPES.has(q)));
+        const perf = await labels([...new Set(cand.flatMap(x => ids(x, 'P175')))]);
+        e = cand.find(x => ids(x, 'P175').some(q => norm(perf.get(q)) === norm(artist))) || null;
+      }
+      const [es, en, adb] = await Promise.all([e && wikipedia(e, 'es'), e && wikipedia(e, 'en'), audiodbTrack(artist, title)]);
+      const descAdb = audiodbText(adb, 'strDescription');
+      if (!e && !descAdb) return { status: 'none' };
+      const f = e ? await facts(e, [['P577', 'Publicación', 1], ['P361', 'Disco', 2], ['P136', 'Géneros', 4], ['P264', 'Discográfica', 3], ['P86', 'Composición', 8], ['P676', 'Letra', 8], ['P162', 'Producción', 8], ['P166', 'Premios', 10], ['P144', 'Basada en', 2]]) : [];
+      const get = k => f.find(x => x.key === k);
+      const story = stories(es, en);
+      const main = es || en;
+      if (main?.intro) story.unshift({ title: 'La canción', text: main.intro, source: main.lang === 'es' ? 'Wikipedia' : 'Wikipedia (inglés)', kind: 'verificable', lang: main.lang, url: main.url });
+      if (descAdb) story.push({ title: 'Según TheAudioDB', text: descAdb.text, source: 'TheAudioDB', kind: 'comunidad', lang: descAdb.lang, url: `https://www.theaudiodb.com/track/${adb.idTrack}` });
+      const sources = [e && { name: 'Wikidata', kind: 'verificable', url: `${WD}/wiki/${e.id}` }, es && { name: 'Wikipedia', kind: 'verificable', url: es.url },
+        en && { name: 'Wikipedia (inglés)', kind: 'verificable', url: en.url }, adb && descAdb && { name: 'TheAudioDB', kind: 'comunidad', url: `https://www.theaudiodb.com/track/${adb.idTrack}` }].filter(Boolean);
+      const year = (e && yearOf(e, 'P577')) || +(adb?.intYearReleased || 0) || 0;
       return {
-        status: 'ok', title: rec?.title || title, artist, mbid: rec?.id || '',
-        cover: !!work?.cover, live: !!work?.live, work: work?.title || '',
-        credits, samples,
-        facts: e ? await facts(e, [['P577', 'Publicación', 1], ['P361', 'Parte de', 3], ['P136', 'Géneros', 5], ['P264', 'Discográfica', 3], ['P86', 'Composición', 6], ['P676', 'Letra', 6], ['P162', 'Producción', 6], ['P166', 'Premios', 10]]) : [],
-        wiki: e ? await wikipedia(e) : null,
-        wikidata: q ? `${WD}/wiki/${q}` : '',
+        status: 'ok', title: (e && label(e)) || title, artist,
+        chips: [year && { icon: 'star', text: String(year) }, get('P361')?.values[0] && { icon: 'disc', text: get('P361').values[0] },
+          (get('P136')?.values.slice(0, 2).join(', ') || adb?.strGenre) && { icon: 'wave', text: get('P136')?.values.slice(0, 2).join(', ') || adb.strGenre },
+          get('P166') && { icon: 'star', text: `${get('P166').values.length + get('P166').more} premios` }].filter(Boolean),
+        credits: f.filter(x => ['P86', 'P676', 'P162'].includes(x.key)),
+        facts: f.filter(x => !['P86', 'P676', 'P162', 'P577', 'P361'].includes(x.key)),
+        stories: story, sources,
       };
     } catch (err) { return { status: 'error', message: err.message }; }
   });

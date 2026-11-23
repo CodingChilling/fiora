@@ -546,6 +546,7 @@ function songTools(list, active) {
       <div class="lib-sort">${sortBtn('canciones')}
         <button class="btn sm ${active.length ? 'on' : ''}" data-act="lib-filter" aria-label="Filtrar${active.length ? ` (${active.length} activos)` : ''}">${icon('filter')}<span class="lbl">Filtrar</span>${active.length ? `<span class="count">${active.length}</span>` : ''}</button></div>
     </div>
+    <div class="lib-count-m" aria-hidden="true"><b>${plural(list.length, 'canción', 'canciones')}</b>${list.length ? `<small>${totalTime(list)}</small>` : ''}</div>
     <div class="chips lib-chips">${quick.map(([k, v, l, on]) => `<button class="chip ${on() ? 'on' : ''}" data-act="lib-quick" data-k="${k}" data-v="${v}" aria-pressed="${on()}">${esc(l)}</button>`).join('')}
       ${rest.map(([l, k, v]) => `<button class="chip on removable" data-act="lib-unfilter" data-k="${k}" data-v="${esc(v ?? '')}" aria-label="Quitar filtro ${esc(l)}">${esc(l)}${icon('x')}</button>`).join('')}</div>`;
 }
@@ -750,10 +751,10 @@ function viewArtist(name) {
       <div class="info"><div class="kind">Artista</div><h1>${esc(name)}</h1><p>${plural(tracks.length, 'canción', 'canciones')}</p>${playButtons(tracks)}</div></div>
     ${albs.length ? `<h2>Álbumes</h2><div class="strip">${albs.map(albumCard).join('')}</div>` : ''}
     <h2>Canciones</h2>${rows(tracks)}
-    <section class="kb" data-kb-artist="${esc(name)}"><h2>Sobre ${esc(name)}</h2><p class="muted kb-wait"><span class="spinner"></span>Buscando información…</p></section>`);
+    <section class="kb" data-kb-artist="${esc(name)}"><h2>Sobre ${esc(name)}</h2>${kbWait}</section>`);
   const box = $('[data-kb-artist]');
   kb.artistInfo(name, { albums: albs.map(a => a.title), titles: tracks.slice(0, 3).map(t => t.title) }).then(d => {
-    if (box.isConnected) setHTML(box, `<h2>Sobre ${esc(d.name || name)}</h2>${artistKB(d)}`);
+    if (box.isConnected) setHTML(box, artistKB(d));
   });
 }
 
@@ -764,70 +765,76 @@ const kbParas = text => String(text || '').split(/\n{2,}|\n(?=§ )/).map(x => x.
   const [head, ...rest] = x.split('\n');          // «§ Subsección» y, debajo, su texto
   return `<h4>${esc(head.slice(2))}</h4>${rest.join('\n').trim() ? `<p>${esc(rest.join('\n').trim()).replace(/\n/g, '<br>')}</p>` : ''}`;
 }).join('');
-// Si la foto del artista no carga, se quita (sin recuadro roto).
-document.addEventListener('error', e => { if (e.target?.classList?.contains('kb-photo')) e.target.remove(); }, true);
-const kbFacts = (list, skip = new Set()) => {
-  const l = list.filter(f => !skip.has(f.label));
-  return l.length ? `<dl class="kb-facts">${l.map(f => `<div><dt>${esc(f.label)}</dt><dd>${f.values.map(esc).join(' · ')}${f.more ? ` <span class="muted">y ${f.more} más</span>` : ''}</dd></div>`).join('')}</dl>` : '';
-};
-function kbWiki(w) {
-  if (!w) return '';
-  const paras = w.intro.split(/\n{2,}/).filter(Boolean);
-  return `<div class="kb-wiki">${w.lang !== 'es' ? '<p class="kb-lang">Solo disponible en inglés</p>' : ''}
-    ${kbParas(paras.slice(0, 2).join('\n\n'))}
-    ${paras.length > 2 ? `<details class="kb-sec"><summary>Seguir leyendo</summary>${kbParas(paras.slice(2).join('\n\n'))}</details>` : ''}
-    ${w.sections.map(x => `<details class="kb-sec"><summary>${esc(x.title)}</summary>${kbParas(x.text)}</details>`).join('')}</div>`;
+// Si una foto no carga, se quita (sin recuadro roto).
+document.addEventListener('error', e => { if (e.target?.classList?.contains('kb-img')) e.target.remove(); }, true);
+const kbBadge = (name, kind, lang) => `<span class="kb-badge ${kind === 'comunidad' ? 'comm' : 'ver'}" title="${kind === 'comunidad' ? 'Escrito por la comunidad de ese sitio: puede contener errores' : 'Fuente verificable'}">${esc(name)}${lang === 'en' && !/inglés/.test(name) ? ' · en inglés' : ''}</span>`;
+const kbChips = chips => (chips?.length ? `<div class="kb-chips">${chips.map(c => `<span class="kb-chip">${icon(c.icon)}${esc(c.text)}</span>`).join('')}</div>` : '');
+const kbFactList = list => `<dl class="kb-facts">${list.map(f => `<div><dt>${esc(f.label)}</dt><dd>${f.values.map(esc).join(' · ')}${f.more ? ` <span class="muted">y ${f.more} más</span>` : ''}</dd></div>`).join('')}</dl>`;
+const kbStories = new Map();   // historias que se abren en una hoja
+let kbSeq = 0;
+function kbStoryCards(list) {
+  if (!list?.length) return '';
+  return `<h3 class="kb-h">${icon('spark')}Historias y curiosidades</h3><div class="kb-stories">${list.map(x => {
+    const k = 's' + (++kbSeq); kbStories.set(k, x);
+    const first = x.text.replace(/§[^\n]*\n?/g, '').split(/\n{2,}/).find(p => p.trim().length > 30) || x.text;
+    return `<button class="kb-story" data-act="kb-story" data-k="${k}">${kbBadge(x.source, x.kind, x.lang)}<b>${esc(x.title)}</b><span class="kb-excerpt">${esc(first.trim())}</span><span class="kb-more">Leer ${icon('chevR')}</span></button>`;
+  }).join('')}</div>`;
 }
-const kbSources = d => {
-  const src = [d.mbid && `<a class="link" href="https://musicbrainz.org/${d.group !== undefined ? 'artist' : 'recording'}/${esc(d.mbid)}" target="_blank" rel="noopener">MusicBrainz</a>`,
-    d.wikidata && `<a class="link" href="${esc(d.wikidata)}" target="_blank" rel="noopener">Wikidata</a>`,
-    d.wiki && `<a class="link" href="${esc(d.wiki.url)}" target="_blank" rel="noopener">Wikipedia${d.wiki.lang !== 'es' ? ' (en inglés)' : ''}: «${esc(d.wiki.title)}»</a>`].filter(Boolean);
-  return src.length ? `<p class="kb-src">Fuentes: ${src.join(' · ')}.${d.wiki ? ' El texto de Wikipedia se publica con licencia <a class="link" href="https://creativecommons.org/licenses/by-sa/4.0/deed.es" target="_blank" rel="noopener">CC BY-SA 4.0</a>.' : ''}</p>` : '';
-};
-const kbStatus = (d, what) => ({
-  offline: '<p class="muted">Sin conexión: esta información se consulta en internet.</p>',
-  error: `<p class="muted">No se pudo consultar ahora${d.message ? ` (${esc(d.message)})` : ''}. Inténtalo más tarde.</p>`,
-  none: `<p class="muted">No hay información verificada sobre ${what} en MusicBrainz, Wikidata ni Wikipedia.</p>`,
-  ambiguous: `<p class="muted">Hay ${d.count} artistas con este nombre en MusicBrainz y no se ha podido saber cuál es este, así que no se muestra nada para no confundirlos.</p>`,
-}[d.status] || '');
+function openStory(k) {
+  const x = kbStories.get(k);
+  if (!x) return;
+  openSheet(`<div class="dlg kb-sheet kb-story-sheet"><div class="kb-card-head">${kbBadge(x.source, x.kind, x.lang)}</div><h3>${esc(x.title)}</h3>
+    ${x.kind === 'comunidad' ? '<p class="kb-warn">Escrito por la comunidad de ese sitio: puede contener errores.</p>' : ''}
+    <div class="kb-text">${kbParas(x.text)}</div>
+    <div class="actions"><a class="btn ghost" href="${esc(x.url)}" target="_blank" rel="noopener">${icon('compass')}Ver en ${esc(x.source)}</a><button class="btn" data-x>Cerrar</button></div></div>`,
+  e => { if (e.target.closest('[data-x]')) sheet.close(); });
+}
+const kbSourcesHTML = sources => (sources?.length ? `<footer class="kb-src"><div class="kb-src-list"><span>Fuentes</span>${sources.map(x => `<a class="kb-badge ${x.kind === 'comunidad' ? 'comm' : 'ver'}" href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.name)}</a>`).join('')}</div>
+  <small><span class="kb-dot ver"></span>Verificable (Wikidata y Wikipedia; el texto de Wikipedia es <a class="link" href="https://creativecommons.org/licenses/by-sa/4.0/deed.es" target="_blank" rel="noopener">CC BY-SA 4.0</a>) · <span class="kb-dot comm"></span>Comunidad: lo escriben usuarios de esos sitios y puede contener errores.</small></footer>` : '');
+const kbStatus = (d, what) => `<div class="kb-empty">${icon('note')}<p>${({
+  offline: 'Sin conexión: esta información se consulta en internet.',
+  error: `No se pudo consultar ahora${d.message ? ` (${esc(d.message)})` : ''}. Inténtalo más tarde.`,
+  none: `No se ha encontrado información sobre ${what}.`,
+}[d.status] || '')}</p></div>`;
 function artistKB(d) {
   if (d.status !== 'ok') return kbStatus(d, 'este artista');
-  const yrs = m => (m.begin || m.end ? ` <span class="muted">(${m.begin || '?'}–${m.ended || m.end ? m.end || '?' : 'hoy'})</span>` : '');
-  const people = (title, list) => (list.length ? `<h3>${title}</h3><ul class="kb-people">${list.map(m => `<li>${kbArtist(m.name)}${m.roles.length ? ` <span class="muted">· ${m.roles.map(esc).join(', ')}</span>` : ''}${yrs(m)}</li>`).join('')}</ul>` : '');
-  const mbFacts = [];
-  if (!d.facts.length) {
-    if (d.life?.begin) mbFacts.push({ label: d.group ? 'Formación' : 'Nacimiento', values: [d.life.begin] });
-    if (d.beginArea || d.area) mbFacts.push({ label: 'Origen', values: [d.beginArea || d.area] });
-    if (d.life?.ended && d.life.end) mbFacts.push({ label: d.group ? 'Disolución' : 'Fallecimiento', values: [d.life.end] });
-  }
-  const now = d.members.filter(m => !m.ended), past = d.members.filter(m => m.ended);
-  const body = `${d.wiki?.thumb ? `<img class="kb-photo" src="${esc(d.wiki.thumb)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ''}
-    ${d.disambiguation ? `<p class="muted">${esc(d.disambiguation)}</p>` : ''}
-    ${kbFacts([...mbFacts, ...d.facts])}
-    ${kbWiki(d.wiki)}
-    ${people('Miembros', now)}${people('Antiguos miembros', past)}${people('Ha formado parte de', d.memberOf)}
-    ${d.links.length ? `<p>${d.links.map(u => `<a class="link" href="${esc(u)}" target="_blank" rel="noopener">${icon('compass')}Web oficial</a>`).join(' ')}</p>` : ''}`;
-  const empty_ = !d.wiki && !d.facts.length && !d.members.length && !d.memberOf.length;
-  return `${body}${empty_ ? '<p class="muted">Solo se ha encontrado su ficha en MusicBrainz, sin biografía ni más datos verificados.</p>' : ''}${kbSources(d)}`;
+  const bioParas = (d.bio?.text || '').split(/\n{2,}/).filter(Boolean);
+  const restHTML = bioParas.slice(2).length || d.bio?.rest?.length
+    ? `<details class="kb-more-text"><summary>Leer la biografía completa</summary>${kbParas(bioParas.slice(2).join('\n\n'))}${(d.bio.rest || []).map(x => `<h4>${esc(x.title)}</h4>${kbParas(x.text)}`).join('')}</details>` : '';
+  const now = d.members.filter(m => m.current), past = d.members.filter(m => !m.current);
+  const memberChips = list => list.map(m => `<span class="kb-member">${icon('user')}<span>${kbArtist(m.name)}${m.begin || m.end ? `<small>${esc(m.begin || '?')}–${esc(m.end || 'hoy')}</small>` : ''}</span></span>`).join('');
+  return `<div class="kb-hero${d.banner ? ' has-bg' : ''}">${d.banner ? `<img class="kb-img kb-bg" src="${esc(d.banner)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ''}
+      ${d.photo ? `<img class="kb-img kb-avatar" src="${esc(d.photo)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ''}
+      <div class="kb-hero-text"><span class="kb-kicker">Sobre el artista</span><h2>${esc(d.name)}</h2>${d.description ? `<p>${esc(d.description)}</p>` : ''}</div></div>
+    ${kbChips(d.chips)}
+    ${d.guess ? `<p class="kb-warn">Hay ${d.guess} artistas con este nombre; se muestra el más conocido.</p>` : ''}
+    ${d.bio ? `<article class="kb-card kb-bio"><div class="kb-card-head"><h3>Biografía</h3>${kbBadge(d.bio.source, d.bio.community ? 'comunidad' : 'verificable', d.bio.lang)}</div>
+      ${kbParas(bioParas.slice(0, 2).join('\n\n'))}${restHTML}</article>` : ''}
+    ${kbStoryCards(d.stories)}
+    ${d.facts.length || d.members.length ? `<div class="kb-grid">
+      ${d.facts.length ? `<article class="kb-card"><div class="kb-card-head"><h3>Datos</h3>${kbBadge('Wikidata', 'verificable')}</div>${kbFactList(d.facts)}</article>` : ''}
+      ${d.members.length ? `<article class="kb-card"><h3>${d.group ? 'Miembros' : 'Grupos'}</h3><div class="kb-members">${memberChips(now)}</div>${past.length ? `<h4>Antiguos miembros</h4><div class="kb-members">${memberChips(past)}</div>` : ''}</article>` : ''}</div>` : ''}
+    ${d.links.length ? `<div class="kb-links">${d.links.map(l => `<a class="btn sm" href="${esc(l.url)}" target="_blank" rel="noopener">${icon('compass')}${esc(l.label)}</a>`).join('')}</div>` : ''}
+    ${!d.bio && !d.stories.length && !d.facts.length ? '<div class="kb-empty"><p>Solo se ha encontrado su ficha, sin biografía ni historias.</p></div>' : ''}
+    ${kbSourcesHTML(d.sources)}`;
 }
-function songKB(d) {
+function songKB(d, t) {
   if (d.status !== 'ok') return kbStatus(d, 'esta canción (es normal en las menos conocidas)');
-  const credLabels = new Set(d.credits.map(c => c.label));
-  return `${d.cover ? `<p class="kb-note">Es una versión: la canción original${d.work ? ` («${esc(d.work)}»)` : ''} se publicó antes, con otros intérpretes.</p>` : ''}
-    ${d.live ? '<p class="kb-note">Esta grabación es en directo.</p>' : ''}
-    ${d.credits.length ? `<h3>Créditos</h3>${kbFacts(d.credits)}` : ''}
-    ${d.samples.length ? `<h3>Usa fragmentos de</h3><ul class="kb-people">${d.samples.map(x => `<li>«${esc(x.title)}»${x.artist ? ` <span class="muted">· ${esc(x.artist)}</span>` : ''}</li>`).join('')}</ul>` : ''}
-    ${d.facts.length ? `<h3>Datos</h3>${kbFacts(d.facts, credLabels)}` : ''}
-    ${d.wiki ? `<h3>Historia</h3>${kbWiki(d.wiki)}` : '<p class="muted">No hay un artículo de Wikipedia sobre esta canción.</p>'}
-    ${!d.credits.length && !d.facts.length && !d.wiki && !d.samples.length ? '<p class="muted">Está en MusicBrainz, pero sin créditos ni más datos verificados.</p>' : ''}
-    ${kbSources(d)}`;
+  return `<div class="kb-song-head">${t ? cover(t) : ''}<div><span class="kb-kicker">Sobre la canción</span><h2>${esc(d.title)}</h2><p>${esc(d.artist)}</p></div></div>
+    ${kbChips(d.chips)}
+    ${kbStoryCards(d.stories)}
+    ${d.credits.length || d.facts.length ? `<div class="kb-grid">
+      ${d.credits.length ? `<article class="kb-card"><div class="kb-card-head"><h3>Créditos</h3>${kbBadge('Wikidata', 'verificable')}</div>${kbFactList(d.credits)}</article>` : ''}
+      ${d.facts.length ? `<article class="kb-card"><div class="kb-card-head"><h3>Datos</h3>${kbBadge('Wikidata', 'verificable')}</div>${kbFactList(d.facts)}</article>` : ''}</div>` : ''}
+    ${!d.stories.length ? '<div class="kb-empty"><p>No hay historias sobre esta canción en estas fuentes.</p></div>' : ''}
+    ${kbSourcesHTML(d.sources)}`;
 }
 const songQuery = t => ({ title: t.title, artist: artistsOf(t)[0] || t.artist || '', album: t.album || '' });
+const kbWait = '<p class="muted kb-wait"><span class="spinner"></span>Buscando información…</p>';
 function songSheet(t) {
-  openSheet(`<div class="dlg kb-sheet"><div class="sheet-head">${cover(t)}<div><b>${esc(t.title)}</b><small>${esc(t.artist || '')}</small></div></div>
-    <div class="kb" data-kb-song><p class="muted kb-wait"><span class="spinner"></span>Buscando información…</p></div>
+  openSheet(`<div class="dlg kb-sheet"><div class="kb" data-kb-song>${kbWait}</div>
     <div class="actions"><button class="btn" data-x>Cerrar</button></div></div>`, e => { if (e.target.closest('[data-x]')) sheet.close(); });
-  kb.songInfo(songQuery(t)).then(d => { const box = $('[data-kb-song]', sheet); if (box && sheet.open) setHTML(box, songKB(d)); });
+  kb.songInfo(songQuery(t)).then(d => { const box = $('[data-kb-song]', sheet); if (box && sheet.open) setHTML(box, songKB(d, t)); });
 }
 
 // ----------------------------------------------------------------- playlists
@@ -2065,6 +2072,7 @@ const ACTIONS = {
   fav(el) { const r = rowInfo(el); if (r?.track) toggleFav(r.track.id); },
   more(el) { const r = rowInfo(el); if (r?.track) trackMenu(r.track, r.opts, r.i); },
   'lib-bucket'(el) { toggleBucket(el.dataset.bid); },
+  'kb-story'(el) { openStory(el.dataset.k); },
   'play-surprise'() {
     const l = modes.surpriseOrder(firstList().filter(playable), S.settings.surpriseHours || 24);
     if (!l.length) return;
@@ -2616,7 +2624,7 @@ async function renderNowPane() {
     pane.scrollTop = 0;
     const d = await kb.songInfo(songQuery(t));
     const box = $(`[data-kb-now="${CSS.escape(t.id)}"]`, pane);
-    if (box && nowMode === 'info' && P.current?.id === t.id) setHTML(box, `<h2 style="margin-top:0">${esc(t.title)}</h2>${songKB(d)}`);
+    if (box && nowMode === 'info' && P.current?.id === t.id) setHTML(box, songKB(d, t));
     return;
   }
   if (nowMode === 'queue') {

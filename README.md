@@ -165,15 +165,18 @@ Además de en las playlists, están en la biblioteca: junto a Reproducir y Aleat
 - **Sorpresa**: orden aleatorio, dejando para el final lo escuchado en las últimas 24 horas.
 - **Ambiente**: de lo tranquilo a lo intenso y vuelta a la calma, según «lo que transmite» de cada canción. Necesita al menos 6 canciones y que la mayoría estén etiquetadas; si no, el botón explica qué falta.
 
-## Artistas y canciones: información de fuentes contrastadas
+## Artistas y canciones: historias, curiosidades y datos
 
-- **Sobre el artista**, al final de la página de cada artista: datos verificados (nacimiento o formación, origen, géneros, discográficas, premios con su año), biografía y sus secciones, miembros actuales y antiguos (con años e instrumentos), grupos de los que ha formado parte y web oficial.
-- **Sobre la canción**: pestaña **Info** de la pantalla Reproduciendo (junto a Letra y Cola) o menú ⋯ → «Sobre esta canción». Créditos (composición, letra, producción, grabación y mezcla, arreglos), si es una versión, de qué canciones usa fragmentos (samples), datos (publicación, disco, premios) e historia.
-- **Fuentes**: [MusicBrainz](https://musicbrainz.org) (CC0), [Wikidata](https://www.wikidata.org) (CC0) y [Wikipedia](https://www.wikipedia.org) (texto con licencia CC BY-SA 4.0), siempre citadas con su enlace. Se enlazan por identificador (MusicBrainz → Wikidata → Wikipedia), no por el nombre, para no confundir a dos artistas que se llaman igual: si hay varios con el mismo nombre, se elige el que tiene alguno de los discos o canciones de tu biblioteca y, si no se puede saber, se dice y no se muestra nada.
-- **No se inventa nada**: no se usa IA ni fuentes que escribe cualquiera. Si no hay información, se dice. Wikipedia primero en español; si solo existe en inglés, se muestra en inglés con el aviso «Solo disponible en inglés».
-- Se guarda en el dispositivo 30 días (sin conexión se ve lo ya consultado). Solo se envían a esos servicios el nombre del artista o el título y artista de la canción.
+- **Sobre el artista**, al final de la página de cada artista: cabecera con su imagen, datos rápidos (nacimiento o formación, origen, géneros, premios, miembros), biografía, **historias y curiosidades** (tarjetas que se abren para leer entero), datos, miembros actuales y antiguos y enlaces (web oficial, redes).
+- **Sobre la canción**: pestaña **Info** de la pantalla Reproduciendo (junto a Letra y Cola) o menú ⋯ → «Sobre esta canción». Datos rápidos (año, disco, género), historias (la canción, antecedentes, grabación, vídeo, recepción…) y créditos (composición, letra, producción).
+- **Fuentes**, cada dato con la suya:
+  - **Verificables**: [Wikidata](https://www.wikidata.org) (identifica al artista o la canción y da los datos y créditos) y [Wikipedia](https://www.wikipedia.org) en español y en inglés (texto con licencia CC BY-SA 4.0). Las secciones con anécdotas (curiosidades, vida personal, antecedentes, grabación, legado…) se muestran como historias; si en español hay pocas, se añaden las del artículo en inglés, marcadas «en inglés».
+  - **De comunidad** (las escriben sus usuarios y pueden contener errores; se marcan así): [TheAudioDB](https://www.theaudiodb.com) (biografías, descripciones de canciones y fotos; con su clave pública gratuita) y [Discogs](https://www.discogs.com) (perfil del artista, enlazado desde Wikidata).
+- **Homónimos**: si hay varios músicos con el mismo nombre, se elige el que tiene alguno de los discos o canciones de tu biblioteca; si no se puede saber, el más conocido, avisando.
+- **No se inventa nada**: no se usa IA. Si no hay información, se dice.
+- Se guarda en el dispositivo 30 días (sin conexión se ve lo ya consultado). Solo se envía el nombre del artista o el título y artista de la canción.
 
-Pruebas en `tests/library/knowledge-e2e.cjs` (con los tres servicios simulados).
+Pruebas en `tests/library/knowledge-e2e.cjs` (con los servicios simulados).
 
 ## Tu criatura sonora
 
@@ -371,7 +374,7 @@ Y abre `http://localhost:8000`.
 | `js/app.js` | Pantallas, menús y navegación |
 | `js/player.js` | Reproductor, cola y controles del sistema; elige entre la ruta normal y la espacial |
 | `js/spatial.js` | Audio espacial (8D): grafo de Web Audio, modos, comprobación de compatibilidad |
-| `js/knowledge.js` | Información de artistas y canciones: MusicBrainz → Wikidata → Wikipedia, con caché de 30 días |
+| `js/knowledge.js` | Información de artistas y canciones: Wikidata, Wikipedia (es/en), TheAudioDB y Discogs, con caché de 30 días |
 | `js/modes.js` | Modos Sorpresa y Ambiente (playlists y biblioteca) |
 | `js/covers.js` | Portadas que faltan: búsqueda en Apple (iTunes Search API), YouTube Music (Piped) y MusicBrainz / Cover Art Archive, y portadas generadas |
 | `js/fades.js` | Fundidos y mezcla cruzada: ajustes, curvas y volumen de cada momento |
