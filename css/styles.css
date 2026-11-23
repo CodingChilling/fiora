@@ -1548,3 +1548,4 @@ ol.tuto { list-style: none; margin: 0; padding: 0; }
 .bucket-chip.on { background: color-mix(in srgb, var(--accent) 18%, var(--surface)); color: var(--text); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
 .bucket-chip.on .ic { color: var(--accent); }
 .bucket-chip.off { color: var(--muted); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--muted) 60%, transparent); }
+.sub-panel.ai-all { margin-top: 14px; border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); background: color-mix(in srgb, var(--accent) 8%, var(--surface-2)); }

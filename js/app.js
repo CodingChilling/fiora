@@ -913,7 +913,10 @@ async function viewSettings(sec) {
             ${A.provider !== 'anthropic' ? '<button type="button" class="btn" data-act="ai-models">Ver modelos disponibles</button>' : ''}
             ${aiKey ? '<button type="button" class="btn ghost danger" data-act="ai-forget">Quitar clave</button>' : ''}</div>
           ${prov.site ? `<small class="muted">La clave se crea en ${prov.site}.${prov.help ? ` ${esc(prov.help)}` : ''}</small>` : '<small class="muted">Vale cualquier servicio con API compatible con la de OpenAI (OpenRouter, Groq, Mistral, un modelo local…), siempre que admita llamadas desde el navegador.</small>'}</form>
-        ${aiReady ? `<div class="actions" style="margin-top:14px"><button class="btn" data-act="ai-tag-all" ${untagged ? '' : 'disabled'}>${icon('spark')}${untagged ? `Etiquetar ${plural(untagged, 'canción', 'canciones')} sin etiquetar` : 'Todas las canciones están etiquetadas'}</button>
+        ${aiReady ? `<div class="sub-panel ai-all"><b>Completarlo todo</b><small>${untagged || coverless || albumless ? `Busca el álbum, después la portada y al final los géneros de las que les falte (${[albumless && `${albumless} sin álbum`, coverless && `${coverless} sin portada`, untagged && `${untagged} sin etiquetar`].filter(Boolean).join(' · ')}), y lo guarda todo en los archivos.` : 'No falta nada por completar.'}</small>
+          <div class="actions"><button class="btn primary" data-act="ai-all" ${untagged || coverless || albumless ? '' : 'disabled'}>${icon('spark')}Completarlo todo con IA</button></div></div>
+          <small class="muted">O cada cosa por separado:</small>
+          <div class="actions" style="margin-top:8px"><button class="btn" data-act="ai-tag-all" ${untagged ? '' : 'disabled'}>${icon('spark')}${untagged ? `Etiquetar ${plural(untagged, 'canción', 'canciones')} sin etiquetar` : 'Todas las canciones están etiquetadas'}</button>
           <button class="btn" data-act="ai-covers" ${coverless ? '' : 'disabled'}>${icon('disc')}${coverless ? `Buscar portada de ${plural(coverless, 'canción', 'canciones')} sin portada` : 'No quedan canciones sin portada por buscar'}</button>
           <button class="btn" data-act="ai-albums" ${albumless ? '' : 'disabled'}>${icon('library')}${albumless ? `Buscar álbum de ${plural(albumless, 'canción', 'canciones')} sin álbum` : 'No quedan canciones sin álbum por buscar'}</button></div>
           ${albumTried ? `<small class="muted">${plural(albumTried, 'canción', 'canciones')} sin álbum ya se ${albumTried === 1 ? 'buscó' : 'buscaron'} sin encontrarlo; puedes reintentarlo desde su menú ⋯ → «Buscar álbum».</small>` : ''}
@@ -1457,16 +1460,16 @@ async function showFileState(t) {
 }
 
 /** Etiqueta con IA un grupo de canciones, por lotes, guardando cada lote según llega. */
-async function tagMany(tracks) {
+async function tagMany(tracks, { write = true } = {}) {
   const note = toast('Preparando…', 0);
   let tagged = 0, opts;
-  try { opts = await aiOptions(); } catch (e) { return note.done(e.message, 8000); }
+  try { opts = await aiOptions(); } catch (e) { note.done(e.message, 8000); return []; }
   for (let i = 0; i < tracks.length; i += ai.BATCH) {
     const chunk = tracks.slice(i, i + ai.BATCH);
     note.set(`Etiquetando con IA: ${i + 1}–${i + chunk.length} de ${tracks.length}…`);
     let res;
     try { res = await ai.tagTracks(chunk, opts); }
-    catch (e) { emit('library'); return note.done(`${tagged ? `${tagged} etiquetadas. ` : ''}Se detuvo: ${e.message}`, 8000); }
+    catch (e) { emit('library'); note.done(`${tagged ? `${tagged} etiquetadas. ` : ''}Se detuvo: ${e.message}`, 8000); return tracks; }
     for (let k = 0; k < chunk.length; k++) {
       const r = res[k], t = chunk[k];
       const got = r && (r.genres.length || r.moods.length);
@@ -1478,7 +1481,34 @@ async function tagMany(tracks) {
   emit('library');
   note.done(`${plural(tagged, 'canción etiquetada', 'canciones etiquetadas')}${tagged < tracks.length ? ` · ${tracks.length - tagged} sin reconocer` : ''}`, 6000);
   const files = tracks.map(x => S.tracks.get(x.id) || x).filter(x => fileOutdated(x) && cloud.canWriteFile(x));
-  if (files.length) offerWrite(files);
+  if (files.length && write) offerWrite(files);
+  return tracks;
+}
+
+/**
+ * Completa de una vez lo que falta, en el orden en que se ayudan: primero el álbum (con él se
+ * encuentran mejor las portadas y los géneros), después la portada y al final los géneros y lo que
+ * transmite. Cada paso usa lo que dejó el anterior. Los archivos se escriben y suben una sola vez.
+ */
+async function completeAll() {
+  try { await aiOptions(); } catch (e) { return toast(e.message, 8000); }
+  const STEPS = [
+    ['Álbum', albumPending, l => findAlbums(l, { write: false })],
+    ['Portada', needsCover, l => findCovers(l, { write: false })],
+    ['Géneros y lo que transmite', needsTags, l => tagMany(l, { write: false })],
+  ];
+  const touched = new Set();
+  for (let i = 0; i < STEPS.length; i++) {
+    const [name, need, run] = STEPS[i];
+    const list = everyTrack().filter(need);
+    if (!list.length) continue;
+    toast(`Paso ${i + 1} de 3 · ${name}: ${plural(list.length, 'canción', 'canciones')}`, 3000);
+    for (const t of list) touched.add(t.id);
+    await run(list);
+  }
+  const files = [...touched].map(id => S.tracks.get(id)).filter(x => x && fileOutdated(x) && cloud.canWriteFile(x));
+  if (files.length) await writeFiles(files);
+  refresh();
 }
 
 /**
@@ -1488,10 +1518,10 @@ async function tagMany(tracks) {
  * un catálogo confirma que la canción está en ese disco: no se inventa ningún álbum.
  * Después se escribe en los archivos y se sube a la nube como el resto de metadatos editados.
  */
-async function findAlbums(tracks) {
+async function findAlbums(tracks, { write = true } = {}) {
   const note = toast('Preparando…', 0);
   let opts;
-  try { opts = await aiOptions(); } catch (e) { return note.done(e.message, 8000); }
+  try { opts = await aiOptions(); } catch (e) { note.done(e.message, 8000); return []; }
   const changed = [], from = { apple: 0, musicbrainz: 0 }, unanswered = new Set();
   let stopped = '', aiProblem = '', viaAi = 0, unconfirmed = 0;
   const artistOf = t => artistsOf(t)[0] || '';
@@ -1570,7 +1600,8 @@ async function findAlbums(tracks) {
     stopped && `se detuvo: ${stopped}`].filter(Boolean).join(' · ');
   note.done(msg, 9000);
   const files = changed.map(x => S.tracks.get(x.id) || x).filter(x => fileOutdated(x) && cloud.canWriteFile(x));
-  if (files.length) await writeFiles(files);
+  if (files.length && write) await writeFiles(files);
+  return changed;
 }
 
 /**
@@ -1583,10 +1614,10 @@ async function findAlbums(tracks) {
  * Las canciones del mismo disco comparten portada y una sola búsqueda. Después se escriben en los
  * archivos y se suben a la nube con el resto de metadatos editados.
  */
-async function findCovers(tracks) {
+async function findCovers(tracks, { write = true } = {}) {
   const note = toast('Preparando…', 0);
   let opts;
-  try { opts = await aiOptions(); } catch (e) { return note.done(e.message, 8000); }
+  try { opts = await aiOptions(); } catch (e) { note.done(e.message, 8000); return []; }
   const byKey = new Map(), byArtist = new Map(), copies = new Map(), misses = [], changed = [];
   const count = { exact: 0, album: 0, artist: 0, generated: 0 }, from = { apple: 0, youtube: 0, musicbrainz: 0 };
   let stopped = '', notUploaded = 0;
@@ -1732,7 +1763,8 @@ async function findCovers(tracks) {
   note.done(msg, 9000);
   // Se escriben en los archivos (con los demás metadatos editados) y se suben a la nube.
   const files = changed.map(x => S.tracks.get(x.id) || x).filter(x => fileOutdated(x) && cloud.canWriteFile(x));
-  if (files.length) await writeFiles(files);
+  if (files.length && write) await writeFiles(files);
+  return changed;
 }
 
 // ----------------------------- actualizar los metadatos de todos los archivos de la nube
@@ -2117,6 +2149,15 @@ const ACTIONS = {
     if (!list.length || !(await confirmDlg(`¿Buscar la portada de ${plural(list.length, 'canción', 'canciones')}?`,
       `Se enviarán el título, los artistas, el álbum y el año de cada canción a ${service} con tu clave (puede tener un coste en tu cuenta), y el nombre del disco y del artista a Apple (iTunes), a YouTube Music (a través de Piped) y a MusicBrainz para descargar la portada. Si no hay portada del disco, se usa una del mismo álbum o artista, o se genera una. Se escriben en los archivos y se suben a la nube.`, 'Buscar portadas'))) return;
     findCovers(list);
+  },
+  async 'ai-all'() {
+    if (!devOn()) return;
+    const n = [everyTrack().filter(albumPending).length, everyTrack().filter(needsCover).length, everyTrack().filter(needsTags).length];
+    if (!n.some(Boolean)) return;
+    const A = aiConf(), service = ai.PROVIDERS[A.provider].name;
+    if (!(await confirmDlg('¿Completar lo que falta?',
+      `Se hace en tres pasos, cada uno con lo que dejó el anterior: ${[n[0] && `álbum de ${plural(n[0], 'canción', 'canciones')}`, n[1] && `portada de ${n[1]}`, n[2] && `géneros y lo que transmite de ${n[2]}`].filter(Boolean).join(', ')} (el número puede cambiar al ir completándose). Álbumes y portadas se buscan primero en Apple (iTunes), YouTube Music y MusicBrainz, sin IA; a ${service} solo van las que no aparecen y el etiquetado, con tu clave (puede tener un coste en tu cuenta). Al final todo se escribe en los archivos y se sube a la nube.`, 'Completar'))) return;
+    completeAll();
   },
   async 'ai-albums'() {
     if (!devOn()) return;
