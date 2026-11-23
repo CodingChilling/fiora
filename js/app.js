@@ -320,7 +320,7 @@ const downloadAllBtn = tracks => {
 };
 function viewTag(kind, name) {
   const mood = kind === 'ambiente';
-  const tracks = mood ? recs.moodMix(name, 500) : recs.byGenre(name).sort((a, b) => collator.compare(a.title, b.title));
+  const tracks = mood ? recs.moodMix(name, Infinity) : recs.byGenre(name).sort((a, b) => collator.compare(a.title, b.title));
   show(`<div class="hero"><span class="cover" style="--hue:${mood ? MOOD_HUE(name) : hue(name)}"><i>${icon(mood ? 'spark' : 'disc')}</i></span>
       <div class="info"><div class="kind">${mood ? 'Ambiente' : 'Género'}</div><h1 style="text-transform:${mood ? 'capitalize' : 'none'}">${esc(name)}</h1><p>${plural(tracks.length, 'canción', 'canciones')}${mood ? ' · primero las que más te gustan' : ''}</p>${playButtons(tracks)}</div></div>
     ${tracks.length ? rows(tracks) : empty('disc', 'Sin canciones', 'Ninguna canción tiene esta etiqueta todavía.')}`);
