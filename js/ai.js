@@ -166,7 +166,7 @@ const TAGS = {
 };
 const RELEASES = {
   name: 'lanzamientos',
-  system: `Ayudas a buscar la portada de canciones en el catálogo público MusicBrainz. Recibes una lista JSON de canciones con su índice "i", título, artistas, álbum y año tal como venían en el archivo (pueden estar incompletos o mal escritos, p. ej. "Track 01" o "Unknown Album").
+  system: `Ayudas a identificar el disco de canciones (para buscar su portada o completar su álbum en catálogos públicos). Recibes una lista JSON de canciones con su índice "i", título, artistas, álbum y año tal como venían en el archivo (pueden estar incompletos o mal escritos, p. ej. "Track 01" o "Unknown Album").
 
 Para cada canción devuelve el lanzamiento original (álbum, EP o single) en el que se publicó:
 - "known": true solo si reconoces la canción o el álbum con seguridad.
@@ -174,7 +174,7 @@ Para cada canción devuelve el lanzamiento original (álbum, EP o single) en el 
 - "artist": el artista principal del lanzamiento (no los invitados).
 - "year": el año de publicación, o 0 si no lo sabes.
 
-Si no la reconoces, devuelve known false y textos vacíos: una portada equivocada es peor que ninguna. No inventes títulos.
+Si no la reconoces, devuelve known false y textos vacíos: un dato equivocado es peor que ninguno. No inventes títulos.
 Devuelve una entrada por cada canción recibida, con el mismo "i".`,
   schema: {
     type: 'object', additionalProperties: false, required: ['songs'],

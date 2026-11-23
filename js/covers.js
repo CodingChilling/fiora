@@ -339,3 +339,43 @@ export async function generated({ title = '', artist = '' }) {
   for (const [l, y] of lines(unknownArtist(artist) ? '' : artist, '500 32px system-ui, sans-serif', size - 64, 1)) g.fillText(l, 48, y);
   return new Promise(r => c.toBlob(b => r(b), 'image/jpeg', 0.9));
 }
+
+// --- álbum de las canciones que no lo tienen -------------------------------
+const lessFeat = s => String(s || '').replace(/\s*[([](feat|ft|with|con)\.?\s[^)\]]*[)\]]/gi, '').trim();
+const releaseName = s => String(s || '').replace(/\s*-\s*(Single|EP)$/i, '').trim();
+/**
+ * Disco en el que salió una canción: {album, albumArtist, year, trackNo, single, from}. Solo si un
+ * catálogo la tiene con el mismo título y artista (y, si se pasa `album`, en un disco con ese
+ * título: así se comprueba lo que propone la IA). Prefiere el álbum al single. null si no aparece;
+ * undefined si no ha contestado ningún catálogo (se puede reintentar más tarde).
+ */
+export async function albumOf({ title, artist, album = '' }) {
+  if (!searchable(title, artist)) return null;
+  const okAlbum = name => !album || sameTitle(releaseName(name), album);
+  let answered = false;
+  const res = await itunes({ term: `${artist} ${lessFeat(title)}`, entity: 'song' });
+  if (res !== undefined) {
+    answered = true;
+    const hits = res.filter(x => (sameTitle(x.trackName, title) || sameTitle(lessFeat(x.trackName), lessFeat(title))) && sameArtist([{ name: x.artistName }], artist) && okAlbum(x.collectionName));
+    hits.sort((a, b) => /-\s*(Single|EP)$/i.test(a.collectionName) - /-\s*(Single|EP)$/i.test(b.collectionName));
+    const h = hits[0];
+    if (h) return { album: releaseName(h.collectionName), albumArtist: h.collectionArtistName || h.artistName || '', year: +(String(h.releaseDate || '').slice(0, 4)) || 0, trackNo: h.trackNumber || 0, single: /-\s*(Single|EP)$/i.test(h.collectionName), from: 'apple' };
+  }
+  let d;
+  try { d = await mb(`recording/?query=${encodeURIComponent(`recording:${q(lessFeat(title))} AND artist:${q(artist)}`)}&fmt=json&limit=8`); answered = true; }
+  catch { /* MusicBrainz no contesta */ }
+  const groups = [];
+  for (const rec of d?.recordings || []) {
+    if ((rec.score ?? 100) < MIN_SCORE || !(sameTitle(rec.title, title) || sameTitle(rec.title, lessFeat(title))) || !sameArtist(rec['artist-credit'], artist)) continue;
+    for (const rel of rec.releases || []) {
+      const g = rel['release-group'] || {}, name = g.title || rel.title;
+      if (!name || !okAlbum(name) || (g['secondary-types'] || []).some(x => /compilation|live|remix|dj-mix|soundtrack/i.test(x))) continue;
+      groups.push({ name, type: g['primary-type'] || '', year: +(String(rel.date || '').slice(0, 4)) || 0, artist: rel['artist-credit']?.[0]?.name || rec['artist-credit']?.[0]?.name || artist });
+    }
+  }
+  const rank = t => (t === 'Album' ? 0 : t === 'EP' ? 1 : t === 'Single' ? 2 : 3);
+  groups.sort((a, b) => rank(a.type) - rank(b.type) || (a.year || 9999) - (b.year || 9999));
+  const g = groups[0];
+  if (g) return { album: g.name, albumArtist: g.artist, year: g.year, trackNo: 0, single: g.type === 'Single', from: 'musicbrainz' };
+  return answered ? null : undefined;
+}

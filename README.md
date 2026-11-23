@@ -151,6 +151,13 @@ Con el modo activado, el menú ⋯ de cada canción tiene «Editar metadatos».
 
   Las canciones del mismo disco comparten portada y una sola búsqueda. Las portadas se reducen a 600 px y se suben a `_fiora/portadas/` para tus otros dispositivos. Después **se escriben dentro de cada archivo (MP3, FLAC, M4A) y se suben a la nube junto con el resto de metadatos editados**, con la misma comprobación que el resto de ediciones; el resto del archivo no cambia (los WAV, OGG y Opus no admiten etiquetas: allí la portada la ven la app y tus dispositivos). Si la IA o MusicBrainz fallan a mitad, las canciones que faltan se quedan sin tocar para la próxima vez, en lugar de recibir una portada provisional. A la IA le llegan título, artistas, álbum y año; a Apple, YouTube Music (Piped) y MusicBrainz, solo el disco, el artista y el título. Ninguna espera puede dejar la búsqueda colgada: la IA tiene 90 s como mucho (mientras, el aviso cuenta los segundos) y cada consulta o descarga, 20 s; si la IA falla, se sigue sin ella.
 
+- **Buscar el álbum de las canciones que no lo tienen**: en **Ajustes → Modo desarrollador → «Buscar álbum de N canciones sin álbum»**, o en el menú ⋯ de una canción sin álbum → «Buscar álbum». Sigue la misma lógica que las portadas:
+  1. **Primero sin IA**: cada canción se busca por su título y artista en Apple (iTunes) y, si no aparece o Apple no contesta, en MusicBrainz (sin recopilatorios ni directos). Si salió como single y en un álbum, se elige el álbum. Las canciones iguales comparten una sola consulta.
+  2. **La IA solo para las que faltan** (o cuyos datos no dicen nada, como «Track 05» o «Unknown Artist»). Lo que proponga **solo se pone si Apple o MusicBrainz confirman** que la canción está en ese disco: no se inventa ningún álbum.
+  3. Además del álbum se completan el artista del álbum, el año y el número de pista **si faltaban** (no se pisa lo que ya tenía el archivo). Se escribe en los archivos y se sube a la nube con el resto de metadatos.
+
+  Las que no se encuentran se marcan como buscadas y el botón no las vuelve a enviar (ni a cobrar) en bloque; se pueden reintentar una a una desde su menú ⋯. Si los catálogos no contestan, no se marcan y se pueden volver a buscar más tarde.
+
 ## Tu criatura sonora
 
 Está en **Perfil**. Es una interpretación visual de hábitos musicales observables, no un perfil psicológico. Con sesión iniciada se guarda en tu cuenta; sin ella funciona igual, guardada solo en el dispositivo.
