@@ -1,13 +1,63 @@
 // Modos de reproducción que comparten las playlists y la biblioteca.
-import { S } from './store.js';
+import { S, isFav, artistsOf } from './store.js';
 
+const DAY = 86400000;
 const last = t => S.stats[t.id]?.last || 0;
+export const SURPRISE_HOURS = 168;   // por defecto se aparta lo escuchado en la última semana
+export const SURPRISE_WINDOWS = [[24, '24 horas'], [72, '3 días'], [168, 'Una semana'], [336, 'Dos semanas'], [720, 'Un mes']];
 
-/** Sorpresa: aleatorio, dejando para el final lo escuchado en las últimas `hours` horas. */
-export function surpriseOrder(tracks, hours = 24) {
-  const now = Date.now();
-  return tracks.map(t => { const ago = (now - last(t)) / 3600000; return [t, Math.random() + (last(t) && ago < hours ? 2 + (1 - ago / hours) : 0)]; })
-    .sort((a, b) => a[1] - b[1]).map(x => x[0]);
+/** ¿Dos canciones seguidas «se pisan»? Mismo artista o mismo álbum. */
+const clash = (a, b) => !!a && !!b && ((a.album && a.album === b.album) || artistsOf(a).some(x => artistsOf(b).includes(x)));
+/**
+ * Reordena lo menos posible para que no suenen seguidas dos del mismo artista o álbum. `prev`: la
+ * canción que suena justo antes. Si un artista acapara más de la mitad de lo que queda, se le da paso
+ * antes, para que sus canciones no se amontonen al final (y acaben seguidas).
+ */
+function spread(list, prev = null) {
+  const out = [], pool = list.slice(), key = t => artistsOf(t)[0];
+  const count = new Map();
+  for (const t of pool) count.set(key(t), (count.get(key(t)) || 0) + 1);
+  while (pool.length) {
+    let top = null, topN = 0;
+    for (const [a, c] of count) if (c > topN) { top = a; topN = c; }
+    let k = -1;
+    if (topN * 2 > pool.length) k = pool.findIndex(t => key(t) === top && !clash(prev, t));
+    if (k < 0) k = pool.slice(0, 40).findIndex(t => !clash(prev, t));
+    if (k < 0) k = pool.findIndex(t => !clash(prev, t));
+    if (k < 0) k = 0;                                  // no hay otra: se acepta la repetición
+    const [t] = pool.splice(k, 1);
+    count.set(key(t), count.get(key(t)) - 1);
+    out.push(t); prev = t;
+  }
+  return out;
+}
+const shuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+
+/**
+ * Sorpresa:
+ *  · primero lo olvidado: las que llevan mucho sin sonar y las que nunca has escuchado tienen ventaja;
+ *  · de vez en cuando, una favorita («Me gusta») que llevas más de un mes sin oír;
+ *  · nunca dos seguidas del mismo artista o álbum (si hay alternativa);
+ *  · lo escuchado en la ventana (`hours`, por defecto una semana) va al final, lo más reciente lo último.
+ */
+export function surpriseOrder(tracks, hours = SURPRISE_HOURS) {
+  const now = Date.now(), win = hours * 3600000;
+  const recent = [], rest = [];
+  for (const t of tracks) (last(t) && now - last(t) < win ? recent : rest).push(t);
+  const days = t => (last(t) ? (now - last(t)) / DAY : Infinity);
+  const favs = shuffle(rest.filter(t => isFav(t.id) && days(t) > 30));
+  const others = rest.filter(t => !favs.includes(t))
+    .map(t => [t, Math.random() + (days(t) === Infinity ? 0.6 : Math.min(1, days(t) / 180) * 0.8)])
+    .sort((a, b) => b[1] - a[1]).map(x => x[0]);
+  // Una favorita olvidada cada cinco canciones (la primera, en el segundo puesto).
+  const main = [];
+  for (let i = 0, f = 0; i < others.length || f < favs.length; i++) {
+    if (f < favs.length && (main.length % 5 === 1 || i >= others.length)) main.push(favs[f++]);
+    if (i < others.length) main.push(others[i]);
+  }
+  const tail = recent.map(t => [t, last(t) + Math.random() * 3600000]).sort((a, b) => a[1] - b[1]).map(x => x[0]);
+  const head = spread(main);
+  return [...head, ...spread(tail, head[head.length - 1])];
 }
 
 // Ambiente: inicio tranquilo → más energía → momento intenso → final relajado, según «lo que transmite».

@@ -1041,7 +1041,9 @@ async function viewSettings(sec) {
     cuenta: () => P_('', accountPanel),
     nube: () => cloudPanel,
     audio: () => `<div id="ajustes-audio">${P_('Reproducción', `<label class="switch first"><input type="checkbox" data-toggle="autoplay" ${S.settings.autoplay === false ? '' : 'checked'}><span><b>Reproducción automática</b>
-        <small>Cuando se acaba lo que estás escuchando, sigue con canciones parecidas de tu biblioteca.</small></span></label>`)}
+        <small>Cuando se acaba lo que estás escuchando, sigue con canciones parecidas de tu biblioteca.</small></span></label>
+        <label class="lbl" style="margin-top:14px">Modo sorpresa: dejar para el final lo escuchado en…<span class="field"><select data-surprise-hours aria-label="Ventana del modo sorpresa">${modes.SURPRISE_WINDOWS.map(([h, l]) => `<option value="${h}" ${(S.settings.surpriseHours || modes.SURPRISE_HOURS) === h ? 'selected' : ''}>${l}</option>`).join('')}</select></span>
+          <small>Además, Sorpresa da ventaja a lo que llevas tiempo sin oír o nunca has escuchado, cuela de vez en cuando una favorita olvidada y no pone seguidas dos del mismo artista o álbum. En las playlists se elige en cada una.</small></label>`)}
       ${fadesPanel()}${spatialPanel()}</div>`,
     dispositivo: () => P_('Almacenamiento', `<p>${plural(tracks.length, 'canción', 'canciones')} en la biblioteca · ${offline} disponibles sin conexión.</p>
       ${est.quota ? `<div class="meter"><i style="width:${Math.min(100, (est.usage / est.quota) * 100).toFixed(1)}%"></i></div><small class="muted">${gb(est.usage)} GB usados de ${gb(est.quota)} GB disponibles para la app</small>` : ''}
@@ -2074,7 +2076,7 @@ const ACTIONS = {
   'lib-bucket'(el) { toggleBucket(el.dataset.bid); },
   'kb-story'(el) { openStory(el.dataset.k); },
   'play-surprise'() {
-    const l = modes.surpriseOrder(firstList().filter(playable), S.settings.surpriseHours || 24);
+    const l = modes.surpriseOrder(firstList().filter(playable), S.settings.surpriseHours || modes.SURPRISE_HOURS);
     if (!l.length) return;
     if (P.shuffle) player.toggleShuffle();
     player.playQueue(l); toast('Modo sorpresa: lo que escuchaste hace poco, al final');
@@ -2719,6 +2721,12 @@ document.addEventListener('input', e => {
     el.style.setProperty('--p', `${el.value}%`);
     player.setVolume(el.value / 100);
   }
+});
+document.addEventListener('change', async e => {
+  if (!e.target.matches?.('[data-surprise-hours]')) return;
+  S.settings.surpriseHours = +e.target.value; S.settings.surpriseHoursAt = Date.now();
+  await saveKV('settings', false); emit('dirty');
+  toast('Guardado');
 });
 document.addEventListener('change', e => {
   if (!e.target.classList.contains('js-seek')) return;

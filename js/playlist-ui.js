@@ -514,7 +514,7 @@ export function initPlaylists(c) {
   // ================================================================ modos de reproducción
   const ctxOf = p => ({ playlist: p.id });
   function playOrder(p) { return tracksOf(p).filter(playable); }
-  const surpriseOrder = p => modes.surpriseOrder(playOrder(p), p.settings.surpriseHours || 24);
+  const surpriseOrder = p => modes.surpriseOrder(playOrder(p), p.settings.surpriseHours || modes.SURPRISE_HOURS);
   const ambientPlan = p => modes.ambientPlan(playOrder(p));
 
   // ================================================================ visor de fotos
@@ -660,7 +660,7 @@ export function initPlaylists(c) {
       const tracks = tracksOf(p);
       body.innerHTML = `<h4>Estadísticas</h4><p class="muted">${plural(tracks.length, 'canción', 'canciones')} · ${totalTime(tracks)} · ${plural(new Set(tracks.flatMap(t => artistsOf(t))).size, 'artista', 'artistas')}. Las escuchas de esta playlist se guardan agregadas por día (sin horas ni dispositivo).</p>
         <h4>Reproducción</h4>
-        <label class="lbl">Modo sorpresa: dejar para el final lo escuchado en las últimas…<span class="field"><select data-ed-sel="surpriseHours">${[[6, '6 horas'], [24, '24 horas'], [72, '3 días'], [168, 'Una semana']].map(([h, l]) => `<option value="${h}" ${(p.settings.surpriseHours || 24) === h ? 'selected' : ''}>${l}</option>`).join('')}</select></span></label>
+        <label class="lbl">Modo sorpresa: dejar para el final lo escuchado en las últimas…<span class="field"><select data-ed-sel="surpriseHours">${modes.SURPRISE_WINDOWS.map(([h, l]) => `<option value="${h}" ${(p.settings.surpriseHours || modes.SURPRISE_HOURS) === h ? 'selected' : ''}>${l}</option>`).join('')}</select></span></label>
         <p class="muted">El modo ambiente ordena las canciones en cuatro fases (inicio tranquilo, más energía, momento intenso y final relajado) usando «lo que transmite» de cada una. ${ambientPlan(p).ok ? 'Esta playlist tiene datos suficientes.' : esc(ambientPlan(p).why)}</p>
         ${data.isFavs(p) ? '<h4>Eliminar</h4><p class="muted">Esta playlist no se puede eliminar: se llena sola con las canciones a las que das «me gusta».</p>' : `<h4>Eliminar</h4>
         <p class="muted">Las canciones seguirán en tu biblioteca. Se borrarán la portada, las fotos, los capítulos, las notas y las estadísticas de esta playlist.</p>

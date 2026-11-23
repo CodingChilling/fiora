@@ -16,6 +16,7 @@ export function snapshot(withPrefs = false) {
     data.prefs = {
       buckets: { v: s.buckets || [], upload: s.uploadBucket || '', at: s.bucketsAt || 0 },
       shrink: { v: !!s.shrink, at: s.shrinkAt || 0 },
+      surpriseHours: { v: s.surpriseHours || 0, at: s.surpriseHoursAt || 0 },   // ventana del modo sorpresa en la biblioteca
       hiddenBuckets: { v: s.hiddenBuckets || [], at: s.hiddenBucketsAt || 0 },   // buckets ocultos en la Biblioteca
       genrePresets: { v: s.genrePresets || [], at: s.genrePresetsAt || 0 },
       volume: { v: typeof s.volume === 'number' ? s.volume : 1, at: s.volAt || 0 },
@@ -94,6 +95,7 @@ export async function merge(remote) {
       s.buckets = [{ id: 'b1', name: 'Principal', url: p.parUrl.v }]; s.bucketsAt = p.parUrl.at || 1; cloudChanged = true;
     }
     if (p.shrink && p.shrink.at > (s.shrinkAt || 0)) { s.shrink = p.shrink.v; s.shrinkAt = p.shrink.at; }
+    if (p.surpriseHours && p.surpriseHours.at > (s.surpriseHoursAt || 0)) { s.surpriseHours = p.surpriseHours.v; s.surpriseHoursAt = p.surpriseHours.at; }
     if (p.hiddenBuckets && p.hiddenBuckets.at > (s.hiddenBucketsAt || 0)) { s.hiddenBuckets = p.hiddenBuckets.v || []; s.hiddenBucketsAt = p.hiddenBuckets.at; emit('library'); }
     if (p.genrePresets && p.genrePresets.at > (s.genrePresetsAt || 0)) { s.genrePresets = p.genrePresets.v || []; s.genrePresetsAt = p.genrePresets.at; }
     if (p.volume && p.volume.at > (s.volAt || 0)) { s.volume = p.volume.v; s.volAt = p.volume.at; emit('volume', s.volume); }

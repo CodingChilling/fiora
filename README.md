@@ -162,7 +162,11 @@ Con el modo activado, el menú ⋯ de cada canción tiene «Editar metadatos».
 ## Modos Sorpresa y Ambiente
 
 Además de en las playlists, están en la biblioteca: junto a Reproducir y Aleatorio en **Biblioteca → Canciones** (sobre lo que tengas filtrado o buscado) y en las páginas de álbum, artista, género, ambiente y las mezclas. No en Música libre ni en las radios.
-- **Sorpresa**: orden aleatorio, dejando para el final lo escuchado en las últimas 24 horas.
+- **Sorpresa**: un orden distinto cada vez, pensado para redescubrir:
+  - **primero lo olvidado**: ventaja para lo que llevas mucho sin escuchar y para lo que nunca has escuchado;
+  - **favoritas olvidadas**: de vez en cuando (una de cada cinco, la primera en el segundo puesto) una canción con «Me gusta» que llevas más de un mes sin oír;
+  - **variedad**: nunca dos seguidas del mismo artista o álbum, si hay alternativa;
+  - lo escuchado en la **última semana** va al final (lo más reciente, lo último). La ventana se cambia en **Ajustes → Audio y reproducción** (24 horas, 3 días, una semana, dos semanas o un mes) y, en cada playlist, en su edición.
 - **Ambiente**: de lo tranquilo a lo intenso y vuelta a la calma, según «lo que transmite» de cada canción. Necesita al menos 6 canciones y que la mayoría estén etiquetadas; si no, el botón explica qué falta.
 
 ## Artistas y canciones: historias, curiosidades y datos
