@@ -1782,8 +1782,8 @@ function trackMenu(t, o = {}, i = -1) {
   const lib_ = inLibrary(t);
   const remote = t.cloudName || t.url;
   menu(head, [
-    o.queue && !o.user && player.isAuto(i) && { icon: 'queue', label: 'Reproducir a continuación', fn: () => { player.promote([i], true); toast('Sonará a continuación'); } },
-    o.queue && !o.user && player.isAuto(i) && { icon: 'plus', label: 'Añadir a tu cola', fn: () => { player.promote([i]); toast('Añadida a tu cola'); } },
+    o.queue && !o.user && player.isUpcoming(i) && { icon: 'queue', label: 'Reproducir a continuación', fn: () => { player.queueUpcoming(i, true); toast('Sonará a continuación'); } },
+    o.queue && !o.user && player.isUpcoming(i) && { icon: 'plus', label: 'Añadir a tu cola', fn: () => { player.queueUpcoming(i); toast('Añadida a tu cola'); } },
     o.queue && (o.user || P.fromUser || i !== P.index) && { icon: 'x', label: 'Quitar de la cola', fn: () => player.removeFromQueue(i, !!o.user) },
     !o.queue && { icon: 'queue', label: 'Reproducir a continuación', fn: () => { player.enqueue([t], true); toast('Sonará a continuación'); } },
     !o.queue && { icon: 'plus', label: 'Añadir a la cola', fn: () => { player.enqueue([t]); toast('Añadida a tu cola'); } },
@@ -1879,7 +1879,7 @@ const ACTIONS = {
     go(`#/album/${enc(el.dataset.key)}`);
   },
   'clear-user-queue'() { player.clearUserQueue(); },
-  'q-promote'(el) { const r = rowInfo(el); if (r && r.key === 'q' && player.promote([r.i])) toast(`«${r.track.title}» añadida a tu cola`); },
+  'q-promote'(el) { const r = rowInfo(el); if (r && r.key === 'q' && player.queueUpcoming(r.i)) toast(`«${r.track.title}» añadida a tu cola`); },
   'q-promote-all'() {
     const n = player.promote(P.queue.map((_, i) => i));
     if (n) toast(`${plural(n, 'canción pasada', 'canciones pasadas')} a tu cola`);
@@ -2175,7 +2175,7 @@ const endSwipe = add => {
   if (!active) return;
   swallowClick = true; setTimeout(() => { swallowClick = false; }, 350);
   if (!add) return;
-  if (auto >= 0) { if (player.promote([auto])) toast(`«${track.title}» añadida a tu cola`); }
+  if (auto >= 0) { if (player.queueUpcoming(auto)) toast(`«${track.title}» añadida a tu cola`); }
   else { player.enqueue([track]); toast(`«${track.title}» añadida a tu cola`); }
 };
 for (const box of [view, $('#now')]) {
@@ -2185,7 +2185,7 @@ for (const box of [view, $('#now')]) {
     const info = row && rowInfo(row);
     if (!info?.track || info.track.radio || !playable(info.track) || info.key === 'u') return;
     const auto = info.key === 'q' ? info.i : -1;
-    if (auto >= 0 && !player.isAuto(auto)) return;
+    if (auto >= 0 && !player.isUpcoming(auto)) return;
     swipe = { row, track: info.track, auto, x: e.clientX, y: e.clientY, dx: 0, active: false };
   });
   box.addEventListener('pointermove', e => {
@@ -2368,15 +2368,14 @@ async function renderNowPane() {
     const t = P.current, from = P.index + 1;
     const upcoming = P.queue.slice(from, from + 300);
     const inAuto = P.autoFrom >= 0 && P.autoFrom <= from;
-    const hasAuto = P.autoFrom >= 0 && P.autoFrom < P.queue.length && from + upcoming.length > P.autoFrom;
     const autoAll = '<button class="chip" data-act="q-promote-all">Añadir todas a tu cola</button>';
     setHTML(pane, `<h2 style="margin-top:0">Sonando</h2>
       ${t ? `<div class="row is-playing"><span class="row-main">${cover(t)}<span class="row-text"><b>${esc(t.title)}</b><small>${esc(t.artist || '')}</small></span></span></div>` : ''}
       ${P.user.length ? `<div class="qhead"><h2>A continuación en tu cola</h2><button class="chip" data-act="clear-user-queue">Vaciar</button></div>
         <ol class="rows" data-list="u">${P.user.map((x, i) => rowHTML(x, i, { queue: true, user: true })).join('')}</ol>` : ''}
       ${upcoming.length ? `<div class="qhead"><h2>${inAuto ? 'Reproducción automática' : P.user.length ? 'Después, de lo que estabas escuchando' : 'A continuación'}</h2>${inAuto ? autoAll : ''}</div>
-        <ol class="rows" data-list="q">${upcoming.map((x, k) => (from + k === P.autoFrom && !inAuto ? `<li class="qdivider"><span>Reproducción automática · canciones parecidas</span>${autoAll}</li>` : '') + rowHTML(x, from + k, { queue: true, auto: player.isAuto(from + k) })).join('')}</ol>` : ''}
-      ${hasAuto ? '<p class="muted small">Desliza una canción de la reproducción automática hacia la derecha (o pulsa +) para pasarla a tu cola.</p>' : ''}
+        <ol class="rows" data-list="q">${upcoming.map((x, k) => (from + k === P.autoFrom && !inAuto ? `<li class="qdivider"><span>Reproducción automática · canciones parecidas</span>${autoAll}</li>` : '') + rowHTML(x, from + k, { queue: true, auto: player.isUpcoming(from + k) })).join('')}</ol>` : ''}
+      ${upcoming.length ? '<p class="muted small">Desliza una canción hacia la derecha (o pulsa +) para pasarla a tu cola.</p>' : ''}
       ${!P.user.length && !upcoming.length ? '<p class="muted">No hay nada más en la cola. Desliza una canción hacia la derecha o usa su menú ⋯ para añadirla.</p>' : ''}`);
     pane.scrollTop = 0;
     return;

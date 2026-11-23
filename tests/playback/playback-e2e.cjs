@@ -153,6 +153,34 @@ const RADIO = { id: 'radio:prueba-1', uuid: 'prueba-1', radio: true, title: 'Rad
   check(heard.join() === order.slice(0, heard.length).join(), `8. Tu cola suena en su orden (${heard.join(', ')})`);
   await M.click('#now [data-act="close-now"]').catch(() => {});
 
+  // --- canciones de la lista que suena (no automáticas): también se pueden pasar a tu cola
+  await M.evaluate(async () => (await import('./js/player.js')).clearUserQueue());
+  await playTitles(M, ['Uno', 'Dos', 'Tres']); await sounding(M, 'Uno');
+  await M.click('#mini [data-act="open-now"]'); await M.click('#now [data-mode="queue"]');
+  await M.waitForSelector('#now .pane [data-list="q"] .row');
+  const ctxPlus = await M.$$eval('#now .pane [data-list="q"] .row', rows => rows.map(r => !!r.querySelector('[data-act="q-promote"]')));
+  check(ctxPlus.length === 2 && ctxPlus.every(Boolean), '8b. Las próximas canciones de la lista que suena también tienen + (no solo las automáticas)');
+  await M.click('#now .pane [data-list="q"] .row:last-child [data-act="q-promote"]'); await M.waitForTimeout(300);
+  s = await st(M);
+  check(s.user.join() === 'Tres' && s.queue.join() === 'Uno,Dos,Tres', '    + pone «Tres» en tu cola y la lista sigue entera');
+  await M.click('#now .pane [data-list="q"] .row:first-child [data-act="more"]'); await M.waitForSelector('#sheet .menu');
+  await M.click('#sheet button:has-text("Reproducir a continuación")'); await M.waitForTimeout(300);
+  check((await st(M)).user.join() === 'Dos,Tres', '    Menú ⋯ → «Reproducir a continuación» también funciona con ellas');
+  await swipe(M, '#now .pane [data-list="q"] .row', 120); await M.waitForTimeout(300);
+  check((await st(M)).user.join() === 'Dos,Tres,Dos', '    y deslizarlas a la derecha');
+  await M.click('#now [data-act="close-now"]').catch(() => {});
+  // --- añadir desde la biblioteca una canción que ya estaba en la reproducción automática
+  await M.evaluate(async () => (await import('./js/player.js')).clearUserQueue());
+  await playTitles(M, ['Uno']); await sounding(M, 'Uno');
+  await seek(M, -0.6);
+  await until(M, async () => { const pl = await import('./js/player.js'); return pl.P.autoFrom >= 0 && pl.P.index >= pl.P.autoFrom && pl.P.queue.length - pl.P.index > 2; });
+  s = await st(M);
+  const inAuto = s.queue[s.queue.length - 1];
+  await M.evaluate(async t => { const { S } = await import('./js/store.js'), pl = await import('./js/player.js'); pl.enqueue([[...S.tracks.values()].find(x => x.title === t)]); }, inAuto);
+  s = await st(M);
+  check(s.user.join() === inAuto && !s.queue.slice(s.index + 1).includes(inAuto), `8c. Añadir a la cola «${inAuto}», que ya estaba en la automática, la pasa a tu cola (no sonará dos veces)`);
+  await M.evaluate(async () => (await import('./js/player.js')).clearUserQueue());
+
   // ======================================================== 3. Fundidos y transiciones (escritorio)
   const { page: A } = await device('A');
   await playTitles(A, ['Uno']); await sounding(A, 'Uno');

@@ -440,8 +440,29 @@ export function cycleRepeat() {
 /** Añade canciones a la cola del usuario: al final, o delante de todo con `playNext`. */
 export function enqueue(tracks, playNext = false) {
   if (!P.now) return playQueue(tracks);
+  // Si alguna ya estaba en la reproducción automática, pasa a tu cola (no suena dos veces).
+  const ids = new Set(tracks.map(t => t.id));
+  for (let i = P.queue.length - 1; i > P.index; i--) {
+    if (!isAuto(i) || !ids.has(P.queue[i].id)) continue;
+    const [x] = P.queue.splice(i, 1);
+    if (original) original = original.filter(y => y !== x);
+  }
   if (playNext) P.user.unshift(...tracks); else P.user.push(...tracks);
   emit('queue');
+}
+/** ¿Esta posición de la lista en reproducción aún está por sonar? */
+export const isUpcoming = i => i > P.index && i < P.queue.length;
+/**
+ * Pone en tu cola una canción que ya está por sonar en la lista. Si es de la reproducción automática,
+ * sale de ella; si es de la lista que escuchas (álbum, playlist…), además de sonar antes, sigue en su sitio.
+ */
+export function queueUpcoming(i, playNext = false) {
+  if (!isUpcoming(i)) return 0;
+  if (isAuto(i)) return promote([i], playNext);
+  const t = P.queue[i];
+  if (playNext) P.user.unshift(t); else P.user.push(t);
+  emit('queue');
+  return 1;
 }
 
 /** ¿Esta posición de la lista en reproducción es de la continuación automática (aún por sonar)? */
